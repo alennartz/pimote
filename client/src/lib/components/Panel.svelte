@@ -4,10 +4,10 @@
   import { sessionRegistry, type SubagentViewClosedNotice } from '$lib/stores/session-registry.svelte.js';
   import { projectSubagentPanelRows, type AgentPath, type SubagentPanelState, type SubagentPanelRow, type SubagentTeardownConfirmation } from '$lib/subagent-view-state.js';
   import CardList from './CardList.svelte';
+  import { formatTokenCount } from '$lib/session-summary.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
   import Bot from '@lucide/svelte/icons/bot';
-  import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import ExternalLink from '@lucide/svelte/icons/external-link';
   import X from '@lucide/svelte/icons/x';
 
@@ -53,7 +53,7 @@
   const rows = $derived(rootState ? projectSubagentPanelRows({ nodes: rootState.nodes }, panelState) : ([] as readonly SubagentPanelRow[]));
   const inspectedNode = $derived(rootState && inspectedPath ? (rootState.nodes.find((node) => samePath(node.path, inspectedPath)) ?? null) : null);
   const inspectorNode = $derived(inspectedNode ?? (selectedPath && rootState ? (rootState.nodes.find((node) => samePath(node.path, selectedPath)) ?? null) : null));
-  const inspectorIsRoot = $derived(!inspectorNode);
+  const inspectorViewOpen = $derived(rows.some((row) => row.viewOpen && samePath(row.path, inspectorNode?.path)));
   const openCount = $derived(openChildPaths.length);
   const hasHierarchy = $derived((rootState?.nodes.length ?? 0) > 0);
 
@@ -84,6 +84,14 @@
   function inspect(path: AgentPath): void {
     inspectedPath = [...path];
     notice = null;
+  }
+
+  function showRootView(): void {
+    const rootId = rootSessionId;
+    if (!rootId) return;
+    inspectedPath = null;
+    sessionRegistry.selectSubagentView(rootId, null);
+    if (panelStore.isDrawer) panelStore.closePanel();
   }
 
   async function openView(path: AgentPath): Promise<void> {
@@ -274,18 +282,23 @@
 
     {#if rootSession}
       <section class="border-sidebar-border/70 border-b px-2 pb-2" aria-label="Root session">
-        <div class="border-sidebar-border bg-sidebar-accent/45 rounded-md border px-2.5 py-2">
-          <div class="flex items-center gap-2">
-            <span class="bg-primary text-primary-foreground flex size-6 shrink-0 items-center justify-center rounded-md">
-              <Bot class="size-3.5" />
-            </span>
-            <div class="min-w-0 flex-1">
-              <strong class="block truncate text-sm">{rootSession.sessionName || rootSession.projectName || 'Main session'}</strong>
-              <span class="text-muted-foreground block truncate text-xs">{rootSession.isStreaming ? 'Running' : 'Root session'}</span>
-            </div>
-            <span class="text-muted-foreground rounded-full border px-1.5 py-0.5 text-[10px]">Root</span>
-          </div>
-        </div>
+        <button
+          type="button"
+          class="tree-row-select hover:bg-sidebar-accent/60 focus-visible:ring-ring/50 flex w-full min-w-0 items-center gap-2 rounded-md border border-transparent py-1.5 pr-2 text-left outline-none focus-visible:ring-2 max-md:min-h-11 max-md:py-2.5 {!selectedPath
+            ? 'border-ring/60 bg-sidebar-accent'
+            : ''}"
+          style="--tree-indent: 0rem;"
+          aria-label="Show root session"
+          aria-current={!selectedPath ? 'page' : undefined}
+          onclick={showRootView}
+        >
+          <Bot class="text-muted-foreground size-3.5 shrink-0" />
+          <span class="min-w-0 flex-1">
+            <strong class="block truncate text-xs">{rootSession.sessionName || rootSession.projectName || 'Main session'}</strong>
+            <span class="text-muted-foreground block truncate text-[11px]">{rootSession.isStreaming ? 'Running' : 'Root session'}</span>
+          </span>
+          <span class="text-muted-foreground rounded-full border px-1.5 py-0.5 text-[10px]">Root</span>
+        </button>
       </section>
     {/if}
 
@@ -309,7 +322,6 @@
                 aria-label={`Inspect ${pathLabel(row.path)}`}
                 onclick={() => inspect(row.path)}
               >
-                <ChevronRight class="tree-chevron text-muted-foreground size-3.5 shrink-0 transition-transform {row.depth === 0 ? 'rotate-90' : ''}" />
                 <span class="status-dot shrink-0 {row.metadata.state}" aria-label={row.metadata.state}></span>
                 {#if row.metadata.personaIcon}<span class="persona-icon">{row.metadata.personaIcon}</span>{/if}
                 <span class="min-w-0 flex-1">
@@ -340,26 +352,28 @@
       </section>
     {/if}
 
-    <section class="agent-inspector border-sidebar-border/70 border-b px-2.5 py-3" aria-label="Selected subagent details">
-      <div class="flex items-center gap-2">
-        {#if inspectorNode?.personaIcon}<span class="persona-icon">{inspectorNode.personaIcon}</span>{/if}
-        <strong class="min-w-0 flex-1 truncate font-mono text-xs"
-          >{inspectorNode ? pathLabel(inspectorNode.path) : rootSession?.sessionName || rootSession?.projectName || 'Main session'}</strong
-        >
-        <span class="text-muted-foreground rounded-full border px-1.5 py-0.5 text-[10px]"
-          >{inspectorIsRoot ? 'Root' : selectedPath && samePath(selectedPath, inspectorNode?.path) ? 'View open' : 'View closed'}</span
-        >
-      </div>
-      <p class="text-muted-foreground mt-2 mb-3 text-xs leading-relaxed">
-        {inspectorNode?.task ?? 'Select a child to inspect its details.'}
-      </p>
-      {#if inspectorNode}
-        <div class="grid grid-cols-2 gap-x-3 gap-y-2">
+    {#if inspectorNode}
+      <section class="agent-inspector border-sidebar-border/70 border-b px-2.5 py-3" aria-label="Selected subagent details">
+        <div class="flex items-center gap-2">
+          {#if inspectorNode.personaIcon}<span class="persona-icon">{inspectorNode.personaIcon}</span>{/if}
+          <strong class="min-w-0 flex-1 truncate font-mono text-xs">{pathLabel(inspectorNode.path)}</strong>
+          <span class="text-muted-foreground rounded-full border px-1.5 py-0.5 text-[10px]">{inspectorViewOpen ? 'View open' : 'View closed'}</span>
+        </div>
+        <div class="mt-3 grid grid-cols-2 gap-x-3 gap-y-2">
           <div><span class="metadata-label">Persona</span><span>{inspectorNode.persona ?? 'Default'}</span></div>
           <div><span class="metadata-label">Model</span><span>{inspectorNode.model ?? '—'}{inspectorNode.thinkingLevel ? ` · ${inspectorNode.thinkingLevel}` : ''}</span></div>
           <div><span class="metadata-label">State</span><span>{inspectorNode.state}{inspectorNode.activity ? ` · ${inspectorNode.activity}` : ''}</span></div>
+          <div><span class="metadata-label">Channels</span><span>{inspectorNode.channels?.join(' · ') || '—'}</span></div>
+          <div><span class="metadata-label">Waits</span><span>{inspectorNode.waitingFor?.map(pathLabel).join(' · ') || '—'}</span></div>
           <div><span class="metadata-label">Context</span><span>{inspectorNode.contextFill ?? '—'}{inspectorNode.contextFill !== undefined ? '%' : ''}</span></div>
+          <div>
+            <span class="metadata-label">Input tokens</span><span
+              >{inspectorNode.usage ? formatTokenCount(inspectorNode.usage.input + inspectorNode.usage.cacheRead + inspectorNode.usage.cacheWrite) : '—'}</span
+            >
+          </div>
+          <div><span class="metadata-label">Output tokens</span><span>{inspectorNode.usage ? formatTokenCount(inspectorNode.usage.output) : '—'}</span></div>
           <div><span class="metadata-label">Cost</span><span>{inspectorNode.usage ? `$${inspectorNode.usage.cost.toFixed(2)}` : '—'}</span></div>
+          <div><span class="metadata-label">Turns</span><span>{inspectorNode.usage?.turns ?? 0}</span></div>
         </div>
         {#if inspectorNode.lastError}<p class="text-destructive mt-2 truncate text-xs">Error: {inspectorNode.lastError}</p>{:else if inspectorNode.lastOutput}<p
             class="text-muted-foreground mt-2 truncate text-xs"
@@ -370,14 +384,12 @@
           {#if selectedPath && samePath(selectedPath, inspectorNode.path)}
             <Button variant="outline" size="xs" class="max-md:min-h-11" onclick={() => void closeChildView()}>Close child view</Button>
           {:else}
-            <Button variant="outline" size="xs" class="max-md:min-h-11" onclick={() => showView(inspectorNode.path)}
-              >{rows.find((row) => samePath(row.path, inspectorNode?.path))?.viewOpen ? 'Show view' : 'Open view'}</Button
-            >
+            <Button variant="outline" size="xs" class="max-md:min-h-11" onclick={() => showView(inspectorNode.path)}>{inspectorViewOpen ? 'Show view' : 'Open view'}</Button>
           {/if}
           <Button variant="destructive" size="xs" class="max-md:min-h-11" onclick={() => requestTeardown(inspectorNode!.path)}>Teardown</Button>
         </div>
-      {/if}
-    </section>
+      </section>
+    {/if}
 
     {#if panelStore.cards.length > 0}
       <section class="extension-panels pt-2" aria-label="Other panels">
@@ -481,9 +493,6 @@
   }
   .tree-row-select {
     padding-inline-start: calc(0.5rem + var(--tree-indent));
-  }
-  .tree-row-select.selected .tree-chevron {
-    color: var(--foreground);
   }
   .tree-row-meta {
     line-height: 1.25;

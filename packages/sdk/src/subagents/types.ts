@@ -150,11 +150,20 @@ export type SubagentEventData =
   | Readonly<{ kind: 'completion'; data: SubagentCompletionData }>
   | Readonly<{ kind: 'interrupt' | 'teardown' | 'resurrect'; data: SubagentLifecycleData }>;
 
+/** An insertion boundary in the owning native transcript, not replacement provenance. */
+export type SubagentTranscriptPosition = Readonly<{
+  sessionId: string;
+  afterEntryId: string | null;
+  /** Insertion slot in the current surface's native message projection. */
+  messageIndex?: number;
+}>;
+
 /** A semantic overlay. Native Pi entries remain the transcript source. */
 export type SubagentSemanticFact = Readonly<{
   eventId: string;
   path: AgentPath;
   relatedPiEvents: readonly PiEventRef[];
+  transcriptPosition?: SubagentTranscriptPosition;
 }> &
   SubagentEventData;
 

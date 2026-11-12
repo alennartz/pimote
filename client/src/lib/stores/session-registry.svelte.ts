@@ -60,7 +60,8 @@ import type {
   SubagentViewClosedEvent,
   SubagentOpenViewResponseData,
 } from '@pimote/shared';
-import { SvelteSet } from 'svelte/reactivity';
+import { semanticEventIdentity } from '@pimote/shared';
+import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { connection, isSessionNotFoundError } from './connection.svelte.js';
 import { commandStore } from './command-store.svelte.js';
 import { setEditorText } from './input-bar.svelte.js';
@@ -128,6 +129,8 @@ export interface SubagentAttachmentState {
   optimisticEntries: OptimisticEntry[];
   bashExecutions: Record<string, BashExecutionState>;
   messages: PimoteAgentMessage[];
+  /** Raw native branch at the last child snapshot boundary. */
+  branchEntryIds?: readonly string[];
   /** Alias kept for consumers that call the saved transcript `transcript`. */
   transcript: PimoteAgentMessage[];
   streamingMessage: StreamingMessage | null;
@@ -347,7 +350,15 @@ function rebuildToolExecutionsFromMessages(messages: readonly PimoteAgentMessage
 function nativeEntriesForMessages(sessionId: string, messages: readonly PimoteAgentMessage[]): NativeTranscriptEntry[] {
   const entries: NativeTranscriptEntry[] = [];
   messages.forEach((message, messageIndex) => {
+    if (message.display === false) return;
     const id = message.entryId ?? `message-${messageIndex}`;
+    const semanticEventIds =
+      message.role === 'custom'
+        ? semanticFactCandidates(message.details).flatMap((fact) => {
+            const eventId = fact && typeof fact === 'object' ? (fact as { eventId?: unknown }).eventId : undefined;
+            return typeof eventId === 'string' ? [eventId] : [];
+          })
+        : [];
     const toolBlocks = message.content.filter((block) => (block.type === 'tool_call' || block.type === 'tool_result') && block.toolCallId);
     const text = message.content
       .map((block) => (block.type === 'text' || block.type === 'thinking' ? (block.text ?? '') : block.type === 'tool_result' ? String(block.result ?? '') : ''))
@@ -358,13 +369,14 @@ function nativeEntriesForMessages(sessionId: string, messages: readonly PimoteAg
     // id would let a provenance reference hide unrelated assistant text.
     if (toolBlocks.length === 0) {
       const kind: NativeTranscriptEntry['kind'] = message.role === 'custom' ? 'custom_message' : message.role === 'bashExecution' ? 'lifecycle' : 'message';
-      entries.push({ sessionId, id, kind, ...(text ? { text } : {}) });
+      entries.push({ sessionId, id, messageIndex, kind, ...(semanticEventIds.length > 0 ? { semanticEventIds } : {}), ...(text ? { text } : {}) });
     } else {
-      if (text) entries.push({ sessionId, id: `${id}:text`, kind: 'message', text });
+      if (text) entries.push({ sessionId, id: `${id}:text`, messageIndex, kind: 'message', text });
       for (const block of toolBlocks) {
         entries.push({
           sessionId,
           id,
+          messageIndex,
           toolCallId: block.toolCallId,
           kind: block.type === 'tool_result' ? 'tool_result' : 'tool_call',
           ...(block.text ? { text: block.text } : block.type === 'tool_result' && block.result !== undefined ? { text: String(block.result) } : {}),
@@ -398,13 +410,131 @@ function validPath(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every((part) => typeof part === 'string');
 }
 
-/** Rehydrate semantic facts persisted in existing custom-message details. */
-function persistedSemanticEvents(sessionId: string, messages: readonly PimoteAgentMessage[]): WireSubagentSemanticEvent[] {
+function mergeSemanticEvent(previous: WireSubagentSemanticEvent, event: WireSubagentSemanticEvent): WireSubagentSemanticEvent {
+  const refs = new SvelteMap<string, WireSubagentSemanticEvent['relatedPiEvents'][number]>();
+  for (const ref of [...previous.relatedPiEvents, ...event.relatedPiEvents]) {
+    refs.set(JSON.stringify([ref.sessionId, ref.kind, ref.entryId, ref.toolCallId]), ref);
+  }
+  const position = previous.transcriptPosition;
+  const nextPosition = event.transcriptPosition;
+  const transcriptPosition =
+    position === undefined || (position.messageIndex === undefined && nextPosition?.sessionId === position.sessionId && nextPosition.afterEntryId === position.afterEntryId)
+      ? (nextPosition ?? position)
+      : position;
+  return {
+    ...previous,
+    relatedPiEvents: [...refs.values()],
+    ...(transcriptPosition ? { transcriptPosition } : {}),
+    ...(!previous.providerCursor && event.providerCursor ? { providerCursor: event.providerCursor } : {}),
+  };
+}
+
+function mergeSemanticEvents(...sources: readonly (readonly WireSubagentSemanticEvent[])[]): WireSubagentSemanticEvent[] {
+  const groups = new SvelteMap<string, { unscoped?: WireSubagentSemanticEvent; occurrences: SvelteMap<string, WireSubagentSemanticEvent> }>();
+  const order: { identity: string; occurrence?: string }[] = [];
+  for (const source of sources) {
+    for (const event of source) {
+      const identity = semanticEventIdentity(event);
+      const group = groups.get(identity) ?? { occurrences: new SvelteMap<string, WireSubagentSemanticEvent>() };
+      groups.set(identity, group);
+      const native = event.nativeOccurrence;
+      if (native) {
+        const occurrence = JSON.stringify(native.entryId !== undefined ? ['entry', native.sessionId, native.entryId] : ['index', native.sessionId, native.messageIndex]);
+        const previous = group.occurrences.get(occurrence);
+        if (!previous) order.push({ identity, occurrence });
+        group.occurrences.set(occurrence, previous ? mergeSemanticEvent(previous, event) : event);
+      } else {
+        if (!group.unscoped) order.push({ identity });
+        group.unscoped = group.unscoped ? mergeSemanticEvent(group.unscoped, event) : event;
+      }
+    }
+  }
+  const events: WireSubagentSemanticEvent[] = [];
+  for (const item of order) {
+    const group = groups.get(item.identity)!;
+    if (item.occurrence !== undefined) {
+      const occurrence = group.occurrences.get(item.occurrence)!;
+      events.push(group.unscoped ? mergeSemanticEvent(occurrence, group.unscoped) : occurrence);
+    } else if (group.occurrences.size === 0 && group.unscoped) events.push(group.unscoped);
+  }
+  return events;
+}
+
+function stripNativeOccurrences(events: readonly WireSubagentSemanticEvent[]): WireSubagentSemanticEvent[] {
+  return events.map((event) => {
+    if (!event.nativeOccurrence) return event;
+    const { nativeOccurrence: _occurrence, ...fact } = event;
+    return fact as WireSubagentSemanticEvent;
+  });
+}
+
+function rebaseSemanticPositions(
+  events: readonly WireSubagentSemanticEvent[],
+  sessionId: string,
+  messages: readonly PimoteAgentMessage[],
+  branchEntryIds?: readonly string[],
+): WireSubagentSemanticEvent[] {
+  return events.map((event) => {
+    const position = event.transcriptPosition;
+    if (!position || position.sessionId !== sessionId) return event;
+    const { messageIndex: _cachedIndex, ...source } = position;
+    if (source.afterEntryId === null) return { ...event, transcriptPosition: { ...source, messageIndex: 0 } };
+    const boundary = branchEntryIds?.indexOf(source.afterEntryId);
+    if (branchEntryIds !== undefined && boundary !== undefined && boundary >= 0) {
+      const preceding = new SvelteSet(branchEntryIds.slice(0, boundary + 1));
+      let messageIndex = 0;
+      messages.forEach((message, index) => {
+        if (message.entryId && preceding.has(message.entryId)) messageIndex = index + 1;
+      });
+      return { ...event, transcriptPosition: { ...source, messageIndex } };
+    }
+    if (branchEntryIds === undefined) {
+      const messageIndex = messages.findLastIndex((message) => message.entryId === source.afterEntryId);
+      if (messageIndex >= 0) return { ...event, transcriptPosition: { ...source, messageIndex: messageIndex + 1 } };
+    }
+    return { ...event, transcriptPosition: source };
+  });
+}
+
+function persistedTranscriptPosition(
+  source: unknown,
+  sessionId: string,
+  messageIndex: number,
+  entryId: string | undefined,
+  localOwner = true,
+): NonNullable<WireSubagentSemanticEvent['transcriptPosition']> | undefined {
+  if (source !== null && typeof source === 'object') {
+    const position = source as Record<string, unknown>;
+    if (typeof position.sessionId === 'string' && (position.afterEntryId === null || typeof position.afterEntryId === 'string')) {
+      const sourceIndex = position.messageIndex;
+      return {
+        sessionId: position.sessionId,
+        afterEntryId: position.afterEntryId,
+        ...(position.sessionId === sessionId && localOwner
+          ? { messageIndex }
+          : typeof sourceIndex === 'number' && Number.isInteger(sourceIndex) && sourceIndex >= 0
+            ? { messageIndex: sourceIndex }
+            : {}),
+      };
+    }
+  }
+  return localOwner ? { sessionId, afterEntryId: entryId ?? null, messageIndex } : undefined;
+}
+
+/** Rehydrate semantic facts and positions from native message metadata. */
+function persistedSemanticEvents(sessionId: string, messages: readonly PimoteAgentMessage[], ownerPath: AgentPath = []): WireSubagentSemanticEvent[] {
   const events: WireSubagentSemanticEvent[] = [];
   let sequence = 0;
-  for (const message of messages) {
-    const candidates = [...semanticFactCandidates(message.details), ...message.content.flatMap((block) => semanticFactCandidates(block.data))];
-    for (const candidate of candidates) {
+  for (const [messageIndex, message] of messages.entries()) {
+    const toolResults = message.role === 'toolResult' ? message.content.filter((block) => block.type === 'tool_result') : [];
+    const messageToolCallId = toolResults.length === 1 ? toolResults[0].toolCallId : undefined;
+    const candidates = [
+      ...semanticFactCandidates(message.details).map((fact) => ({ fact, toolCallId: messageToolCallId })),
+      ...message.content.flatMap((block) =>
+        semanticFactCandidates(block.data).map((fact) => ({ fact, toolCallId: message.role === 'toolResult' && block.type === 'tool_result' ? block.toolCallId : undefined })),
+      ),
+    ];
+    for (const { fact: candidate, toolCallId } of candidates) {
       if (!candidate || typeof candidate !== 'object') continue;
       const fact = candidate as Record<string, unknown>;
       if (typeof fact.eventId !== 'string' || typeof fact.kind !== 'string' || !validPath(fact.path) || !Array.isArray(fact.relatedPiEvents)) continue;
@@ -428,10 +558,23 @@ function persistedSemanticEvents(sessionId: string, messages: readonly PimoteAge
         ].includes(kind)
       )
         continue;
+      const messageData = kind === 'message_thread' && fact.data !== null && typeof fact.data === 'object' ? (fact.data as Record<string, unknown>) : undefined;
+      const ownsReceived = messageData?.phase !== 'received' || (validPath(messageData.to) && sameAgentPath(messageData.to, ownerPath));
       const relatedPiEvents = fact.relatedPiEvents.filter(
         (ref): ref is NonNullable<WireSubagentSemanticEvent['relatedPiEvents'][number]> =>
           !!ref && typeof ref === 'object' && typeof (ref as { sessionId?: unknown }).sessionId === 'string',
       ) as WireSubagentSemanticEvent['relatedPiEvents'];
+      const customRef = ownsReceived && message.role === 'custom' && message.entryId ? { sessionId, entryId: message.entryId, kind: 'custom_message' as const } : undefined;
+      const containerRefs =
+        customRef && !relatedPiEvents.some((ref) => ref.sessionId === sessionId && ref.entryId === customRef.entryId && ref.kind === 'custom_message')
+          ? [...relatedPiEvents, customRef]
+          : relatedPiEvents;
+      const toolRef = ownsReceived && toolCallId ? { sessionId, toolCallId, kind: 'tool_call' as const } : undefined;
+      const localRefs =
+        toolRef && !containerRefs.some((ref) => ref.sessionId === sessionId && ref.kind === 'tool_call' && ref.toolCallId === toolCallId)
+          ? [...containerRefs, toolRef]
+          : containerRefs;
+      const transcriptPosition = persistedTranscriptPosition(fact.transcriptPosition, sessionId, messageIndex, message.entryId, ownsReceived);
       sequence += 1;
       events.push({
         type: 'subagent_event',
@@ -440,7 +583,11 @@ function persistedSemanticEvents(sessionId: string, messages: readonly PimoteAge
         eventId: fact.eventId,
         path: copyAgentPath(fact.path),
         kind,
-        relatedPiEvents,
+        relatedPiEvents: localRefs,
+        ...(ownsReceived && message.role === 'custom' && message.display !== false
+          ? { nativeOccurrence: { sessionId, ...(message.entryId !== undefined ? { entryId: message.entryId } : {}), messageIndex } }
+          : {}),
+        ...(transcriptPosition ? { transcriptPosition } : {}),
         data: fact.data as WireSubagentSemanticEvent['data'],
       } as WireSubagentSemanticEvent);
     }
@@ -456,11 +603,26 @@ function cloneSessionState(state: SessionState): SessionState {
   };
 }
 
+/** Zip saved tail IDs into finalized messages, skipping entries Pi never persists. */
+function hydrateMessageEntryIds(session: Pick<PerSessionState, 'messages' | 'messageKeys' | 'optimisticEntries'>, ids: readonly string[]): void {
+  const pendingKeys = session.optimisticEntries.map((entry) => entry.key);
+  let idIndex = ids.length - 1;
+  for (let index = session.messages.length - 1; index >= 0 && idIndex >= 0; index--) {
+    if (pendingKeys.includes(session.messageKeys[index])) continue;
+    const message = session.messages[index];
+    const isAbortedPlaceholder = message.role === 'assistant' && message.aborted === true && message.content.every((content) => content.type === 'text' && !content.text);
+    if (isAbortedPlaceholder) continue;
+    if (message.entryId !== undefined && message.entryId !== ids[idIndex]) break;
+    message.entryId = ids[idIndex--];
+  }
+}
+
 function applyChildNativeEvent(attachment: SubagentAttachmentState, event: PimoteEvent): void {
   if (event.type === 'full_resync') {
     const full = event as FullResyncEvent;
     attachment.state = cloneSessionState(full.state);
     attachment.messages = [...full.messages];
+    attachment.branchEntryIds = full.branchEntryIds !== undefined ? [...full.branchEntryIds] : undefined;
     attachment.transcript = attachment.messages;
     attachment.messageKeys = attachment.messages.map((_, index) => `child-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${index}`);
     attachment.optimisticEntries = [];
@@ -482,12 +644,15 @@ function applyChildNativeEvent(attachment: SubagentAttachmentState, event: Pimot
       attachment.streamingKey = null;
       attachment.runningToolCallIds = [];
       break;
-    case 'agent_end':
-      if (!(event as AgentEndEvent).willRetry) {
+    case 'agent_end': {
+      const end = event as AgentEndEvent;
+      if (!end.willRetry) {
         attachment.streamingMessage = null;
         attachment.streamingKey = null;
+        if (end.messageEntryIds) hydrateMessageEntryIds(attachment, end.messageEntryIds);
       }
       break;
+    }
     case 'auto_retry_end':
       if (!(event as AutoRetryEndEvent).success) {
         attachment.state = { ...attachment.state, isStreaming: false };
@@ -656,6 +821,8 @@ export interface PerSessionState {
   folder: FolderInfo | null;
   firstMessage: string | undefined;
   messages: PimoteAgentMessage[];
+  /** Raw native branch at the last root snapshot boundary. */
+  branchEntryIds?: readonly string[];
   isStreaming: boolean;
   /** Invalidates in-flight streaming snapshots when a newer lifecycle event arrives. */
   streamingRevision: number;
@@ -887,14 +1054,7 @@ export class SessionRegistry {
     if (!path || path.length === 0) return root.semanticTranscript;
     const attachment = root.attachments[subagentPathKey(path)];
     if (!attachment) return [];
-    const seen = new SvelteSet<string>();
-    const events: WireSubagentSemanticEvent[] = [];
-    for (const event of [...root.semanticEvents, ...attachment.semanticEvents]) {
-      if (seen.has(event.eventId)) continue;
-      seen.add(event.eventId);
-      events.push(event);
-    }
-    return projectSubagentWireTranscript(nativeEntriesForMessages(attachment.childSessionId, attachment.messages), events);
+    return attachment.semanticTranscript;
   }
 
   getSelectedSubagentPath(rootSessionId: string): AgentPath | null {
@@ -1128,6 +1288,7 @@ export class SessionRegistry {
       optimisticEntries: [],
       bashExecutions: {},
       messages,
+      ...(snapshot.branchEntryIds !== undefined ? { branchEntryIds: [...snapshot.branchEntryIds] } : {}),
       transcript: messages,
       streamingMessage: snapshot.streamingMessage ? { ...snapshot.streamingMessage, content: snapshot.streamingMessage.content.map((block) => ({ ...block })) } : null,
       streamingKey: snapshot.streamingMessage ? `child-stream-${rootSessionId}-${JSON.stringify(snapshot.path)}-${snapshot.childSessionId}` : null,
@@ -1143,19 +1304,22 @@ export class SessionRegistry {
     };
   }
 
+  private rebaseSemanticCaches(rootSessionId: string, nativeSessionId: string, messages: readonly PimoteAgentMessage[], branchEntryIds?: readonly string[]): void {
+    const root = this.ensureSubagentRoot(rootSessionId);
+    root.semanticEvents = rebaseSemanticPositions(root.semanticEvents, nativeSessionId, messages, branchEntryIds);
+    for (const attachment of Object.values(root.attachments)) {
+      attachment.semanticEvents = rebaseSemanticPositions(attachment.semanticEvents, nativeSessionId, messages, branchEntryIds);
+    }
+  }
+
   private rebuildSubagentAttachmentSemantic(root: SubagentRootState, attachment: SubagentAttachmentState): void {
     const nativeEntries = nativeEntriesForMessages(attachment.childSessionId, attachment.messages);
-    const persisted = persistedSemanticEvents(attachment.childSessionId, attachment.messages);
-    const seen = new SvelteSet<string>();
-    const events: WireSubagentSemanticEvent[] = [];
-    for (const event of [...persisted, ...root.semanticEvents, ...attachment.semanticEvents]) {
-      if (seen.has(event.eventId)) continue;
-      seen.add(event.eventId);
-      events.push(event);
-    }
+    const persisted = persistedSemanticEvents(attachment.childSessionId, attachment.messages, attachment.path);
+    const events = mergeSemanticEvents(persisted, stripNativeOccurrences(root.semanticEvents), stripNativeOccurrences(attachment.semanticEvents));
+    const surface = { sessionId: attachment.childSessionId, path: attachment.path };
     attachment.semanticEvents = events;
-    attachment.semanticReduction = reduceSubagentWireSemanticEvents(events);
-    attachment.semanticTranscript = projectSubagentWireTranscript(nativeEntries, events);
+    attachment.semanticReduction = reduceSubagentWireSemanticEvents(events, surface);
+    attachment.semanticTranscript = projectSubagentWireTranscript(nativeEntries, events, surface);
     void root;
   }
 
@@ -1163,16 +1327,11 @@ export class SessionRegistry {
     const root = this.ensureSubagentRoot(rootSessionId);
     const sessionMessages = persistedBase ?? this.sessions[rootSessionId]?.messages ?? [];
     const persisted = persistedSemanticEvents(rootSessionId, sessionMessages);
-    const seen = new SvelteSet<string>();
-    const events: WireSubagentSemanticEvent[] = [];
-    for (const event of [...persisted, ...root.semanticEvents]) {
-      if (seen.has(event.eventId)) continue;
-      seen.add(event.eventId);
-      events.push(event);
-    }
+    const events = mergeSemanticEvents(persisted, stripNativeOccurrences(root.semanticEvents));
+    const surface = { sessionId: rootSessionId, path: [] };
     root.semanticEvents = events;
-    root.semanticReduction = reduceSubagentWireSemanticEvents(events);
-    root.semanticTranscript = projectSubagentWireTranscript(nativeEntriesForMessages(rootSessionId, sessionMessages), events);
+    root.semanticReduction = reduceSubagentWireSemanticEvents(events, surface);
+    root.semanticTranscript = projectSubagentWireTranscript(nativeEntriesForMessages(rootSessionId, sessionMessages), events, surface);
     for (const attachment of Object.values(root.attachments)) this.rebuildSubagentAttachmentSemantic(root, attachment);
   }
 
@@ -1258,27 +1417,6 @@ export class SessionRegistry {
     session.messages = [...session.messages, message];
     session.messageKeys = [...session.messageKeys, key];
     session.optimisticEntries = [...session.optimisticEntries, { key, clientMessageId }];
-  }
-
-  /**
-   * Give streamed messages their persisted entry ids. `ids` comes from the
-   * server's context view of the branch (extractMessageEntryIds), whose tail
-   * matches the client's tail: streamed messages are the newest, and a
-   * compaction shortens only the head. Zip from the end, skipping entries pi
-   * never persists (pending optimistic prompts, aborted-empty assistant
-   * placeholders). Stop at the first message whose id disagrees.
-   */
-  private applyMessageEntryIds(session: PerSessionState, ids: readonly string[]): void {
-    const pendingKeys = session.optimisticEntries.map((e) => e.key);
-    let idIdx = ids.length - 1;
-    for (let i = session.messages.length - 1; i >= 0 && idIdx >= 0; i--) {
-      if (pendingKeys.includes(session.messageKeys[i])) continue;
-      const msg = session.messages[i];
-      const isAbortedPlaceholder = msg.role === 'assistant' && msg.aborted === true && msg.content.every((c) => c.type === 'text' && !c.text);
-      if (isAbortedPlaceholder) continue;
-      if (msg.entryId !== undefined && msg.entryId !== ids[idIdx]) break;
-      msg.entryId = ids[idIdx--];
-    }
   }
 
   /** Remove an optimistic user message whose prompt will not echo it
@@ -1396,7 +1534,6 @@ export class SessionRegistry {
 
   private applySubagentSemanticEvent(event: WireSubagentSemanticEvent): void {
     const root = this.ensureSubagentRoot(event.sessionId);
-    const existing = root.semanticEvents.some((candidate) => candidate.eventId === event.eventId);
     const providerCursor = event.providerCursor;
     const current = root.providerCursor;
     const staleTopology =
@@ -1417,7 +1554,7 @@ export class SessionRegistry {
         root.providerCursor = { epoch: providerCursor.epoch, sequence: providerCursor.sequence };
       }
     }
-    if (!existing) root.semanticEvents = [...root.semanticEvents, event];
+    root.semanticEvents = [...root.semanticEvents, event];
     this.applySubagentNodeEvent(root, event);
     this.rebuildSubagentSemantic(event.sessionId);
   }
@@ -1500,6 +1637,7 @@ export class SessionRegistry {
     attachment.childSessionId = snapshot.childSessionId;
     attachment.state = cloneSessionState(snapshot.state);
     attachment.messages = [...(snapshot.messages ?? [])];
+    attachment.branchEntryIds = snapshot.branchEntryIds !== undefined ? [...snapshot.branchEntryIds] : undefined;
     attachment.transcript = attachment.messages;
     attachment.messageKeys = attachment.messages.map((_, index) => `child-${snapshot.sessionId}-${JSON.stringify(snapshot.path)}-${index}`);
     attachment.optimisticEntries = [];
@@ -1512,7 +1650,7 @@ export class SessionRegistry {
     attachment.draftText = draftText;
     attachment.closed = false;
     attachment.closeReason = undefined;
-    attachment.semanticEvents = persistedSemanticEvents(snapshot.childSessionId, attachment.messages);
+    attachment.semanticEvents = persistedSemanticEvents(snapshot.childSessionId, attachment.messages, attachment.path);
     attachment.bashExecutions = {};
     attachment.toolExecutions = rebuildToolExecutionsFromMessages(attachment.messages, attachment.runningToolCallIds);
     attachment.semanticReduction = EMPTY_SEMANTIC_REDUCTION;
@@ -1520,7 +1658,8 @@ export class SessionRegistry {
     root.attachments[key] = attachment;
     const staged = (root.pendingViewEvents[key] ?? []).filter((pending) => pending.attachmentGeneration === snapshot.attachmentGeneration);
     delete root.pendingViewEvents[key];
-    this.rebuildSubagentAttachmentSemantic(root, attachment);
+    this.rebaseSemanticCaches(snapshot.sessionId, snapshot.childSessionId, attachment.messages, attachment.branchEntryIds);
+    this.rebuildSubagentSemantic(snapshot.sessionId);
     for (const pending of staged.sort((left, right) => left.viewCursor - right.viewCursor)) this.applySubagentViewEvent(pending);
     return attachment;
   }
@@ -1544,7 +1683,7 @@ export class SessionRegistry {
     }
     if (event.event.type === 'subagent_event') {
       const semantic = event.event as unknown as WireSubagentSemanticEvent;
-      if (!attachment.semanticEvents.some((candidate) => candidate.eventId === semantic.eventId)) attachment.semanticEvents = [...attachment.semanticEvents, semantic];
+      attachment.semanticEvents = [...attachment.semanticEvents, semantic];
     }
     this.rebuildSubagentAttachmentSemantic(root, attachment);
   }
@@ -1702,7 +1841,8 @@ export class SessionRegistry {
         session.lastPositiveStreamingUsage = null;
         // Apply entry IDs so navigation targets work on messages received via streaming.
         if (endEvent.messageEntryIds) {
-          this.applyMessageEntryIds(session, endEvent.messageEntryIds);
+          hydrateMessageEntryIds(session, endEvent.messageEntryIds);
+          this.rebuildSubagentSemantic(sessionId);
         }
         // Refresh meta after the terminal attempt boundary.
         this.refreshSessionMeta(sessionId);
@@ -1767,6 +1907,7 @@ export class SessionRegistry {
         session.messages = [...session.messages, entryEvent.message];
         session.messageKeys = [...session.messageKeys, 'msg-' + this._nextMessageKey++];
         session.messageCount++;
+        this.rebuildSubagentSemantic(sessionId);
         break;
       }
 
@@ -1844,6 +1985,7 @@ export class SessionRegistry {
         if (message.role === 'toolResult') {
           this.applyToolResults(session, message);
         }
+        this.rebuildSubagentSemantic(sessionId);
         break;
       }
 
@@ -1933,6 +2075,7 @@ export class SessionRegistry {
         rebuilt.messageCount = state.messageCount;
         rebuilt.sessionName = state.sessionName ?? null;
         rebuilt.messages = messages;
+        rebuilt.branchEntryIds = resync.branchEntryIds !== undefined ? [...resync.branchEntryIds] : undefined;
         rebuilt.firstMessage = this.firstUserMessage(messages);
         rebuilt.status = state.isStreaming ? 'working' : 'idle';
         rebuilt.messageKeys = this.generateMessageKeys(messages.length);
@@ -1954,6 +2097,7 @@ export class SessionRegistry {
           rebuilt.toolExecutions[toolCallId] = { name: call?.toolName ?? '', args: call?.args, partialResult: '', status: 'running' };
         }
         this.sessions[sessionId] = rebuilt;
+        this.rebaseSemanticCaches(sessionId, rebuilt.sessionId, messages, resync.branchEntryIds);
         // Rebuild semantic overlays from durable details plus any live facts
         // retained across the resync. Missing metadata leaves native entries
         // untouched as the fallback transcript.

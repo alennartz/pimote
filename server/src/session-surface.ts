@@ -9,7 +9,7 @@ import type {
   SessionState,
   StreamingMessage,
 } from '../../shared/dist/index.js';
-import type { BorrowedAgentSession } from '@pimote/sdk/subagents';
+import type { BorrowedAgentSession, SubagentTranscriptPosition } from '@pimote/sdk/subagents';
 import { EventBuffer, type IncomingSdkEvent } from './event-buffer.js';
 import { mapAgentMessage, mapContextEntries, type SdkSessionEntry } from './message-mapper.js';
 import { completeFileRefs } from './file-references.js';
@@ -57,6 +57,7 @@ export interface SessionSurfaceSnapshot {
   cursor: number;
   state: SessionState;
   messages: PimoteAgentMessage[];
+  branchEntryIds?: readonly string[];
   streamingMessage?: StreamingMessage;
   runningToolCallIds?: string[];
 }
@@ -172,6 +173,8 @@ export interface SessionSurface {
   readonly sessionId: string;
   readonly kind: SessionSurfaceKind;
   readonly currentCursor: number;
+  /** Resolve insertion placement against this surface's current native branch. */
+  resolveTranscriptPosition?(position: SubagentTranscriptPosition): SubagentTranscriptPosition | undefined;
   /** Subscribe to native Pi events before taking the first transcript snapshot. */
   initialize(): Promise<SessionSurfaceSnapshot>;
   /** Accept one native Pi event when the owning slot supplies the subscription. */
@@ -387,8 +390,15 @@ function fullMessagesFor(options: SessionSurfaceOptions, capabilities: SessionSu
   return Array.isArray(session.messages) ? session.messages.filter(isAgentMessage).map(mapAgentMessage) : [];
 }
 
+function nativeBranchEntryIds(session: BorrowedAgentSession): string[] | undefined {
+  const manager = session.sessionManager as unknown as NativeSessionManagerExtras | undefined;
+  const entries = manager?.getBranch?.();
+  return Array.isArray(entries) ? entries.flatMap((entry) => (typeof asRecord(entry).id === 'string' ? [asRecord(entry).id as string] : [])) : undefined;
+}
+
 function snapshotFor(options: SessionSurfaceOptions, capabilities: SessionSurfaceCapabilities, cursor: number): SessionSurfaceSnapshot {
   const session = options.session;
+  const branchEntryIds = nativeBranchEntryIds(session);
   const pending = session.state?.pendingToolCalls;
   const pendingToolCallIds = pending && typeof (pending as Set<string>).values === 'function' ? [...(pending as Set<string>)] : [];
   const partial = mapStreamingMessage(session.state?.streamingMessage);
@@ -396,6 +406,7 @@ function snapshotFor(options: SessionSurfaceOptions, capabilities: SessionSurfac
     cursor,
     state: stateFor(session, capabilities),
     messages: fullMessagesFor(options, capabilities),
+    ...(branchEntryIds !== undefined ? { branchEntryIds } : {}),
     ...(partial ? { streamingMessage: partial } : {}),
     ...(pendingToolCallIds.length > 0 ? { runningToolCallIds: pendingToolCallIds } : {}),
   };
@@ -438,7 +449,16 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     const runner = (options.session as unknown as { extensionRunner?: { getEntryRenderer?: (name: string) => unknown } }).extensionRunner;
     return runner?.getEntryRenderer ? Boolean(runner.getEntryRenderer(customType)) : true;
   };
-  const eventBuffer = options.eventBuffer ?? new EventBuffer(options.bufferCapacity ?? SURFACE_BUFFER_CAPACITY, customEntryVisible);
+  const branchEntryIds = (): string[] => nativeBranchEntryIds(options.session) ?? [];
+  const eventBuffer =
+    options.eventBuffer ??
+    new EventBuffer(
+      options.bufferCapacity ?? SURFACE_BUFFER_CAPACITY,
+      customEntryVisible,
+      0,
+      () => fullMessagesFor(options, capabilities).flatMap((message) => (message.entryId ? [message.entryId] : [])),
+      branchEntryIds,
+    );
   const listensToNative = options.subscribeNative !== false;
   const listeners = new Set<(event: PimoteSessionEvent) => void>();
   const observers = new Map<string, { cursor: number; active: boolean }>();
@@ -829,6 +849,9 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     kind: options.kind,
     get currentCursor() {
       return eventBuffer.currentCursor;
+    },
+    resolveTranscriptPosition(position) {
+      return eventBuffer.resolveTranscriptPosition(position, options.sessionId);
     },
     initialize,
     acceptNativeEvent,

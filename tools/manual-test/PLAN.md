@@ -375,13 +375,15 @@ settings User pane).
 ### 15. Inspect and chat with a live subagent view
 
 **What:** In a root conversation, the right-side Panels host shows the
-root-relative subagent hierarchy with state, task, persona, context, cost,
-channels, and wait metadata. Inspecting a row leaves the root transcript
-selected. An explicit Open view action borrows the live child session, shows
+fully expanded root-relative subagent hierarchy with state, persona, context,
+cost, channels, and wait metadata. Inspecting a row keeps the current
+transcript selected. Its details appear below the complete tree, without
+the initial task preview. An explicit Open view action borrows the live child session, shows
 its saved transcript, and lets the user chat with identity-preserving controls.
 Users can switch among open descendants, close a child view without stopping
 its runtime, and return to the root. Narrow containers use a dismissible
-Panels drawer that closes when a child opens. Teardown requires confirmation;
+Panels drawer that closes when a child or the root opens. The top root row
+returns to the root transcript. Teardown requires confirmation;
 removal closes the view and leaves a notice with the saved-session resurrection
 path. Generic SDK cards remain below the hierarchy.
 
@@ -393,6 +395,20 @@ creates unsafe duplicate runtimes.
 my-pi provider. A deterministic typed-provider fixture can stand in for a
 live LLM when model streaming is unavailable; it must still exercise the real
 provider discovery, host, wire, and client surfaces.
+
+**Regression checks:**
+
+- On a narrow screen, focus the composer and enter a draft. Open Panels in
+  one activation. The keyboard closes, Panels stays open, and the draft remains.
+- Open a child view, reopen Panels, and select the top root row. Repeat with
+  the composer focused. Root and child drafts survive. Browser logs contain
+  no `state_unsafe_mutation` errors during view changes.
+- Inspect each tree node. Keep all descendants visible and one details section
+  below the tree. Do not show expansion controls or the initial task preview.
+- Reload root and child conversations. Semantic blocks keep their native
+  positions. Each assistant response keeps its bot icon. Successful waits use
+  success styling. Sent headers show the destination and a reply-expectation
+  icon. Inline actions appear below their text.
 
 ## Automation gap (recorded, not an action item for this topic)
 

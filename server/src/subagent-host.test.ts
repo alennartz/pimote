@@ -8,6 +8,7 @@ import type {
   SubagentLeaseEvent,
   SubagentNodeSnapshot,
   SubagentProvider,
+  SubagentTranscriptPosition,
 } from '@pimote/sdk/subagents';
 import type { PimoteSessionEvent, SessionState } from '../../shared/dist/index.js';
 import { createSubagentHost, type SubagentViewChange } from './subagent-host.js';
@@ -70,7 +71,23 @@ function semanticEvent(sequence: number): SubagentEvent {
   };
 }
 
-function fixture() {
+function completionEvent(sequence: number): SubagentEvent {
+  return {
+    eventId: `completion-${sequence}`,
+    cursor: { epoch: 'epoch-1', sequence },
+    path: scout,
+    kind: 'completion',
+    relatedPiEvents: [],
+    data: { status: 'idle', delivery: 'asynchronous', output: `Result ${sequence}` },
+  };
+}
+
+function fixture(retainedEvents: readonly SubagentEvent[] = [], messagePositions: Readonly<Record<string, number>> = {}) {
+  const resolvePosition = (sessionId: string, position: SubagentTranscriptPosition): SubagentTranscriptPosition => {
+    const messageIndex = messagePositions[sessionId];
+    return messageIndex === undefined ? position : { ...position, messageIndex };
+  };
+  const providerCursor = { epoch: 'epoch-1', sequence: retainedEvents.at(-1)?.cursor.sequence ?? 0 };
   const sessions = new Map<string, BorrowedAgentSession>([
     [key(worker), session('worker-1')],
     [key(scout), session('scout-1')],
@@ -119,9 +136,13 @@ function fixture() {
     snapshot() {
       if (pending.snapshotEvent) publish(pending.snapshotEvent);
       const nodes = [...sessions.entries()].map(([storedPath, current]) => node(JSON.parse(storedPath) as AgentPath, current.sessionId));
-      return { nodes, cursor: { epoch: 'epoch-1', sequence: 0 } };
+      return { nodes, cursor: providerCursor };
     },
-    replay: () => ({ kind: 'events', cursor: { epoch: 'epoch-1', sequence: 0 }, events: [] }),
+    replay: (after) => ({
+      kind: 'events',
+      cursor: providerCursor,
+      events: retainedEvents.filter((event) => after === undefined || event.cursor.sequence > after.sequence),
+    }),
     async acquire(path) {
       pending.acquireCalls++;
       if (pending.blockAcquire) await new Promise<void>((resolve) => (pending.releaseAcquire = resolve));
@@ -236,6 +257,7 @@ function fixture() {
       get currentCursor() {
         return events.length;
       },
+      resolveTranscriptPosition: (position) => resolvePosition(id, position),
       initialize: async () => snapshot(),
       refreshSnapshot: () => ({ ...snapshot(), cursor: events.length + 1 }),
       subscribe: (listener) => {
@@ -270,7 +292,7 @@ function fixture() {
   const host = createSubagentHost({
     rootSessionId: 'root-session',
     provider,
-    parentSurface: {} as SessionSurface,
+    parentSurface: { resolveTranscriptPosition: (position: SubagentTranscriptPosition) => resolvePosition('root-session', position) } as SessionSurface,
     parentCursor: () => pending.parentCursor,
     emitParentEvent: (event) => {
       parentEvents.push(event);
@@ -340,6 +362,105 @@ function fixture() {
 }
 
 describe('SubagentHost', () => {
+  it('replays retained semantic history once before snapshot-boundary and live events', async () => {
+    const f = fixture([completionEvent(1), completionEvent(2)]);
+    f.pending.snapshotEvent = completionEvent(3);
+    await f.host.start();
+    f.publish(completionEvent(2));
+    f.publish(completionEvent(4));
+
+    expect(f.parentEvents.map((event) => event.eventId)).toEqual(['completion-1', 'completion-2', 'completion-3', 'completion-4']);
+  });
+
+  it('retains different legacy payloads sharing an ID while deduplicating enriched copies', async () => {
+    const first: SubagentEvent = {
+      ...completionEvent(1),
+      eventId: 'legacy-completion',
+      kind: 'completion',
+      data: { status: 'idle', delivery: 'asynchronous', output: 'First legacy output' },
+    };
+    const second: SubagentEvent = { ...first, cursor: { epoch: 'epoch-1', sequence: 2 }, data: { ...first.data, output: 'Second legacy output' } };
+    const f = fixture([first, second]);
+    await f.host.start();
+    f.publish({
+      ...second,
+      cursor: { epoch: 'epoch-1', sequence: 3 },
+      data: { output: 'Second legacy output', delivery: 'asynchronous', status: 'idle' },
+      relatedPiEvents: [{ sessionId: 'root-session', kind: 'custom_message', entryId: 'enriched-entry' }],
+      transcriptPosition: { sessionId: 'root-session', afterEntryId: 'enriched-entry' },
+    });
+    f.publish({ ...second, cursor: { epoch: 'epoch-1', sequence: 4 }, data: { ...second.data, output: 'Third legacy output' } });
+
+    expect(f.parentEvents.map((event) => (event.kind === 'completion' ? event.data.output : undefined))).toEqual([
+      'First legacy output',
+      'Second legacy output',
+      'Third legacy output',
+    ]);
+    expect(f.parentEvents.map((event) => event.eventId)).toEqual(['legacy-completion', 'legacy-completion', 'legacy-completion']);
+  });
+
+  it('keeps snapshot-covered topology out of retained semantic replay', async () => {
+    const f = fixture([
+      {
+        eventId: 'removed-incarnation',
+        cursor: { epoch: 'epoch-1', sequence: 1 },
+        path: scout,
+        kind: 'node_removed',
+        relatedPiEvents: [],
+        data: { node: node(scout, 'scout-old'), reason: 'removed' },
+      },
+      { ...semanticEvent(2), data: node(scout, 'scout-old', 'waiting') },
+      completionEvent(3),
+    ]);
+    const started = await f.host.start();
+    f.publish(semanticEvent(4));
+
+    expect(started.snapshot.nodes.find((candidate) => key(candidate.path) === key(scout))?.sessionId).toBe('scout-1');
+    expect(f.parentEvents.map((event) => event.eventId)).toEqual(['completion-3', 'event-4']);
+  });
+
+  it('resolves retained root source positions without changing provider facts', async () => {
+    const transcriptPosition = { sessionId: 'root-session', afterEntryId: 'root-boundary' };
+    const retained = { ...completionEvent(1), transcriptPosition };
+    const f = fixture([retained], { 'root-session': 2 });
+    await f.host.start();
+    transcriptPosition.afterEntryId = 'changed-source';
+
+    expect(f.parentEvents[0]).toMatchObject({
+      transcriptPosition: { sessionId: 'root-session', afterEntryId: 'root-boundary', messageIndex: 2 },
+    });
+    expect(retained).not.toHaveProperty('transcriptPosition.messageIndex');
+  });
+
+  it('resolves a child source position through an already-open matching runtime', async () => {
+    const f = fixture([], { 'root-session': 7, 'scout-1': 2 });
+    await f.host.start();
+    await f.host.openView('connection-1', scout);
+    f.publish({
+      ...completionEvent(1),
+      path: reviewer,
+      transcriptPosition: { sessionId: 'scout-1', afterEntryId: 'child-boundary' },
+    });
+
+    expect(f.parentEvents[0]).toMatchObject({
+      transcriptPosition: { sessionId: 'scout-1', afterEntryId: 'child-boundary', messageIndex: 2 },
+    });
+  });
+
+  it('preserves unresolved child positions without acquiring a view lease or inventing root positions', async () => {
+    const f = fixture([], { 'root-session': 7, 'scout-1': 2 });
+    await f.host.start();
+    const transcriptPosition = { sessionId: 'scout-1', afterEntryId: 'unopened-boundary' };
+    f.publish({ ...completionEvent(1), transcriptPosition });
+    f.publish(completionEvent(2));
+    transcriptPosition.afterEntryId = 'changed-source';
+
+    expect(f.parentEvents[0]).toMatchObject({ transcriptPosition: { sessionId: 'scout-1', afterEntryId: 'unopened-boundary' } });
+    expect(f.parentEvents[0]).not.toHaveProperty('transcriptPosition.messageIndex');
+    expect(f.parentEvents[1]).not.toHaveProperty('transcriptPosition');
+    expect(f.active(scout)).toBe(0);
+  });
+
   it('does not lose provider events emitted at the snapshot boundary or afterwards', async () => {
     const f = fixture();
     f.pending.snapshotEvent = semanticEvent(1);

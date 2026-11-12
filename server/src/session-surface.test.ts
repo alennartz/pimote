@@ -206,6 +206,26 @@ describe('SessionSurface', () => {
     expect(live).toContainEqual(expect.objectContaining({ type: 'message_update', content: expect.objectContaining({ text: 'Later' }) }));
   });
 
+  it.each(['root', 'child'] as const)('includes metadata-only native branch IDs in %s snapshots', async (kind) => {
+    const f = fixture();
+    const branch = f.native.sessionManager.getBranch();
+    f.native.sessionManager.getBranch = () => [
+      ...branch,
+      {
+        type: 'thinking_level_change',
+        id: 'hidden-metadata',
+        parentId: 'compaction',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        thinkingLevel: 'off',
+      },
+    ];
+    const surface = kind === 'child' ? f.surface : createSessionSurface({ sessionId: 'child-session', session: f.native, kind, capabilities: f.capabilities });
+    const snapshot = await surface.initialize();
+
+    expect(snapshot).toMatchObject({ branchEntryIds: ['old', 'recent', 'compaction', 'hidden-metadata'] });
+    expect(snapshot.messages.some((message) => message.entryId === 'hidden-metadata')).toBe(false);
+  });
+
   it('returns the full saved branch instead of only the current compacted context', async () => {
     const f = fixture();
     const snapshot = await f.surface.initialize();

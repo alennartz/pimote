@@ -96,6 +96,38 @@ describe('PanelStore', () => {
     });
   });
 
+  describe('container presentation', () => {
+    it('preserves an open drawer across repeated and changing narrow measurements', () => {
+      store.setContainerWidth(390);
+      store.openPanel();
+
+      for (const width of [390, 420]) {
+        store.setContainerWidth(width);
+        expect(store.presentation).toBe('drawer');
+        expect(store.open).toBe(true);
+      }
+    });
+
+    it('starts the drawer closed when entering narrow presentation', () => {
+      store.setContainerWidth(1120);
+      store.setContainerWidth(390);
+
+      expect(store.presentation).toBe('drawer');
+      expect(store.open).toBe(false);
+    });
+
+    it('respects desktop collapse when an open drawer returns to wide presentation', () => {
+      store.toggleCollapsed();
+      store.setContainerWidth(390);
+      store.openPanel();
+      store.setContainerWidth(1120);
+
+      expect(store.presentation).toBe('sidebar');
+      expect(store.collapsed).toBe(true);
+      expect(store.open).toBe(false);
+    });
+  });
+
   describe('reset', () => {
     it('clears all cards', () => {
       store.handlePanelUpdate([makeCard('c1', 'Card 1'), makeCard('c2', 'Card 2')]);

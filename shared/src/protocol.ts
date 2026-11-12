@@ -457,11 +457,20 @@ export type SubagentEventData =
   | Readonly<{ kind: 'completion'; data: SubagentCompletionData }>
   | Readonly<{ kind: 'interrupt' | 'teardown' | 'resurrect'; data: SubagentLifecycleData }>;
 
+/** An insertion boundary in the owning native transcript, not replacement provenance. */
+export type SubagentTranscriptPosition = Readonly<{
+  sessionId: string;
+  afterEntryId: string | null;
+  /** Insertion slot in the current surface's native message projection. */
+  messageIndex?: number;
+}>;
+
 /** A semantic overlay. Native Pi entries remain the transcript source. */
 export type SubagentSemanticFact = Readonly<{
   eventId: string;
   path: AgentPath;
   relatedPiEvents: readonly PiEventRef[];
+  transcriptPosition?: SubagentTranscriptPosition;
 }> &
   SubagentEventData;
 
@@ -1769,6 +1778,8 @@ export interface FullResyncEvent {
   sessionId: string;
   state: SessionState;
   messages: PimoteAgentMessage[];
+  /** Current native branch, including hidden and metadata-only entries. */
+  branchEntryIds?: readonly string[];
   /** The message pi is streaming at snapshot time, as far as it has streamed.
    *  Later message_update deltas extend its last block. */
   streamingMessage?: StreamingMessage;
@@ -1807,6 +1818,8 @@ export interface SubagentViewSnapshot {
   viewCursor: SubagentViewCursor;
   state: SessionState;
   messages: PimoteAgentMessage[];
+  /** Current child branch, independent of its rendered message projection. */
+  branchEntryIds?: readonly string[];
   streamingMessage?: StreamingMessage;
   runningToolCallIds?: string[];
 }
@@ -1833,11 +1846,20 @@ export interface SubagentViewClosedEvent {
   reason: 'released' | 'replaced' | 'unavailable' | 'teardown';
 }
 
+/** One native custom display occurrence reconstructed from current message metadata. */
+export type SubagentNativeOccurrence = Readonly<{
+  sessionId: string;
+  entryId?: string;
+  messageIndex: number;
+}>;
+
 /** Semantic provider event projected into the parent session replay stream. */
 type WithoutProviderCursor<T> = T extends unknown ? Omit<T, 'cursor'> : never;
 export type SubagentSemanticEvent = WithoutProviderCursor<SubagentEvent> &
   SessionEventBase & {
     type: 'subagent_event';
+    /** Client-reconstructed native display occurrence, not a provider fact ID. */
+    nativeOccurrence?: SubagentNativeOccurrence;
     /** Provider cursor retained for diagnostics; replay uses the parent cursor above. */
     providerCursor?: FeedCursor;
   };

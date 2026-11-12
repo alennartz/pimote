@@ -33,6 +33,7 @@ export type {
   SubagentResurrectRequest,
   SubagentResurrectResult,
   SubagentSemanticFact,
+  SubagentTranscriptPosition,
   SubagentSnapshot,
   SubagentState,
   SubagentStopRequest,

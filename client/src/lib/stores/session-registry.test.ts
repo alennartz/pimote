@@ -2100,6 +2100,19 @@ describe('subagent child surface state', () => {
     } as PimoteEvent;
   }
 
+  function nativeSnapshot(registry: SessionRegistry, surface: 'root' | 'child', messages: PimoteAgentMessage[], branchEntryIds?: readonly string[], viewCursor = 3): void {
+    if (surface === 'child') registry.handleEvent(childSnapshot(messages, { branchEntryIds, viewCursor }));
+    else {
+      registry.handleEvent({
+        type: 'full_resync',
+        sessionId: 'root',
+        state: { ...childState(), isStreaming: false, sessionId: 'root', messageCount: messages.length },
+        messages,
+        branchEntryIds,
+      } as PimoteEvent);
+    }
+  }
+
   it('rehydrates child tool executions and gives streaming content a render key', () => {
     const registry = new SessionRegistry();
     registry.addSession('root', '/workspace', 'workspace');
@@ -2144,6 +2157,600 @@ describe('subagent child surface state', () => {
     } as PimoteEvent);
 
     expect(registry.getSubagentSemanticEvents('root').map((event) => event.eventId)).toEqual(['direct', 'nested', 'content']);
+  });
+
+  it.each(['root', 'child'] as const)('hydrates %s semantic facts when native messages finish', (surface) => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    const nativeSessionId = surface === 'root' ? 'root' : 'child-session';
+    const fact = (eventId: string) => ({
+      eventId,
+      kind: 'delegation',
+      path: ['worker'],
+      relatedPiEvents: [],
+      data: { invocationId: eventId, awaitsResult: false, children: [] },
+    });
+    const messages: PimoteAgentMessage[] = [
+      { role: 'custom', entryId: 'direct-entry', details: fact('direct-live'), content: [] },
+      { role: 'custom', entryId: 'nested-entry', details: { semanticEvents: [fact('nested-live')] }, content: [] },
+      { role: 'toolResult', entryId: 'content-entry', content: [{ type: 'tool_result', toolCallId: 'call-live', data: { semantic: fact('content-live') } }] },
+    ];
+    if (surface === 'child') registry.handleEvent(childSnapshot([]));
+    messages.forEach((message, index) => {
+      const end = { type: 'message_end', sessionId: nativeSessionId, cursor: index + 4, message };
+      if (surface === 'root') {
+        registry.handleEvent(makeSessionEvent('message_start', 'root', { role: message.role }));
+        registry.handleEvent(end as PimoteEvent);
+      } else {
+        registry.handleEvent({
+          type: 'subagent_view_event',
+          sessionId: 'root',
+          childSessionId: nativeSessionId,
+          path: ['worker'],
+          incarnation: 'inc-1',
+          attachmentGeneration: 'gen-1',
+          viewCursor: index + 4,
+          event: end,
+        } as PimoteEvent);
+      }
+    });
+
+    const events = surface === 'root' ? registry.getSubagentSemanticEvents('root') : registry.getSubagentAttachment('root', ['worker'])!.semanticEvents;
+    expect(events.map((event) => event.eventId)).toEqual(['direct-live', 'nested-live', 'content-live']);
+    events.forEach((event, messageIndex) => {
+      expect(event).toMatchObject({
+        transcriptPosition: { sessionId: nativeSessionId, afterEntryId: messages[messageIndex].entryId, messageIndex },
+      });
+    });
+    const savedMessages = surface === 'root' ? registry.sessions.root.messages : registry.getSubagentAttachment('root', ['worker'])!.messages;
+    expect(savedMessages).toEqual(messages);
+  });
+
+  it('hydrates semantic metadata from a display-only root entry', () => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    const message: PimoteAgentMessage = {
+      role: 'custom',
+      entryId: 'display-entry',
+      display: true,
+      fromEntry: true,
+      content: [{ type: 'text', text: 'Native fallback' }],
+      details: {
+        semantic: {
+          eventId: 'display-fact',
+          kind: 'completion',
+          path: ['worker'],
+          relatedPiEvents: [],
+          data: { status: 'idle', delivery: 'asynchronous' },
+        },
+      },
+    };
+    registry.handleEvent(makeSessionEvent('custom_entry', 'root', { message }));
+
+    expect(registry.getSubagentSemanticEvents('root')).toEqual([
+      expect.objectContaining({ eventId: 'display-fact', transcriptPosition: { sessionId: 'root', afterEntryId: 'display-entry', messageIndex: 0 } }),
+    ]);
+    expect(registry.sessions.root.messages).toEqual([message]);
+  });
+
+  it.each(['root', 'child'] as const)('preserves source boundaries when recovering %s native metadata', (surface) => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    const nativeSessionId = surface === 'root' ? 'root' : 'child-session';
+    const fact = (eventId: string, transcriptPosition: unknown) => ({
+      eventId,
+      kind: 'completion',
+      path: ['worker'],
+      relatedPiEvents: [],
+      data: { status: 'idle', delivery: 'asynchronous' },
+      transcriptPosition,
+    });
+    const messages: PimoteAgentMessage[] = [
+      {
+        role: 'custom',
+        details: fact('matching-surface', { sessionId: nativeSessionId, afterEntryId: 'source-boundary', messageIndex: 99 }),
+        content: [],
+      },
+      {
+        role: 'custom',
+        details: fact('foreign-surface', { sessionId: 'another-session', afterEntryId: 'foreign-boundary' }),
+        content: [],
+      },
+    ];
+    if (surface === 'child') registry.handleEvent(childSnapshot(messages));
+    else {
+      registry.handleEvent({
+        type: 'full_resync',
+        sessionId: 'root',
+        state: { ...childState(), isStreaming: false, sessionId: 'root', messageCount: messages.length },
+        messages,
+      } as PimoteEvent);
+    }
+
+    const events = surface === 'root' ? registry.getSubagentSemanticEvents('root') : registry.getSubagentAttachment('root', ['worker'])!.semanticEvents;
+    expect(events.find((event) => event.eventId === 'matching-surface')).toMatchObject({
+      transcriptPosition: { sessionId: nativeSessionId, afterEntryId: 'source-boundary', messageIndex: 0 },
+    });
+    expect(events.find((event) => event.eventId === 'foreign-surface')).toMatchObject({
+      transcriptPosition: { sessionId: 'another-session', afterEntryId: 'foreign-boundary' },
+    });
+    expect(events.find((event) => event.eventId === 'foreign-surface')).not.toHaveProperty('transcriptPosition.messageIndex');
+  });
+
+  it('adds exact custom anchors when terminal events hydrate native entry IDs', () => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    for (const output of ['First legacy output', 'Second legacy output']) {
+      const message: PimoteAgentMessage = {
+        role: 'custom',
+        content: [],
+        details: {
+          semantic: { eventId: 'legacy-completion', kind: 'completion', path: ['worker'], relatedPiEvents: [], data: { status: 'idle', delivery: 'asynchronous', output } },
+        },
+      };
+      registry.handleEvent(makeSessionEvent('message_start', 'root', { role: 'custom' }));
+      registry.handleEvent(makeSessionEvent('message_end', 'root', { message }));
+    }
+    registry.handleEvent(makeSessionEvent('agent_end', 'root', { messageEntryIds: ['first-delivery', 'second-delivery'] }));
+
+    const events = registry.getSubagentSemanticEvents('root');
+    expect(events[0].relatedPiEvents).toEqual(expect.arrayContaining([{ sessionId: 'root', kind: 'custom_message', entryId: 'first-delivery' }]));
+    expect(events[1].relatedPiEvents).toEqual(expect.arrayContaining([{ sessionId: 'root', kind: 'custom_message', entryId: 'second-delivery' }]));
+  });
+
+  it.each(['root', 'child'] as const)('retains legacy %s payload collisions and merges tool/custom/live copies', (surface) => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    const nativeSessionId = surface === 'root' ? 'root' : 'child-session';
+    const first = {
+      eventId: 'legacy-completion',
+      kind: 'completion',
+      path: ['worker'],
+      relatedPiEvents: [{ sessionId: nativeSessionId, kind: 'tool_call', toolCallId: 'legacy-tool' }],
+      data: { status: 'idle', delivery: 'asynchronous', output: 'First legacy output' },
+    };
+    const second = { ...first, relatedPiEvents: [], data: { ...first.data, output: 'Second legacy output' } };
+    const messages: PimoteAgentMessage[] = [
+      { role: 'toolResult', entryId: 'tool-entry', content: [{ type: 'tool_result', toolCallId: 'legacy-tool', data: { semantic: first } }] },
+      {
+        role: 'custom',
+        entryId: 'first-delivery',
+        details: { semantic: { ...first, data: { output: 'First legacy output', delivery: 'asynchronous', status: 'idle' } } },
+        content: [],
+      },
+      { role: 'custom', entryId: 'second-delivery', details: { semantic: second }, content: [] },
+    ];
+    if (surface === 'child') registry.handleEvent(childSnapshot(messages));
+    else {
+      registry.handleEvent({
+        type: 'full_resync',
+        sessionId: 'root',
+        state: { ...childState(), isStreaming: false, sessionId: 'root', messageCount: messages.length },
+        messages,
+      } as PimoteEvent);
+    }
+    registry.handleEvent({
+      ...first,
+      type: 'subagent_event',
+      sessionId: 'root',
+      cursor: 4,
+      relatedPiEvents: [...first.relatedPiEvents, { sessionId: nativeSessionId, kind: 'custom_message', entryId: 'first-delivery' }],
+      transcriptPosition: { sessionId: nativeSessionId, afterEntryId: 'first-delivery' },
+    } as PimoteEvent);
+    const third = { ...second, type: 'subagent_event', sessionId: nativeSessionId, cursor: 5, data: { ...second.data, output: 'Third legacy output' } };
+    if (surface === 'root') registry.handleEvent(third as PimoteEvent);
+    else {
+      registry.handleEvent({
+        type: 'subagent_view_event',
+        sessionId: 'root',
+        childSessionId: nativeSessionId,
+        path: ['worker'],
+        incarnation: 'inc-1',
+        attachmentGeneration: 'gen-1',
+        viewCursor: 5,
+        event: third,
+      } as PimoteEvent);
+    }
+
+    const events = surface === 'root' ? registry.getSubagentSemanticEvents('root') : registry.getSubagentAttachment('root', ['worker'])!.semanticEvents;
+    expect(events.map((event) => (event.kind === 'completion' ? event.data.output : undefined))).toEqual(['First legacy output', 'Second legacy output', 'Third legacy output']);
+    expect(events.map((event) => event.eventId)).toEqual(['legacy-completion', 'legacy-completion', 'legacy-completion']);
+    expect(events[0].relatedPiEvents).toEqual(expect.arrayContaining([{ sessionId: nativeSessionId, kind: 'custom_message', entryId: 'first-delivery' }]));
+    expect(events[1].relatedPiEvents).toEqual(expect.arrayContaining([{ sessionId: nativeSessionId, kind: 'custom_message', entryId: 'second-delivery' }]));
+    expect(events[1].relatedPiEvents).not.toEqual(expect.arrayContaining([{ sessionId: nativeSessionId, kind: 'custom_message', entryId: 'first-delivery' }]));
+    expect(first.relatedPiEvents).toEqual([{ sessionId: nativeSessionId, kind: 'tool_call', toolCallId: 'legacy-tool' }]);
+  });
+
+  it('renders a child-owned blocking reply from the sender tool-result metadata', () => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    const sent = {
+      eventId: 'root-send',
+      kind: 'message_thread',
+      path: [],
+      relatedPiEvents: [{ sessionId: 'root', kind: 'tool_call', toolCallId: 'sender-call' }],
+      data: { from: [], to: ['worker'], text: 'Review this change', responseExpected: true, correlationId: 'thread-1', phase: 'sent' },
+    };
+    const received = {
+      ...sent,
+      eventId: 'child-received',
+      relatedPiEvents: [{ sessionId: 'worker-runtime', kind: 'custom_message', entryId: 'receiver-entry' }],
+      transcriptPosition: { sessionId: 'worker-runtime', afterEntryId: 'worker-before-receipt' },
+      data: { ...sent.data, text: 'Recipient-only delivery', phase: 'received' },
+    };
+    const response = {
+      eventId: 'child-response',
+      kind: 'message_thread',
+      path: ['worker'],
+      relatedPiEvents: [{ sessionId: 'worker-runtime', kind: 'tool_call', toolCallId: 'responder-call' }],
+      transcriptPosition: { sessionId: 'worker-runtime', afterEntryId: 'worker-reply-source' },
+      data: { from: ['worker'], to: [], text: 'Canonical child reply', responseExpected: false, correlationId: 'thread-1', phase: 'response' },
+    };
+    const messages: PimoteAgentMessage[] = [
+      { role: 'assistant', entryId: 'sender-entry', content: [{ type: 'tool_call', toolCallId: 'sender-call', toolName: 'send' }] },
+      {
+        role: 'toolResult',
+        entryId: 'reply-entry',
+        content: [{ type: 'tool_result', toolCallId: 'sender-call', toolName: 'send', result: 'Canonical child reply', data: { semantic: [sent, received, response] } }],
+      },
+    ];
+    registry.handleEvent({
+      type: 'full_resync',
+      sessionId: 'root',
+      state: { ...childState(), isStreaming: false, sessionId: 'root', messageCount: messages.length },
+      messages,
+    } as PimoteEvent);
+
+    const transcriptText = registry
+      .getSubagentTranscript('root')
+      .flatMap((item) => (item.kind === 'semantic' ? [item.block.transcriptText] : []))
+      .join('\n');
+    expect(transcriptText).toContain('Canonical child reply');
+    expect(transcriptText).not.toContain('Recipient-only delivery');
+    const rootReceived = registry.getSubagentSemanticEvents('root').find((event) => event.eventId === 'child-received')!;
+    expect(rootReceived).toBeDefined();
+    expect(rootReceived.relatedPiEvents.some((ref) => ref.sessionId === 'root' && ref.toolCallId === 'sender-call')).toBe(false);
+    expect(rootReceived).not.toHaveProperty('nativeOccurrence');
+    expect(registry.subagentRoots.root.semanticReduction.blocks.flatMap((block) => block.eventIds ?? [block.eventId])).not.toContain('child-received');
+    const recovered = registry.getSubagentSemanticEvents('root').find((event) => event.eventId === 'child-response')!;
+    expect(recovered.relatedPiEvents).toEqual(
+      expect.arrayContaining([
+        { sessionId: 'root', kind: 'tool_call', toolCallId: 'sender-call' },
+        { sessionId: 'worker-runtime', kind: 'tool_call', toolCallId: 'responder-call' },
+      ]),
+    );
+    expect(recovered.transcriptPosition).toEqual(response.transcriptPosition);
+    expect(response.relatedPiEvents).toEqual([{ sessionId: 'worker-runtime', kind: 'tool_call', toolCallId: 'responder-call' }]);
+    const childMessages: PimoteAgentMessage[] = [
+      { role: 'custom', entryId: 'receiver-entry', display: true, content: [], details: { semantic: received } },
+      { role: 'assistant', entryId: 'responder-entry', content: [{ type: 'tool_call', toolCallId: 'responder-call', toolName: 'respond' }] },
+      { role: 'toolResult', entryId: 'response-entry', content: [{ type: 'tool_result', toolCallId: 'responder-call', toolName: 'respond', data: { semantic: response } }] },
+    ];
+    registry.handleEvent(
+      childSnapshot(childMessages, {
+        childSessionId: 'worker-runtime',
+        state: { ...childState(), sessionId: 'worker-runtime', messageCount: childMessages.length },
+        branchEntryIds: ['worker-before-receipt', 'receiver-entry', 'responder-entry', 'response-entry'],
+      }),
+    );
+    const attachment = registry.getSubagentAttachment('root', ['worker'])!;
+    const childReceived = attachment.semanticEvents.find((event) => event.eventId === 'child-received')!;
+    expect(childReceived).toMatchObject({ nativeOccurrence: { sessionId: 'worker-runtime', entryId: 'receiver-entry', messageIndex: 0 } });
+    const childAliases = attachment.semanticReduction.blocks.flatMap((block) => block.eventIds ?? [block.eventId]);
+    expect(childAliases).toContain('child-received');
+    expect(childAliases).not.toContain('root-send');
+    const childText = registry
+      .getSubagentTranscript('root', ['worker'])
+      .flatMap((item) => (item.kind === 'semantic' ? [item.block.transcriptText] : []))
+      .join('\n');
+    expect(childText).toContain('Recipient-only delivery');
+    expect(childText).toContain('Canonical child reply');
+  });
+
+  it.each([
+    { surface: 'root' as const, target: [], owned: true },
+    { surface: 'root' as const, target: ['worker'], owned: false },
+    { surface: 'child' as const, target: ['worker'], owned: true },
+    { surface: 'child' as const, target: [], owned: false },
+    { surface: 'child' as const, target: ['worker', 'scout'], owned: false },
+  ])('synthesizes received metadata only for its actual $surface recipient $target', ({ surface, target, owned }) => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    const nativeSessionId = surface === 'root' ? 'root' : 'child-session';
+    const fact = {
+      eventId: 'received-fact',
+      kind: 'message_thread',
+      path: ['sender'],
+      relatedPiEvents: [],
+      data: { phase: 'received', from: ['sender'], to: target, text: 'Recipient payload', responseExpected: false },
+    };
+    nativeSnapshot(
+      registry,
+      surface,
+      [{ role: 'custom', entryId: 'delivery-entry', display: true, content: [{ type: 'text', text: 'Native fallback' }], details: { semantic: fact } }],
+      ['delivery-entry'],
+    );
+
+    const events = surface === 'root' ? registry.getSubagentSemanticEvents('root') : registry.getSubagentAttachment('root', ['worker'])!.semanticEvents;
+    const received = events.find((event) => event.eventId === 'received-fact')!;
+    expect(received).toBeDefined();
+    expect(received.relatedPiEvents.some((ref) => ref.sessionId === nativeSessionId && ref.entryId === 'delivery-entry')).toBe(owned);
+    expect(received.nativeOccurrence !== undefined).toBe(owned);
+    if (!owned) expect(received).not.toHaveProperty('transcriptPosition');
+    const text = registry
+      .getSubagentTranscript('root', surface === 'child' ? ['worker'] : undefined)
+      .flatMap((item) => (item.kind === 'semantic' ? [item.block.transcriptText] : []))
+      .join('\n');
+    expect(text.includes('Recipient payload')).toBe(owned);
+  });
+
+  it('does not project a root insertion fact into an empty child view', () => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    registry.handleEvent({
+      type: 'subagent_event',
+      sessionId: 'root',
+      cursor: 1,
+      eventId: 'root-insertion',
+      path: ['worker'],
+      kind: 'completion',
+      relatedPiEvents: [],
+      data: { status: 'idle', delivery: 'asynchronous', output: 'Root-only insertion' },
+      transcriptPosition: { sessionId: 'root', afterEntryId: null, messageIndex: 0 },
+    } as PimoteEvent);
+    nativeSnapshot(registry, 'child', [], []);
+
+    expect(registry.getSubagentTranscript('root').some((item) => item.kind === 'semantic' && item.block.transcriptText.includes('Root-only insertion'))).toBe(true);
+    expect(registry.getSubagentTranscript('root', ['worker'])).toEqual([]);
+  });
+
+  it.each(['root', 'child'] as const)('invalidates cached %s insertion offsets when their source leaves the current branch', (surface) => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    const nativeSessionId = surface === 'root' ? 'root' : 'child-session';
+    nativeSnapshot(registry, surface, [{ ...makeUserMessage('Original branch'), entryId: 'shared-entry' }], ['shared-entry', 'old-hidden-leaf']);
+    registry.handleEvent({
+      type: 'subagent_event',
+      sessionId: 'root',
+      cursor: 1,
+      eventId: 'old-insertion',
+      path: ['worker'],
+      kind: 'completion',
+      relatedPiEvents: [],
+      data: { status: 'idle', delivery: 'asynchronous', output: 'Old branch result' },
+      transcriptPosition: { sessionId: nativeSessionId, afterEntryId: 'old-hidden-leaf', messageIndex: 1 },
+    } as PimoteEvent);
+    registry.handleEvent({
+      type: 'subagent_event',
+      sessionId: 'root',
+      cursor: 2,
+      eventId: 'foreign-position',
+      path: ['other'],
+      kind: 'completion',
+      relatedPiEvents: [],
+      data: { status: 'idle', delivery: 'asynchronous', output: 'Foreign result' },
+      transcriptPosition: { sessionId: 'another-runtime', afterEntryId: 'foreign-leaf', messageIndex: 7 },
+    } as PimoteEvent);
+    registry.handleEvent({
+      type: 'subagent_snapshot',
+      sessionId: 'root',
+      cursor: { epoch: 'epoch-1', sequence: 1 },
+      nodes: [{ path: ['worker'], incarnation: 'inc-1', sessionId: 'child-session', state: 'idle', channels: [] }],
+    } as unknown as PimoteEvent);
+    nativeSnapshot(registry, surface, [{ ...makeUserMessage('Other branch'), entryId: 'shared-entry' }], ['shared-entry', 'new-hidden-leaf'], 4);
+
+    const events = surface === 'root' ? registry.getSubagentSemanticEvents('root') : registry.getSubagentAttachment('root', ['worker'])!.semanticEvents;
+    expect(events.find((event) => event.eventId === 'old-insertion')).toMatchObject({ transcriptPosition: { sessionId: nativeSessionId, afterEntryId: 'old-hidden-leaf' } });
+    expect(events.find((event) => event.eventId === 'old-insertion')).not.toHaveProperty('transcriptPosition.messageIndex');
+    expect(events.find((event) => event.eventId === 'foreign-position')).toMatchObject({
+      transcriptPosition: { sessionId: 'another-runtime', afterEntryId: 'foreign-leaf', messageIndex: 7 },
+    });
+    const text = registry
+      .getSubagentTranscript('root', surface === 'child' ? ['worker'] : undefined)
+      .flatMap((item) => (item.kind === 'semantic' ? [item.block.transcriptText] : []))
+      .join('\n');
+    expect(text).not.toContain('Old branch result');
+    expect(registry.getSubagentNode('root', ['worker'])?.sessionId).toBe('child-session');
+  });
+
+  it.each(['root', 'child'] as const)('recomputes cached %s offsets through hidden entries and reordered native context', (surface) => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    const nativeSessionId = surface === 'root' ? 'root' : 'child-session';
+    nativeSnapshot(registry, surface, [{ ...makeUserMessage('Kept message'), entryId: 'kept-entry' }], ['kept-entry', 'hidden-leaf']);
+    registry.handleEvent({
+      type: 'subagent_event',
+      sessionId: 'root',
+      cursor: 1,
+      eventId: 'metadata-insertion',
+      path: ['worker'],
+      kind: 'completion',
+      relatedPiEvents: [],
+      data: { status: 'idle', delivery: 'asynchronous', output: 'Retained result' },
+      transcriptPosition: { sessionId: nativeSessionId, afterEntryId: 'hidden-leaf', messageIndex: 1 },
+    } as PimoteEvent);
+    nativeSnapshot(
+      registry,
+      surface,
+      [
+        { ...makeUserMessage('Compaction summary'), entryId: 'compaction' },
+        { ...makeUserMessage('Kept message'), entryId: 'kept-entry' },
+        { ...makeUserMessage('New message'), entryId: 'after-entry' },
+      ],
+      ['kept-entry', 'hidden-leaf', 'compaction', 'after-entry'],
+      4,
+    );
+
+    const events = surface === 'root' ? registry.getSubagentSemanticEvents('root') : registry.getSubagentAttachment('root', ['worker'])!.semanticEvents;
+    expect(events.find((event) => event.eventId === 'metadata-insertion')).toMatchObject({
+      transcriptPosition: { sessionId: nativeSessionId, afterEntryId: 'hidden-leaf', messageIndex: 2 },
+    });
+    const transcript = registry.getSubagentTranscript('root', surface === 'child' ? ['worker'] : undefined);
+    const inserted = transcript.findIndex((item) => item.kind === 'semantic' && item.block.transcriptText.includes('Retained result'));
+    expect(transcript[inserted - 1]).toMatchObject({ kind: 'native', entry: { id: 'kept-entry' } });
+    expect(transcript[inserted + 1]).toMatchObject({ kind: 'native', entry: { id: 'after-entry' } });
+    registry.handleEvent({
+      type: 'subagent_event',
+      sessionId: 'root',
+      cursor: 3,
+      eventId: 'fresh-live',
+      path: ['worker'],
+      kind: 'completion',
+      relatedPiEvents: [],
+      data: { status: 'idle', delivery: 'asynchronous', output: 'New live result' },
+      transcriptPosition: { sessionId: nativeSessionId, afterEntryId: 'new-live-hidden-leaf', messageIndex: 3 },
+    } as PimoteEvent);
+    const refreshed = surface === 'root' ? registry.getSubagentSemanticEvents('root') : registry.getSubagentAttachment('root', ['worker'])!.semanticEvents;
+    expect(refreshed.find((event) => event.eventId === 'fresh-live')).toMatchObject({
+      transcriptPosition: { sessionId: nativeSessionId, afterEntryId: 'new-live-hidden-leaf', messageIndex: 3 },
+    });
+  });
+
+  it.each(['root', 'child'] as const)('does not reuse an unvalidated cached %s offset on a legacy snapshot', (surface) => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    const nativeSessionId = surface === 'root' ? 'root' : 'child-session';
+    const messages = [{ ...makeUserMessage('Native text'), entryId: 'native-entry' }];
+    nativeSnapshot(registry, surface, messages, ['native-entry', 'hidden-leaf']);
+    registry.handleEvent({
+      type: 'subagent_event',
+      sessionId: 'root',
+      cursor: 1,
+      eventId: 'legacy-insertion',
+      path: ['worker'],
+      kind: 'completion',
+      relatedPiEvents: [],
+      data: { status: 'idle', delivery: 'asynchronous', output: 'Cached result' },
+      transcriptPosition: { sessionId: nativeSessionId, afterEntryId: 'hidden-leaf', messageIndex: 1 },
+    } as PimoteEvent);
+    nativeSnapshot(registry, surface, messages, undefined, 4);
+
+    const events = surface === 'root' ? registry.getSubagentSemanticEvents('root') : registry.getSubagentAttachment('root', ['worker'])!.semanticEvents;
+    expect(events.find((event) => event.eventId === 'legacy-insertion')).not.toHaveProperty('transcriptPosition.messageIndex');
+  });
+
+  it.each(['root', 'child'] as const)('preserves identical legacy %s custom display occurrences without a live duplicate', (surface) => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    const nativeSessionId = surface === 'root' ? 'root' : 'child-session';
+    const fact = {
+      eventId: 'identical-legacy',
+      kind: 'completion',
+      path: ['worker'],
+      relatedPiEvents: [],
+      data: { status: 'idle', delivery: 'asynchronous', output: 'Repeated native result' },
+    };
+    const messages: PimoteAgentMessage[] = [
+      { role: 'toolResult', entryId: 'tool-entry', content: [{ type: 'tool_result', toolCallId: 'native-call', data: { semantic: fact } }] },
+      { role: 'custom', entryId: 'first-occurrence', display: true, content: [], details: { semantic: fact } },
+      { role: 'custom', entryId: 'second-occurrence', display: true, content: [], details: { semantic: fact } },
+    ];
+    nativeSnapshot(registry, surface, messages, ['tool-entry', 'first-occurrence', 'second-occurrence']);
+    registry.handleEvent({ ...fact, type: 'subagent_event', sessionId: 'root', cursor: 4 } as PimoteEvent);
+
+    const events = (surface === 'root' ? registry.getSubagentSemanticEvents('root') : registry.getSubagentAttachment('root', ['worker'])!.semanticEvents).filter(
+      (event) => event.eventId === 'identical-legacy',
+    );
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({ eventId: 'identical-legacy', nativeOccurrence: { sessionId: nativeSessionId, entryId: 'first-occurrence', messageIndex: 1 } });
+    expect(events[1]).toMatchObject({ eventId: 'identical-legacy', nativeOccurrence: { sessionId: nativeSessionId, entryId: 'second-occurrence', messageIndex: 2 } });
+    const rendered = registry
+      .getSubagentTranscript('root', surface === 'child' ? ['worker'] : undefined)
+      .filter((item) => item.kind === 'semantic' && item.block.transcriptText.includes('Repeated native result'));
+    expect(rendered).toHaveLength(2);
+  });
+
+  it.each(['root', 'child'] as const)('rebuilds %s occurrence anchors only from the current native snapshot', (surface) => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    const nativeSessionId = surface === 'root' ? 'root' : 'child-session';
+    const fact = {
+      eventId: 'identical-legacy',
+      kind: 'completion',
+      path: ['worker'],
+      relatedPiEvents: [],
+      data: { status: 'idle', delivery: 'asynchronous', output: 'Repeated result' },
+    };
+    const custom = (entryId: string): PimoteAgentMessage => ({ role: 'custom', entryId, display: true, content: [], details: { semantic: fact } });
+    nativeSnapshot(registry, surface, [custom('old-first'), custom('old-second')], ['old-first', 'old-second']);
+    nativeSnapshot(registry, surface, [custom('current-only')], ['current-only'], 4);
+
+    const current = surface === 'root' ? registry.getSubagentSemanticEvents('root') : registry.getSubagentAttachment('root', ['worker'])!.semanticEvents;
+    expect(current).toHaveLength(1);
+    expect(current[0]).toMatchObject({ nativeOccurrence: { sessionId: nativeSessionId, entryId: 'current-only', messageIndex: 0 } });
+    nativeSnapshot(registry, surface, [{ ...makeUserMessage('Another branch'), entryId: 'other-entry' }], ['other-entry'], 5);
+    const cached = surface === 'root' ? registry.getSubagentSemanticEvents('root') : registry.getSubagentAttachment('root', ['worker'])!.semanticEvents;
+    expect(cached.some((event) => event.nativeOccurrence !== undefined)).toBe(false);
+    const rendered = registry
+      .getSubagentTranscript('root', surface === 'child' ? ['worker'] : undefined)
+      .filter((item) => item.kind === 'semantic' && item.block.transcriptText.includes('Repeated result'));
+    expect(rendered).toHaveLength(0);
+  });
+
+  it('does not treat a root custom occurrence as a second child display occurrence', () => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    const fact = {
+      eventId: 'shared-delivery',
+      kind: 'completion',
+      path: ['worker'],
+      relatedPiEvents: [],
+      data: { status: 'idle', delivery: 'asynchronous', output: 'Shared result' },
+    };
+    nativeSnapshot(registry, 'root', [{ role: 'custom', entryId: 'root-delivery', display: true, content: [], details: { semantic: fact } }], ['root-delivery']);
+    nativeSnapshot(registry, 'child', [{ role: 'custom', entryId: 'child-delivery', display: true, content: [], details: { semantic: fact } }], ['child-delivery']);
+
+    const child = registry.getSubagentAttachment('root', ['worker'])!;
+    expect(child.semanticEvents).toHaveLength(1);
+    expect(child.semanticEvents[0]).toMatchObject({ nativeOccurrence: { sessionId: 'child-session', entryId: 'child-delivery', messageIndex: 0 } });
+    expect(registry.getSubagentTranscript('root', ['worker']).filter((item) => item.kind === 'semantic' && item.block.transcriptText.includes('Shared result'))).toHaveLength(1);
+  });
+
+  it.each(['root', 'child'] as const)('replaces synthetic %s occurrence anchors with hydrated entry IDs without adding copies', (surface) => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    const nativeSessionId = surface === 'root' ? 'root' : 'child-session';
+    nativeSnapshot(registry, surface, [], []);
+    const emit = (event: PimoteEvent & { cursor: number }): void => {
+      if (surface === 'root') registry.handleEvent(event);
+      else
+        registry.handleEvent({
+          type: 'subagent_view_event',
+          sessionId: 'root',
+          childSessionId: nativeSessionId,
+          path: ['worker'],
+          incarnation: 'inc-1',
+          attachmentGeneration: 'gen-1',
+          viewCursor: event.cursor,
+          event,
+        } as PimoteEvent);
+    };
+    for (let index = 0; index < 2; index++) {
+      const message: PimoteAgentMessage = {
+        role: 'custom',
+        display: true,
+        content: [],
+        details: {
+          semantic: {
+            eventId: 'identical-legacy',
+            kind: 'completion',
+            path: ['worker'],
+            relatedPiEvents: [],
+            data: { status: 'idle', delivery: 'asynchronous', output: 'Repeated result' },
+          },
+        },
+      };
+      emit(makeSessionEvent('message_start', nativeSessionId, { role: 'custom', cursor: index * 2 + 4 }) as PimoteEvent & { cursor: number });
+      emit(makeSessionEvent('message_end', nativeSessionId, { message, cursor: index * 2 + 5 }) as PimoteEvent & { cursor: number });
+    }
+    const before = surface === 'root' ? registry.getSubagentSemanticEvents('root') : registry.getSubagentAttachment('root', ['worker'])!.semanticEvents;
+    expect(before).toHaveLength(2);
+    emit(makeSessionEvent('agent_end', nativeSessionId, { cursor: 8, messageEntryIds: ['first-occurrence', 'second-occurrence'] }) as PimoteEvent & { cursor: number });
+
+    const events = surface === 'root' ? registry.getSubagentSemanticEvents('root') : registry.getSubagentAttachment('root', ['worker'])!.semanticEvents;
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({ nativeOccurrence: { sessionId: nativeSessionId, entryId: 'first-occurrence', messageIndex: 0 } });
+    expect(events[1]).toMatchObject({ nativeOccurrence: { sessionId: nativeSessionId, entryId: 'second-occurrence', messageIndex: 1 } });
   });
 
   it('does not replay same-epoch topology events older than a snapshot boundary', () => {

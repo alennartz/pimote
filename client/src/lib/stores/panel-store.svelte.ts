@@ -23,10 +23,10 @@ export class PanelStore {
   setContainerWidth(width: number): void {
     if (!Number.isFinite(width)) return;
     this.containerWidth = width;
-    const drawer = width <= 620;
-    this.presentation = drawer ? 'drawer' : 'sidebar';
-    if (drawer) this.open = false;
-    else if (!this.collapsed) this.open = true;
+    const presentation = width <= 620 ? 'drawer' : 'sidebar';
+    if (presentation === this.presentation) return;
+    this.presentation = presentation;
+    this.open = presentation === 'sidebar' && !this.collapsed;
   }
 
   openPanel(): void {

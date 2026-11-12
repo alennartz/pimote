@@ -10,14 +10,17 @@
   import CircleAlert from '@lucide/svelte/icons/circle-alert';
   import Hourglass from '@lucide/svelte/icons/hourglass';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
+  import Reply from '@lucide/svelte/icons/reply';
   import Square from '@lucide/svelte/icons/square';
   import X from '@lucide/svelte/icons/x';
 
   let {
     block,
     onAction,
+    viewerPath = [],
   }: {
     block: SemanticBlock;
+    viewerPath?: readonly string[];
     onAction?: (action: SemanticBlockAction) => void;
   } = $props();
 
@@ -75,7 +78,7 @@
   }
 
   function resultDetail(result: SemanticChildResult): string {
-    if (result.error !== undefined) return `Error: ${result.error}`;
+    if (result.error) return `Error: ${result.error}`;
     if (result.output !== undefined) return `Output: ${result.output}`;
     return `State: ${result.state}`;
   }
@@ -99,11 +102,26 @@
     onAction?.(action);
   }
 
-  function isFailedBlock(): boolean {
-    if (block.kind === 'message_thread') return block.data.failure !== undefined;
-    if (block.kind === 'completion') return block.data.result.error !== undefined || block.data.result.state === 'errored' || block.data.result.state === 'dead';
-    return block.kind === 'lifecycle' && block.data.outcome === 'failed';
+  function resultFailed(result: SemanticChildResult): boolean {
+    return Boolean(result.error) || result.state === 'errored' || result.state === 'dead';
   }
+
+  function blockStatus(): 'pending' | 'success' | 'error' | 'interrupted' | 'info' {
+    if (block.kind === 'message_thread') return block.data.phase === 'failure' || block.data.failure !== undefined ? 'error' : 'info';
+    if (block.kind === 'completion') return resultFailed(block.data.result) ? 'error' : block.data.result.state === 'stopped' ? 'interrupted' : 'success';
+    if (block.kind === 'await_progress') {
+      if (block.data.children.some(resultFailed)) return 'error';
+      return block.data.phase === 'completed' ? 'success' : block.data.phase === 'interrupted' ? 'interrupted' : 'pending';
+    }
+    if (block.kind === 'delegation') {
+      const results = block.data.results ?? [];
+      if (results.some(resultFailed)) return 'error';
+      return block.data.children.length > 0 && block.data.children.every((child) => results.some((result) => samePath(child.path, result.path))) ? 'success' : 'pending';
+    }
+    return block.data.outcome === 'failed' ? 'error' : 'info';
+  }
+
+  let status = $derived(blockStatus());
 
   function hasInlineOpenAction(action: SemanticBlockAction): boolean {
     if (action.type !== 'open_view') return false;
@@ -119,16 +137,28 @@
   }
 </script>
 
-<article bind:this={rootEl} class="subagent-semantic-block" class:failed={isFailedBlock()} data-semantic-kind={block.kind} data-block-id={block.blockId} aria-label={block.title}>
+<article
+  bind:this={rootEl}
+  class="subagent-semantic-block"
+  class:failed={status === 'error'}
+  data-semantic-kind={block.kind}
+  data-semantic-status={status}
+  data-block-id={block.blockId}
+  aria-label={block.title}
+>
   <button type="button" class="subagent-semantic-header" aria-expanded={expanded} onclick={() => (expanded = !expanded)}>
     <ChevronRight class="shrink-0 transition-transform duration-150 {expanded ? 'rotate-90' : ''}" size={14} />
     {#if block.kind === 'delegation'}
       <ArrowUp class="subagent-semantic-icon" size={14} />
     {:else if block.kind === 'message_thread'}
       <ArrowLeftRight class="subagent-semantic-icon" size={14} />
+    {:else if block.kind === 'await_progress' && status === 'success'}
+      <Check class="subagent-semantic-icon" size={14} />
+    {:else if block.kind === 'await_progress' && status === 'error'}
+      <CircleAlert class="subagent-semantic-icon" size={14} />
     {:else if block.kind === 'await_progress'}
       <Hourglass class="subagent-semantic-icon" size={14} />
-    {:else if block.kind === 'completion' && (block.data.result.error !== undefined || block.data.result.state === 'errored' || block.data.result.state === 'dead')}
+    {:else if block.kind === 'completion' && status === 'error'}
       <CircleAlert class="subagent-semantic-icon" size={14} />
     {:else if block.kind === 'completion'}
       <Check class="subagent-semantic-icon" size={14} />
@@ -142,7 +172,20 @@
       <RefreshCw class="subagent-semantic-icon" size={14} />
     {/if}
     <span class="subagent-semantic-title">{block.title}</span>
-    <span class="subagent-semantic-kind">{kindLabel(block.kind)}</span>
+    {#if block.kind === 'message_thread'}
+      <span class="subagent-semantic-peer">{pathText(samePath(viewerPath, block.data.sourcePath) ? block.data.targetPath : block.data.sourcePath)}</span>
+      {#if block.data.responseExpected !== undefined}
+        <span
+          class="subagent-response-cue"
+          aria-label={block.data.responseExpected ? 'Response expected' : 'No response expected'}
+          title={block.data.responseExpected ? 'Response expected' : 'No response expected'}
+        >
+          {#if block.data.responseExpected}<Reply size={14} aria-hidden="true" />{:else}<ArrowRight size={14} aria-hidden="true" />{/if}
+        </span>
+      {/if}
+    {:else}
+      <span class="subagent-semantic-kind">{kindLabel(block.kind)}</span>
+    {/if}
   </button>
 
   {#if expanded}
@@ -150,7 +193,7 @@
       {#if block.kind === 'delegation'}
         <p class="subagent-semantic-summary">
           {block.data.children.length}
-          {block.data.children.length === 1 ? 'child' : 'children'}{block.data.awaitsResult ? ' · waiting for results' : ''}
+          {block.data.children.length === 1 ? 'child' : 'children'}{block.data.awaitsResult && status === 'pending' ? ' · waiting for results' : ''}
         </p>
         {#each block.data.children as child (JSON.stringify(child.path))}
           <div class="subagent-child-row">
@@ -161,27 +204,26 @@
               <strong>{pathText(child.path)}</strong>
               <span class="subagent-detail subagent-prompt">{child.prompt}</span>
               {#if childMetadata(child)}<span class="subagent-metadata">{childMetadata(child)}</span>{/if}
+              <div class="subagent-actions">
+                <Button variant="outline" size="xs" class="max-md:min-h-11" onclick={() => invokeAction({ type: 'open_view', path: child.path })}>Open view</Button>
+              </div>
             </div>
-            <Button variant="outline" size="xs" class="ml-auto shrink-0 max-md:min-h-11" onclick={() => invokeAction({ type: 'open_view', path: child.path })}>Open view</Button>
           </div>
         {/each}
         {#each block.data.results ?? [] as result (JSON.stringify(result.path))}
           <div class="subagent-result-row">
             <div class="subagent-child-copy">
               <strong>{pathText(result.path)}</strong>
-              <span class:error={result.error !== undefined || result.state === 'errored' || result.state === 'dead'} class="subagent-detail">{resultDetail(result)}</span>
+              <span class:error={resultFailed(result)} class="subagent-detail">{resultDetail(result)}</span>
+              {#if usageText(result)}<span class="subagent-metadata">{usageText(result)}</span>{/if}
+              <div class="subagent-actions">
+                <Button variant="outline" size="xs" class="max-md:min-h-11" onclick={() => invokeAction({ type: 'open_view', path: result.path })}>Open view</Button>
+              </div>
             </div>
-            {#if usageText(result)}<span class="subagent-metadata">{usageText(result)}</span>{/if}
-            <Button variant="outline" size="xs" class="ml-auto shrink-0 max-md:min-h-11" onclick={() => invokeAction({ type: 'open_view', path: result.path })}>Open view</Button>
           </div>
         {/each}
       {:else if block.kind === 'message_thread'}
-        <div class="subagent-route">
-          <span>{pathText(block.data.sourcePath)}</span>
-          <ArrowRight class="subagent-route-arrow" size={14} aria-hidden="true" />
-          <span>{pathText(block.data.targetPath)}</span>
-        </div>
-        <p class="subagent-thread subagent-detail"><strong>Request</strong> {block.data.request}</p>
+        <p class="subagent-thread subagent-detail">{block.data.request}</p>
         {#if block.data.reply !== undefined}<p class="subagent-thread subagent-detail"><strong>Reply</strong> {block.data.reply}</p>{/if}
         {#if block.data.failure !== undefined}<p class="subagent-thread subagent-detail error"><strong>Failure</strong> {block.data.failure}</p>{/if}
       {:else if block.kind === 'await_progress'}
@@ -193,9 +235,11 @@
               <span class:error={child.state === 'errored' || child.state === 'dead'} class="subagent-metadata">{child.state}</span>
               {#if child.output}<span class="subagent-detail subagent-output">Output: {child.output}</span>{/if}
               {#if child.error}<span class="subagent-detail error">Error: {child.error}</span>{/if}
+              {#if usageText(child)}<span class="subagent-metadata">{usageText(child)}</span>{/if}
+              <div class="subagent-actions">
+                <Button variant="outline" size="xs" class="max-md:min-h-11" onclick={() => invokeAction({ type: 'open_view', path: child.path })}>Open view</Button>
+              </div>
             </div>
-            {#if usageText(child)}<span class="subagent-metadata">{usageText(child)}</span>{/if}
-            <Button variant="outline" size="xs" class="ml-auto shrink-0 max-md:min-h-11" onclick={() => invokeAction({ type: 'open_view', path: child.path })}>Open view</Button>
           </div>
         {/each}
         {#if block.data.interruption}
@@ -203,10 +247,7 @@
         {/if}
       {:else if block.kind === 'completion'}
         <div class="subagent-route"><span>{pathText(block.data.result.path)}</span><span>{block.data.result.state}</span></div>
-        <p
-          class:error={block.data.result.error !== undefined || block.data.result.state === 'errored' || block.data.result.state === 'dead'}
-          class="subagent-detail subagent-output"
-        >
+        <p class:error={resultFailed(block.data.result)} class="subagent-detail subagent-output">
           {resultDetail(block.data.result)}
         </p>
         {#if usageText(block.data.result)}<p class="subagent-metadata">{usageText(block.data.result)}</p>{/if}
@@ -241,12 +282,12 @@
     background: color-mix(in oklch, var(--custom-surface) 50%, transparent);
   }
 
-  .subagent-semantic-block[data-semantic-kind='await_progress'] {
-    border-left-color: var(--warning);
+  .subagent-semantic-block[data-semantic-status='success'] {
+    border-left-color: var(--status-connected);
   }
 
-  .subagent-semantic-block[data-semantic-kind='completion'] {
-    border-left-color: var(--status-streaming, var(--chart-2));
+  .subagent-semantic-block[data-semantic-status='interrupted'] {
+    border-left-color: var(--warning);
   }
 
   .subagent-semantic-block[data-semantic-kind='lifecycle'] {
@@ -257,12 +298,12 @@
     border-left-color: var(--error-accent);
   }
 
-  .subagent-semantic-block[data-semantic-kind='await_progress'] :global(.subagent-semantic-icon) {
-    color: var(--warning);
+  .subagent-semantic-block[data-semantic-status='pending'] :global(.subagent-semantic-icon) {
+    color: var(--muted-foreground);
   }
 
-  .subagent-semantic-block[data-semantic-kind='completion']:not(.failed) :global(.subagent-semantic-icon) {
-    color: var(--status-streaming, var(--chart-2));
+  .subagent-semantic-block[data-semantic-status='success'] :global(.subagent-semantic-icon) {
+    color: var(--status-connected);
   }
 
   .subagent-semantic-block.failed :global(.subagent-semantic-icon),
@@ -280,7 +321,7 @@
     background: var(--surface-raised);
     color: var(--custom-foreground);
     font-size: 0.8rem;
-    font-weight: 600;
+    font-weight: 500;
     text-align: left;
     cursor: pointer;
     transition: background-color 0.15s;
@@ -312,6 +353,23 @@
     color: var(--muted-foreground);
     font-size: 0.7rem;
     font-weight: 400;
+  }
+
+  .subagent-semantic-peer {
+    min-width: 0;
+    max-width: 45%;
+    margin-left: auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-mono, monospace);
+    font-size: 0.75rem;
+  }
+
+  .subagent-response-cue {
+    display: inline-flex;
+    flex: 0 0 auto;
+    color: var(--muted-foreground);
   }
 
   .subagent-semantic-body {
@@ -351,11 +409,6 @@
     padding: 2px 4px;
     border-radius: 4px;
     background: var(--surface-subtle);
-  }
-
-  :global(.subagent-route-arrow) {
-    flex: 0 0 auto;
-    color: var(--muted-foreground);
   }
 
   .subagent-thread + .subagent-thread {
@@ -466,10 +519,6 @@
   }
 
   @media (max-width: 640px) {
-    .subagent-semantic-header {
-      min-height: 2.75rem;
-    }
-
     .subagent-child-row,
     .subagent-result-row {
       flex-wrap: wrap;

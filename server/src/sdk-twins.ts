@@ -11,6 +11,7 @@ import type {
   SubagentResurrectRequest,
   SubagentResurrectResult,
   SubagentSemanticFact,
+  SubagentTranscriptPosition,
   SubagentSnapshot,
   SubagentStopRequest,
   SubagentTeardownResult,
@@ -28,6 +29,7 @@ import type {
   SubagentResurrectRequest as SdkSubagentResurrectRequest,
   SubagentResurrectResult as SdkSubagentResurrectResult,
   SubagentSemanticFact as SdkSubagentSemanticFact,
+  SubagentTranscriptPosition as SdkSubagentTranscriptPosition,
   SubagentSnapshot as SdkSubagentSnapshot,
   SubagentStopRequest as SdkSubagentStopRequest,
   SubagentTeardownResult as SdkSubagentTeardownResult,
@@ -53,6 +55,8 @@ const _subagentAwaitData: AssertEqual<SubagentAwaitData, SdkSubagentAwaitData> =
 const _subagentLifecycleData: AssertEqual<SubagentLifecycleData, SdkSubagentLifecycleData> = true;
 const _subagentEventData: AssertEqual<SubagentEventData, SdkSubagentEventData> = true;
 const _subagentSemanticFact: AssertEqual<SubagentSemanticFact, SdkSubagentSemanticFact> = true;
+const _subagentTranscriptPosition: AssertEqual<SubagentTranscriptPosition, SdkSubagentTranscriptPosition> = true;
+const _subagentTranscriptPositionKeys: AssertSameKeys<SubagentTranscriptPosition, SdkSubagentTranscriptPosition> = true;
 const _subagentEvent: AssertEqual<SubagentEvent, SdkSubagentEvent> = true;
 const _subagentSnapshot: AssertEqual<SubagentSnapshot, SdkSubagentSnapshot> = true;
 const _subagentStop: AssertEqual<SubagentStopRequest, SdkSubagentStopRequest> = true;

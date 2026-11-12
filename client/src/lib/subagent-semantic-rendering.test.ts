@@ -35,6 +35,16 @@ describe('semantic anchor index', () => {
     expect(projectSemanticContent(result, result.content, index.byMessage.get(result)!, sessionId).map((item) => item.kind)).toEqual(['semantic', 'semantic']);
   });
 
+  it('retains each referenced assistant message instead of folding its replacement into an earlier row', () => {
+    const later = { ...call, entryId: 'later-entry', content: [{ type: 'tool_call' as const, toolCallId: 'later-call', toolName: 'send' }] };
+    const block = semanticBlock('shared', [toolRef, { sessionId, kind: 'tool_call', toolCallId: 'later-call' }]);
+    const index = indexSemanticAnchors([call, result, later], [block], sessionId);
+    expect(index.byMessage.get(call)).toHaveLength(1);
+    expect(index.byMessage.get(later)).toHaveLength(1);
+    expect(index.byMessage.has(result)).toBe(false);
+    expect(projectSemanticContent(later, later.content, index.byMessage.get(later)!, sessionId).map((item) => item.kind)).toEqual(['semantic']);
+  });
+
   it('keeps unmatched facts available for a later streaming anchor', () => {
     const block = semanticBlock('pending', [toolRef]);
     const saved: PimoteAgentMessage = { role: 'assistant', content: [{ type: 'text', text: 'saved answer' }] };

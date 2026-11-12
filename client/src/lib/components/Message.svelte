@@ -41,6 +41,8 @@
     message,
     streaming = false,
     messageKey = '',
+    messageIndex,
+    viewerPath = [],
     assistantRowUsage = null,
     sessionId = '',
     abandonedBranchCount = 0,
@@ -56,6 +58,8 @@
     message: PimoteAgentMessage | StreamingMessage;
     streaming?: boolean;
     messageKey?: string;
+    messageIndex?: number;
+    viewerPath?: readonly string[];
     assistantRowUsage?: AssistantRowUsage | null;
     sessionId?: string;
     abandonedBranchCount?: number;
@@ -64,7 +68,7 @@
     store?: Pick<BranchTreeStore, 'navigate' | 'openFocused'>;
     onRedo?: (entryId: string, opts?: { compactionPrompt?: string }) => void | Promise<void>;
     onFork?: (entryId: string) => void | Promise<void>;
-    /** Semantic overlays for this surface. Native entries remain the fallback. */
+    /** Semantic overlays assigned to this native message. */
     semanticBlocks?: readonly SemanticBlock[];
     /** Tool executions for the selected surface, not the root registry by default. */
     toolExecutions?: Readonly<Record<string, MessageToolExecution>>;
@@ -87,7 +91,7 @@
     message.role === 'assistant' || message.role === 'toolResult' ? projectSemanticContent(nativeMessage, visibleContent, semanticBlocks, sessionId) : [],
   );
   let semanticToolResultBlocks = $derived(semanticContent.filter((item) => item.kind === 'semantic').map((item) => item.block));
-  let semanticMessageBlocks = $derived.by(() => projectSemanticMessage(nativeMessage, semanticBlocks, sessionId));
+  let semanticMessageBlocks = $derived.by(() => projectSemanticMessage(nativeMessage, semanticBlocks, sessionId, messageIndex));
 
   let hasSpeakableText = $derived(message.role === 'assistant' && !streaming && visibleContent.some((c) => c.type === 'text' && c.text));
 
@@ -172,7 +176,7 @@
 {#if message.role === 'toolResult'}
   {#if semanticToolResultBlocks.length > 0}
     {#each semanticToolResultBlocks as block (block.blockId)}
-      <SubagentSemanticBlock {block} onAction={onSemanticAction} />
+      <SubagentSemanticBlock {block} {viewerPath} onAction={onSemanticAction} />
     {/each}
   {:else}
     <!-- Tool results are displayed inline with their tool calls — skip standalone rendering -->
@@ -312,7 +316,7 @@
         {/if}
         {#each semanticContent as item, i (item.kind === 'semantic' ? item.block.blockId : `native-${i}`)}
           {#if item.kind === 'semantic'}
-            <SubagentSemanticBlock block={item.block} onAction={onSemanticAction} />
+            <SubagentSemanticBlock block={item.block} {viewerPath} onAction={onSemanticAction} />
           {:else}
             {@const block = item.content}
             {@const blockStreaming = block.streaming ?? false}
@@ -351,7 +355,7 @@
 {:else if message.role === 'custom'}
   {#if semanticMessageBlocks.length > 0}
     {#each semanticMessageBlocks as block (block.blockId)}
-      <SubagentSemanticBlock {block} onAction={onSemanticAction} />
+      <SubagentSemanticBlock {block} {viewerPath} onAction={onSemanticAction} />
     {/each}
   {:else}
     <!-- Custom message (extension-injected, e.g. subagent results) -->

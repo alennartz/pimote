@@ -6,7 +6,7 @@
   import { indexToolResultUsage, summarizeAssistantRowUsage } from '$lib/assistant-row-usage.js';
   import type { BashExecutionState, PerSessionState, SubagentAttachmentState } from '$lib/stores/session-registry.svelte.js';
   import type { SemanticBlock, SemanticBlockAction } from '$lib/subagent-semantic.js';
-  import { indexSemanticAnchors, semanticBlockHasMessageAnchor, semanticBlockHasNativeAnchor } from '$lib/subagent-semantic-rendering.js';
+  import { indexSemanticAnchors, indexSemanticInsertions, semanticBlockHasMessageAnchor } from '$lib/subagent-semantic-rendering.js';
   import { abortSession, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { branchTreeStore, type BranchTreeSurface } from '$lib/stores/branch-tree-store.svelte.js';
@@ -377,31 +377,40 @@
 
   type DisplayEntry =
     | { kind: 'message'; key: string; message: PimoteAgentMessage | StreamingMessage; streaming: boolean; messageIndex: number | null }
+    | { kind: 'semantic'; key: string; block: SemanticBlock }
     | { kind: 'bash'; key: string; execution: BashExecutionState };
 
   const noSemanticBlocks: readonly SemanticBlock[] = Object.freeze([]);
+  let surfaceSessionId = $derived(childSurface?.childSessionId ?? session?.sessionId ?? '');
+  let viewerPath = $derived(source ? [] : (childSurface?.path ?? []));
+  let savedSemanticAnchors = $derived(indexSemanticAnchors(session?.messages ?? [], semanticBlocks, surfaceSessionId));
+  let semanticInsertions = $derived.by(() => {
+    const streamingMessage = session?.streamingMessage as PimoteAgentMessage | null;
+    const blocks = savedSemanticAnchors.remaining.filter(
+      (block) => !streamingMessage || !semanticBlockHasMessageAnchor(block, streamingMessage, surfaceSessionId, session?.messages.length),
+    );
+    return indexSemanticInsertions(session?.messages ?? [], blocks, surfaceSessionId);
+  });
 
   let savedDisplayEntries = $derived.by(() => {
     if (!session) return [] as DisplayEntry[];
     const entries: DisplayEntry[] = [];
-    for (let i = 0; i < session.messages.length; i++) {
+    for (let i = 0; i <= session.messages.length; i++) {
+      for (const block of semanticInsertions.get(i) ?? []) entries.push({ kind: 'semantic', key: block.blockId, block });
+      if (i === session.messages.length) continue;
       const msg = session.messages[i];
-      // Hide custom messages with display: false
-      if (msg.display === false) continue;
+      if (msg.display === false || savedSemanticAnchors.hiddenMessages.has(msg)) continue;
       entries.push({
         kind: 'message',
         key: session.messageKeys?.[i] ?? `fallback-${i}`,
         message: msg as PimoteAgentMessage | StreamingMessage,
         streaming: false,
-        // Keep the source transcript index even when display:false entries are
-        // filtered out. The registry uses this index to find persisted usage.
+        // Keep the native index even when display:false entries are filtered out.
         messageIndex: i,
       });
     }
     return entries;
   });
-
-  let savedSemanticAnchors = $derived(indexSemanticAnchors(session?.messages ?? [], semanticBlocks, childSurface?.childSessionId ?? session?.sessionId ?? ''));
 
   // Keep saved row identities stable while streaming usage snapshots change.
   let displayEntries = $derived.by(() => {
@@ -426,18 +435,8 @@
     const message = entry.message as PimoteAgentMessage;
     if (!entry.streaming) return savedSemanticAnchors.byMessage.get(message) ?? noSemanticBlocks;
     const surfaceSessionId = childSurface?.childSessionId ?? session?.sessionId ?? '';
-    return savedSemanticAnchors.remaining.filter((block) => semanticBlockHasMessageAnchor(block, message, surfaceSessionId));
+    return savedSemanticAnchors.remaining.filter((block) => semanticBlockHasMessageAnchor(block, message, surfaceSessionId, session?.messages.length));
   }
-
-  /** Events without native provenance render once after the saved transcript. */
-  let unanchoredSemanticBlocks = $derived.by(() => {
-    if (!session) return noSemanticBlocks;
-    const surfaceSessionId = childSurface?.childSessionId ?? session.sessionId ?? '';
-    const streamingMessage = session.streamingMessage as PimoteAgentMessage | null;
-    return savedSemanticAnchors.remaining.filter(
-      (block) => !semanticBlockHasNativeAnchor(block) && (!streamingMessage || !semanticBlockHasMessageAnchor(block, streamingMessage, surfaceSessionId)),
-    );
-  });
 
   let toolResultUsageIndex = $derived.by(() => indexToolResultUsage(session?.messages ?? []));
 
@@ -531,6 +530,8 @@
         <div class="transcript-row" class:find-active={isActiveFindEntry(entry)} use:registerRow={entry.key} data-message-key={entry.key}>
           {#if entry.kind === 'bash'}
             <BashExecution execution={entry.execution} onCancel={readOnly ? undefined : () => handleBashCancel(entry.execution.id)} />
+          {:else if entry.kind === 'semantic'}
+            <SubagentSemanticBlock block={entry.block} {viewerPath} onAction={handleSemanticAction} />
           {:else}
             {@const assistantRowUsage = getAssistantRowUsage(entry)}
             {@const entrySemanticBlocks = semanticBlocksForEntry(entry)}
@@ -538,6 +539,8 @@
               message={entry.message}
               streaming={entry.streaming}
               messageKey={entry.key}
+              messageIndex={entry.messageIndex ?? undefined}
+              {viewerPath}
               {assistantRowUsage}
               sessionId={childSurface?.childSessionId ?? session?.sessionId ?? ''}
               abandonedBranchCount={alternateCount(entry)}
@@ -551,12 +554,6 @@
               onFork={source || childSurface || readOnly || managerTranscript ? undefined : handleFork}
             />
           {/if}
-        </div>
-      {/each}
-
-      {#each unanchoredSemanticBlocks as block (block.blockId)}
-        <div class="transcript-row semantic-transcript-row" data-semantic-block-id={block.blockId}>
-          <SubagentSemanticBlock {block} onAction={handleSemanticAction} />
         </div>
       {/each}
 

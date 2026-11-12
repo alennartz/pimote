@@ -127,7 +127,6 @@
       appHeight = resolveAppViewportHeight(window);
     };
     const scheduleAppHeightUpdate = () => {
-      updateAppHeight();
       requestAnimationFrame(updateAppHeight);
       if (delayedAppHeightUpdate) clearTimeout(delayedAppHeightUpdate);
       delayedAppHeightUpdate = setTimeout(updateAppHeight, 100);
@@ -253,6 +252,13 @@
       : getContextDisplay(sessionRegistry.viewed, { compact: true }),
   );
   let mobileContextTone = $derived(getContextTone(mobileContextPercent));
+
+  function openPanels(): void {
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement && focused.matches('input, textarea, [contenteditable="true"]')) focused.blur();
+    panelStore.openPanel();
+  }
+
   async function closeSelectedChildView(): Promise<void> {
     const rootId = sessionRegistry.viewedSessionId;
     const path = rootId ? sessionRegistry.getSelectedSubagentPath?.(rootId) : null;
@@ -352,7 +358,7 @@
       {#if hasPanels && panelStore.isDrawer}
         <button
           class="text-muted-foreground hover:text-foreground border-border bg-background relative inline-flex size-8 shrink-0 items-center justify-center rounded-lg border max-md:size-11"
-          onclick={() => panelStore.openPanel()}
+          onclick={openPanels}
           title="Open panels"
           aria-label="Open panels"
         >

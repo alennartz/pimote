@@ -11,7 +11,7 @@ import type {
   SubagentSnapshot,
   SubagentTeardownResult,
 } from '@pimote/sdk/subagents';
-import type { PimoteSessionEvent } from '../../shared/dist/index.js';
+import { semanticEventIdentity, type PimoteSessionEvent } from '../../shared/dist/index.js';
 import {
   createSessionSurface,
   type SessionSurface,
@@ -176,7 +176,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
   const recordsByPath = new Map<string, Set<ViewRecord>>();
   const inFlightOpens = new Map<string, Promise<SubagentViewAttachment>>();
   const nodes = new Map<string, SubagentNodeSnapshot>();
-  const seenEventIds = new Set<string>();
+  const seenEventIdentities = new Set<string>();
   const createSurface = options.createChildSurface ?? createSessionSurface;
 
   let started = false;
@@ -277,12 +277,30 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     await Promise.all(affected.map((record) => closeRecord(record, reason, true)));
   };
 
+  const surfaceForSession = (sessionId: string): SessionSurface | undefined => {
+    if (sessionId === options.rootSessionId) return options.parentSurface;
+    for (const records of recordsByPath.values()) {
+      for (const record of records) {
+        if (!record.closed && record.surface?.sessionId === sessionId) return record.surface;
+      }
+    }
+    return undefined;
+  };
+
+  const resolveProviderEventPosition = (event: SubagentEvent): SubagentEvent => {
+    const position = event.transcriptPosition;
+    if (!position) return event;
+    const surface = surfaceForSession(position.sessionId);
+    const resolved = surface?.resolveTranscriptPosition?.(position) ?? position;
+    return { ...event, transcriptPosition: Object.freeze({ ...resolved }) };
+  };
+
   const appendParentEvent = (event: SubagentEvent): number => {
     const observed = options.parentCursor();
     if (nextParentCursor === undefined || observed > nextParentCursor) nextParentCursor = observed;
     const parentCursor = (nextParentCursor ?? observed) + 1;
     nextParentCursor = parentCursor;
-    options.emitParentEvent(event, parentCursor);
+    options.emitParentEvent(resolveProviderEventPosition(event), parentCursor);
     const after = options.parentCursor();
     if (after > nextParentCursor) nextParentCursor = after;
     return parentCursor;
@@ -309,8 +327,15 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
   };
 
   const appendProviderEvent = (event: SubagentEvent): void => {
-    if (closed || seenEventIds.has(event.eventId)) return;
-    seenEventIds.add(event.eventId);
+    if (closed) return;
+    const identity = semanticEventIdentity(event);
+    if (seenEventIdentities.has(identity)) return;
+    seenEventIdentities.add(identity);
+    const boundary = lastSnapshot?.cursor;
+    const snapshotCoversEvent = boundary !== undefined && event.cursor.epoch === boundary.epoch && event.cursor.sequence <= boundary.sequence;
+    // Historical topology is already represented by the current snapshot.
+    // Forward only its semantic history, not removed or replaced incarnations.
+    if (snapshotCoversEvent && (event.kind === 'node_added' || event.kind === 'node_updated' || event.kind === 'node_removed' || event.kind === 'runtime_replaced')) return;
     updateNodesForEvent(event);
     appendParentEvent(event);
   };
@@ -536,21 +561,18 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     try {
       const snapshot = options.provider.snapshot();
       replaceSnapshotNodes(snapshot);
-      // A provider can return a boundary cursor while events are delivered by
-      // the subscription in the same call. Drain both the staged feed and a
-      // contiguous replay, de-duplicating by provider event id.
-      const boundaryEvents = stagedProviderEvents;
-      stagedProviderEvents = [];
-      starting = false;
-      for (const event of boundaryEvents) appendProviderEvent(event);
-      const replay = options.provider.replay(snapshot.cursor);
+      // Replay retained semantics before draining the live snapshot boundary.
+      // Keep staging while either source delivers events, then deduplicate them.
+      const replay = options.provider.replay();
       if (replay.kind === 'events') {
         for (const event of replay.events) appendProviderEvent(event);
-      } else if (replay.kind === 'snapshot_required') {
-        // The returned snapshot is already the recovery boundary. Keep the
-        // latest node projection so opens after recovery validate incarnation.
-        lastSnapshot = snapshot;
       }
+      while (stagedProviderEvents.length > 0) {
+        const boundaryEvents = stagedProviderEvents;
+        stagedProviderEvents = [];
+        for (const event of boundaryEvents) appendProviderEvent(event);
+      }
+      starting = false;
       started = true;
       return {
         snapshot,

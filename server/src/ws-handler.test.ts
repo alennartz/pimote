@@ -321,6 +321,53 @@ function createTestHandler(
   return { handler, ws, sent, sessions, sessionManager, clientRegistry, sessionMetadataStore };
 }
 
+describe('native branch snapshot wire fields', () => {
+  it('includes hidden branch entries in a root full resync', async () => {
+    const slot = createMockSlot({ id: 'branch-root' });
+    const entries = [
+      { type: 'message', id: 'visible-root', parentId: null, timestamp: '2026-01-01T00:00:00.000Z', message: { role: 'user', content: 'Root text', timestamp: 1 } },
+      { type: 'thinking_level_change', id: 'hidden-root', parentId: 'visible-root', timestamp: '2026-01-01T00:00:00.000Z', thinkingLevel: 'off' },
+    ];
+    slot.session.sessionManager.getBranch = () => entries as ReturnType<typeof slot.session.sessionManager.getBranch>;
+    slot.session.sessionManager.buildContextEntries = () => entries as ReturnType<typeof slot.session.sessionManager.buildContextEntries>;
+    const { handler, sent } = createTestHandler('branch-client', { sessions: new Map([['branch-root', slot]]) });
+    await handler.handleMessage(JSON.stringify({ type: 'open_session', id: 'open-branch', sessionId: 'branch-root', folderPath: '/home/user/project' }));
+
+    expect(findEvents(sent, 'full_resync')[0]).toMatchObject({ branchEntryIds: ['visible-root', 'hidden-root'] });
+  });
+
+  it('preserves child branch IDs in a public open-view snapshot', async () => {
+    const slot = createMockSlot({ id: 'branch-root' });
+    slot.subagentHost = {
+      openView: async () => ({
+        path: ['worker'],
+        attachmentGeneration: 'generation',
+        snapshot: {
+          cursor: 1,
+          state: {
+            sessionId: 'child-branch',
+            sessionFile: undefined,
+            model: null,
+            thinkingLevel: 'off',
+            availableThinkingLevels: [],
+            isStreaming: false,
+            isCompacting: false,
+            autoCompactionEnabled: true,
+            messageCount: 1,
+          },
+          messages: [{ role: 'user', entryId: 'visible-child', content: [{ type: 'text', text: 'Child text' }] }],
+          branchEntryIds: ['visible-child', 'hidden-child'],
+        },
+      }),
+      snapshot: () => ({ cursor: { epoch: 'epoch-1', sequence: 1 }, nodes: [{ path: ['worker'], incarnation: 'inc-1' }] }),
+    } as unknown as NonNullable<ManagedSlot['subagentHost']>;
+    const { handler, sent } = createTestHandler('branch-client', { sessions: new Map([['branch-root', slot]]) });
+    await handler.handleMessage(JSON.stringify({ type: 'subagent_open_view', id: 'open-child-branch', sessionId: 'branch-root', path: ['worker'] }));
+
+    expect(findResponse(sent, 'open-child-branch')).toMatchObject({ success: true, data: { snapshot: { branchEntryIds: ['visible-child', 'hidden-child'] } } });
+  });
+});
+
 describe('global settings wire command', () => {
   it('returns a session-independent manifest using the request response envelope', async () => {
     const { handler, sent } = createTestHandler('settings-client');

@@ -120,6 +120,8 @@ This module defines the per-session provider seam for interactive subagent views
 
 Use `registerProvider(pi, provider)` to publish a provider. Use `discoverProvider(pi, onProvider)` or the discovery handle to find providers, including late registration and replacement. Registration and discovery return cleanup functions or handles. Cleanup stops discovery or registration; it does not dispose the provider or child sessions. The `SubagentProvider` contract, event data, cursors, snapshots, and borrowed-session lease types are exported from this module. The my-pi subagents extension implements this provider for Pimote.
 
+A fact can include `transcriptPosition` from its owning native session. Set `afterEntryId` to the native leaf ID, or `null` before the first entry. Preserve this boundary in provider replay and native tool-result or custom-message metadata. Pimote derives `messageIndex` for the current transcript projection. Position controls insertion only. `relatedPiEvents` controls native replacement. Do not acquire a child lease to calculate placement.
+
 ## Pimote extensions — `@pimote/sdk/pimote`
 
 Pimote extensions are process-global modules. The host loads direct JavaScript/TypeScript modules and entry-bearing directories from `$XDG_CONFIG_HOME/pimote/extensions/`. User-scoped Pi packages can contribute entries through their `pimote.extensions` manifest field. Project packages and `pi.extensions` entries never load in this host. A module listed in both sections is an explicit dual-host module and runs twice with independent lifecycles.

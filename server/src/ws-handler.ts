@@ -1272,6 +1272,7 @@ export class WsHandler {
       viewCursor: snapshot.cursor,
       state: snapshot.state,
       messages: snapshot.messages,
+      ...(snapshot.branchEntryIds !== undefined ? { branchEntryIds: [...snapshot.branchEntryIds] } : {}),
       ...(snapshot.streamingMessage ? { streamingMessage: snapshot.streamingMessage } : {}),
       ...(snapshot.runningToolCallIds ? { runningToolCallIds: snapshot.runningToolCallIds } : {}),
     };
@@ -2480,6 +2481,8 @@ export class WsHandler {
       messageCount: session.messages.length,
     };
     const messages = mapContextEntries(session.sessionManager.buildContextEntries(), rendererRegisteredVisibility(session));
+    const branch = typeof session.sessionManager.getBranch === 'function' ? session.sessionManager.getBranch() : undefined;
+    const branchEntryIds = branch?.flatMap((entry) => (typeof entry.id === 'string' ? [entry.id] : []));
     // A mid-run snapshot carries the in-flight message and running tool calls.
     // The observer missed their start events, so without them it drops the
     // deltas and tool output that follow.
@@ -2498,6 +2501,7 @@ export class WsHandler {
       sessionId: pimoteSessionId,
       state,
       messages,
+      ...(branchEntryIds !== undefined ? { branchEntryIds } : {}),
       ...(streamingMessage ? { streamingMessage } : {}),
       ...(runningToolCallIds.length > 0 ? { runningToolCallIds } : {}),
     };

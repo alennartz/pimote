@@ -6,6 +6,7 @@ import {
   projectSubagentTranscript,
   projectSubagentWireTranscript,
   reduceSubagentSemanticEvent,
+  reduceSubagentWireSemanticEvents,
   type NativeTranscriptEntry,
   type PiEventRef,
   type SemanticReductionState,
@@ -93,12 +94,12 @@ describe('subagent semantic transcript projection', () => {
     expect(nativeEntries).toEqual(original);
   });
 
-  it('renders entry-free notification facts after the native transcript', () => {
+  it('inserts an entry-free fact at its source boundary without consuming native messages', () => {
     const entryFreeRef: PiEventRef = { sessionId, kind: 'custom_message' };
     const event: SubagentSemanticEvent = {
       eventId: 'entry-free-notification',
       kind: 'message_thread',
-      placement: { sequence: 10 },
+      placement: { sequence: 10, transcriptPosition: { sessionId, afterEntryId: 'tool-1' } },
       relatedPiEvents: [entryFreeRef],
       data: { sourcePath: scoutPath, targetPath: workerPath, request: 'The callback route does not own the mutation.' },
     };
@@ -106,9 +107,15 @@ describe('subagent semantic transcript projection', () => {
     const semanticIndex = items.findIndex((item) => item.kind === 'semantic' && item.block.eventId === event.eventId);
 
     expect(semanticIndex).toBeGreaterThan(-1);
-    expect(semanticIndex).toBe(items.length - 1);
+    expect(items[semanticIndex - 1]).toMatchObject({ kind: 'native', entry: { id: 'tool-1' } });
+    expect(items[semanticIndex + 1]).toMatchObject({ kind: 'native', entry: { id: 'result-1' } });
     expect(items.filter((item) => item.kind === 'native')).toHaveLength(nativeEntries.length);
     expect(copySubagentTranscript(items)).toContain('The callback route does not own the mutation.');
+  });
+
+  it('keeps unpositioned facts out of native history instead of attaching them to its tail', () => {
+    const event = { ...delegation(false), relatedPiEvents: [], placement: { sequence: 1 } };
+    expect(projectSubagentTranscript(nativeEntries, reduce(event)).map((item) => item.kind)).toEqual(nativeEntries.map(() => 'native'));
   });
 
   it('falls back to native rendering without matching provenance and respects session identity', () => {
@@ -416,7 +423,139 @@ const communicationEntries: readonly NativeTranscriptEntry[] = [
   { sessionId, id: 'after', kind: 'message', text: 'After communication.' },
 ];
 
+describe('await invocation progress', () => {
+  const event = (kind: 'await_started' | 'child_settled' | 'await_released' | 'await_interrupted', sequence: number, data: Record<string, unknown>): WireSubagentSemanticEvent => ({
+    type: 'subagent_event',
+    sessionId,
+    cursor: sequence,
+    eventId: `await-${sequence}`,
+    path: workerPath,
+    kind,
+    relatedPiEvents: [toolCallRef],
+    data,
+  });
+
+  it('updates one wait at its original position until completion', () => {
+    const events = [
+      event('await_started', 1, { invocationId: 'wait', requested: [workerPath, scoutPath] }),
+      event('child_settled', 2, { statuses: [{ path: workerPath, state: 'idle', output: 'Review complete.' }] }),
+      event('await_released', 3, { invocationId: 'wait', statuses: [{ path: scoutPath, state: 'idle', output: 'Lookup complete.' }] }),
+    ];
+    const blocks = reduceSubagentWireSemanticEvents(events).blocks;
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({ kind: 'await_progress', data: { phase: 'completed' }, placement: { sequence: 1 } });
+    expect(blocks[0].transcriptText).toContain('Review complete.');
+    expect(blocks[0].transcriptText).toContain('Lookup complete.');
+  });
+
+  it('completes a settled wait when its viewed child releases held results', () => {
+    const blocks = reduceSubagentWireSemanticEvents([
+      event('await_started', 1, { invocationId: 'wait', requested: [workerPath] }),
+      event('await_released', 2, { invocationId: 'wait', statuses: [{ path: workerPath, state: 'idle', output: 'Held result.' }], reason: 'detach' }),
+    ]).blocks;
+    expect(blocks[0]).toMatchObject({ title: 'Await completed', data: { phase: 'completed' } });
+    expect(blocks[0].transcriptText).toContain('Held result.');
+  });
+
+  it('does not call a refused wait successful when a child needs a response', () => {
+    const blocks = reduceSubagentWireSemanticEvents([
+      event('await_started', 1, { invocationId: 'wait', requested: [workerPath] }),
+      event('await_released', 2, { invocationId: 'wait', statuses: [], reason: 'message' }),
+    ]).blocks;
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({ kind: 'await_progress', data: { phase: 'interrupted', children: [{ path: workerPath, state: 'waiting' }] } });
+    expect(blocks[0].title).not.toMatch(/completed|by message/i);
+  });
+
+  it('identifies a cancelled wait without claiming a message interrupted it', () => {
+    const blocks = reduceSubagentWireSemanticEvents([
+      event('await_started', 1, { invocationId: 'wait', requested: [workerPath] }),
+      event('await_interrupted', 2, { invocationId: 'wait', statuses: [{ path: workerPath, state: 'running' }], reason: 'stop' }),
+    ]).blocks;
+    expect(blocks[0]).toMatchObject({ title: 'Await stopped', data: { phase: 'interrupted' } });
+  });
+
+  it('does not turn an idle notification into an unanchored waiting card', () => {
+    const settled = { ...event('child_settled', 1, { statuses: [{ path: workerPath, state: 'idle' }] }), relatedPiEvents: [{ sessionId, kind: 'lifecycle' as const }] };
+    expect(reduceSubagentWireSemanticEvents([settled]).blocks).toHaveLength(0);
+  });
+
+  it('keeps separate await calls separate and preserves the interrupted phase', () => {
+    const otherRef = { ...toolCallRef, toolCallId: 'call-2' };
+    const blocks = reduceSubagentWireSemanticEvents([
+      event('await_started', 1, { invocationId: 'first', requested: [workerPath] }),
+      event('await_interrupted', 2, {
+        invocationId: 'first',
+        statuses: [{ path: workerPath, state: 'running' }],
+        message: { from: scoutPath, to: [], text: 'Check complete.', phase: 'received', responseExpected: false },
+      }),
+      { ...event('await_started', 3, { invocationId: 'second', requested: [workerPath] }), relatedPiEvents: [otherRef] },
+    ]).blocks;
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0]).toMatchObject({ data: { phase: 'interrupted', interruption: { text: 'Check complete.' } } });
+    expect(blocks[1]).toMatchObject({ data: { phase: 'waiting' } });
+  });
+});
+
+describe('communication surface ownership', () => {
+  it('shows a blocking request and reply once without the child receipt in the sender chat', () => {
+    const request = wireThread('sent', 1, { phase: 'sent', from: [], to: workerPath, text: 'Root question.', responseExpected: true, correlationId: 'corr' }, sendRef);
+    const received = wireThread('received', 2, { phase: 'received', from: [], to: workerPath, text: 'Root question.', responseExpected: true, correlationId: 'corr' }, receivedRef);
+    const reply = {
+      ...wireThread('reply', 3, { phase: 'response', from: workerPath, to: [], text: 'Worker answer.', responseExpected: false, correlationId: 'corr' }, sendRef),
+      relatedPiEvents: [{ sessionId: 'worker-session', kind: 'tool_call' as const, toolCallId: 'respond' }, sendRef],
+    };
+    const blocks = reduceSubagentWireSemanticEvents([request, received, reply], { sessionId, path: [] }).blocks;
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({ kind: 'message_thread', data: { request: 'Root question.', reply: 'Worker answer.' } });
+    expect(blocks[0].placement.sequence).toBe(1);
+  });
+
+  it('keeps the actual inbound route and body when a correlation already has a request', () => {
+    const sent = wireThread('sent', 1, { phase: 'sent', from: [], to: workerPath, text: 'Old question.', responseExpected: true, correlationId: 'corr' }, sendRef);
+    const received = wireThread(
+      'received',
+      2,
+      { phase: 'received', from: workerPath, to: [], text: 'New inbound body.', responseExpected: false, correlationId: 'corr' },
+      receivedRef,
+    );
+    const blocks = reduceSubagentWireSemanticEvents([sent, received], { sessionId, path: [] }).blocks;
+    expect(blocks.find((block) => block.kind === 'message_thread' && block.data.phase === 'received')).toMatchObject({
+      data: { sourcePath: workerPath, targetPath: [], request: 'New inbound body.' },
+    });
+  });
+
+  it('does not put a root insertion into an empty child transcript', () => {
+    const rootOnly: WireSubagentSemanticEvent = {
+      type: 'subagent_event',
+      sessionId,
+      cursor: 1,
+      eventId: 'root-only',
+      path: workerPath,
+      relatedPiEvents: [],
+      kind: 'resurrect',
+      data: { path: workerPath, outcome: 'succeeded' },
+      transcriptPosition: { sessionId, afterEntryId: null, messageIndex: 0 },
+    };
+    expect(projectSubagentWireTranscript([], [rootOnly], { sessionId: 'empty-child', path: workerPath })).toEqual([]);
+  });
+});
+
 describe('subagent wire transcript boundary', () => {
+  it('keeps distinct legacy facts with one reused event ID in their separate native messages', () => {
+    const first = wireThread('legacy-id', 1, { phase: 'received', from: workerPath, to: [], text: 'First delivery.', responseExpected: false }, receivedRef);
+    const second = wireThread('legacy-id', 2, { phase: 'received', from: scoutPath, to: [], text: 'Later delivery.', responseExpected: false }, responseRef);
+    const items = projectSubagentWireTranscript(communicationEntries, [first, second]);
+    const messages = items.filter((item) => item.kind === 'semantic');
+    expect(messages).toHaveLength(2);
+    expect(messages[0].block.transcriptText).toContain('First delivery.');
+    expect(messages[1].block.transcriptText).toContain('Later delivery.');
+    expect(messages[0].block.blockId).not.toBe(messages[1].block.blockId);
+    const between = items.findIndex((item) => item.kind === 'native' && item.entry.id === 'between');
+    expect(items.indexOf(messages[0])).toBeLessThan(between);
+    expect(items.indexOf(messages[1])).toBeGreaterThan(between);
+  });
+
   it('maps an awaited delegation and completion into its native invocation block', () => {
     const items = projectSubagentWireTranscript(nativeEntries, [wireDelegation(true), wireCompletion('awaited', toolCallRef)]);
     const delegation = items.find((item) => item.kind === 'semantic' && item.block.kind === 'delegation');
@@ -572,7 +711,13 @@ describe('subagent wire transcript boundary', () => {
     const items = projectSubagentWireTranscript(communicationEntries, [received]);
     const incoming = items.find((item) => item.kind === 'semantic' && item.block.kind === 'message_thread');
     if (incoming?.kind !== 'semantic' || incoming.block.kind !== 'message_thread') throw new Error('missing incoming message');
-    expect(incoming.block.data).toMatchObject({ sourcePath: scoutPath, targetPath: workerPath, request: 'The callback route does not own the mutation.' });
+    expect(incoming.block.data).toMatchObject({
+      phase: 'received',
+      responseExpected: false,
+      sourcePath: scoutPath,
+      targetPath: workerPath,
+      request: 'The callback route does not own the mutation.',
+    });
     expect(incoming.block.transcriptText).toContain('The callback route does not own the mutation.');
   });
 
