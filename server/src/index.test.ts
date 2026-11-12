@@ -56,6 +56,13 @@ const mocks = vi.hoisted(() => {
   const downloadManager = {};
   const downloadFactory = (() => undefined) as any;
   const updateChecker = { getStatus: vi.fn(async () => null) };
+  const userProfiles = {
+    load: vi.fn(async () => undefined),
+    gc: vi.fn(async () => undefined),
+  };
+  const UserProfiles = vi.fn(function () {
+    return userProfiles;
+  });
   return {
     config,
     sessionRecords,
@@ -73,6 +80,8 @@ const mocks = vi.hoisted(() => {
     downloadManager,
     downloadFactory,
     updateChecker,
+    userProfiles,
+    UserProfiles,
     getVersion: vi.fn(async () => '0.11.0'),
     createUpdateChecker: vi.fn(() => updateChecker),
     fetchLatestVersionFromNpm: vi.fn(async () => '0.11.0'),
@@ -92,6 +101,7 @@ vi.mock('./config.js', async (importOriginal) => ({
   ensureVapidKeys: mocks.ensureVapidKeys,
 }));
 vi.mock('./server.js', () => ({ createServer: mocks.createServer }));
+vi.mock('./user-profiles.js', () => ({ UserProfiles: mocks.UserProfiles }));
 vi.mock('./session-records.js', async (importOriginal) => ({
   ...(await importOriginal()),
   SessionRecords: vi.fn(function () {
@@ -195,6 +205,11 @@ function resetMocks(): void {
   mocks.getVersion.mockReset().mockResolvedValue('0.11.0');
   mocks.createUpdateChecker.mockReset().mockReturnValue(mocks.updateChecker);
   mocks.fetchLatestVersionFromNpm.mockReset().mockResolvedValue('0.11.0');
+  mocks.UserProfiles.mockReset().mockImplementation(function () {
+    return mocks.userProfiles;
+  });
+  mocks.userProfiles.load.mockReset().mockResolvedValue(undefined);
+  mocks.userProfiles.gc.mockReset().mockResolvedValue(undefined);
   mocks.updateChecker.getStatus.mockReset().mockResolvedValue(null);
 }
 
@@ -220,6 +235,8 @@ describe('main — file download bootstrap wiring', () => {
     await main({ portOverride: 4321 });
 
     expect(mocks.bootstrapFileDownloads).toHaveBeenCalledWith(expect.objectContaining({ validSessionIds: new Set(['session-1']) }));
+    expect(mocks.userProfiles.load).toHaveBeenCalledOnce();
+    expect(mocks.userProfiles.gc).toHaveBeenCalledWith(new Set(['session-1']));
     expect(mocks.scanFolderModel).toHaveBeenCalledWith({ roots: ['/workspace'], onWarning: expect.any(Function) });
     expect(PimoteSessionManager.create).toHaveBeenCalledWith(
       mocks.config,
