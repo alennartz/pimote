@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
 import { reduceSubagentWireSemanticEvents } from '$lib/subagent-semantic.js';
+import type { SubagentSemanticEvent } from '@pimote/shared';
 import SubagentSemanticBlock from './SubagentSemanticBlock.svelte';
 
 let component: ReturnType<typeof mount> | undefined;
@@ -31,6 +32,55 @@ async function render(responseExpected: boolean, phase: 'sent' | 'received' = 's
   await tick();
   return target;
 }
+
+describe('subagent header subjects', () => {
+  const base = { type: 'subagent_event' as const, sessionId: 'root', cursor: 1, eventId: 'header', path: [], relatedPiEvents: [] };
+  const cases: { label: string; event: SubagentSemanticEvent; subjects: string[] }[] = [
+    {
+      label: 'delegation',
+      event: {
+        ...base,
+        kind: 'delegation',
+        data: {
+          invocationId: 'spawn',
+          awaitsResult: false,
+          children: [
+            { path: ['worker'], task: 'Review.' },
+            { path: ['worker', 'scout'], task: 'Find files.' },
+          ],
+        },
+      },
+      subjects: ['worker', 'worker/scout'],
+    },
+    {
+      label: 'await progress',
+      event: { ...base, kind: 'await_started', data: { invocationId: 'wait', requested: [['worker'], ['worker', 'scout']] } },
+      subjects: ['worker', 'worker/scout'],
+    },
+    {
+      label: 'completion',
+      event: { ...base, path: ['worker', 'scout'], kind: 'completion', data: { delivery: 'asynchronous', status: 'idle', output: 'Finished.' } },
+      subjects: ['worker/scout'],
+    },
+    ...(['interrupt', 'teardown', 'resurrect'] as const).map((kind) => ({
+      label: kind,
+      event: { ...base, kind, path: ['worker', 'scout'], data: { path: ['worker', 'scout'], outcome: 'succeeded' as const } },
+      subjects: ['worker/scout'],
+    })),
+  ];
+
+  it.each(cases)('shows the affected subagents in the $label header', async ({ event, subjects }) => {
+    const block = reduceSubagentWireSemanticEvents([event]).blocks[0];
+    const target = document.createElement('div');
+    component = mount(SubagentSemanticBlock, { target, props: { block } });
+    await tick();
+    const header = target.querySelector<HTMLButtonElement>('button[aria-expanded]')!;
+    for (const subject of subjects) expect(header.textContent).toContain(subject);
+    expect(header.textContent).not.toMatch(/\b(?:Progress|Completion|Lifecycle)\b/);
+    if (event.kind === 'delegation') expect(header.textContent?.match(/\bDelegation\b/g)).toHaveLength(1);
+    if (subjects.length === 1) expect(header.textContent?.split(subjects[0])).toHaveLength(2);
+  });
+});
 
 describe('subagent message presentation', () => {
   it.each([true, false])('shows the recipient and an icon for reply expectation=%s', async (expected) => {

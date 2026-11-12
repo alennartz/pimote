@@ -44,20 +44,38 @@
     return left.length === right.length && left.every((part, index) => part === right[index]);
   }
 
-  function kindLabel(kind: SemanticBlock['kind']): string {
-    switch (kind) {
+  function headerSubject(): string {
+    switch (block.kind) {
       case 'delegation':
-        return 'Delegation';
-      case 'message_thread':
-        return 'Message';
       case 'await_progress':
-        return 'Progress';
+        return block.data.children.map((child) => pathText(child.path)).join(', ');
+      case 'message_thread':
+        return pathText(samePath(viewerPath, block.data.sourcePath) ? block.data.targetPath : block.data.sourcePath);
       case 'completion':
-        return 'Completion';
+        return pathText(block.data.result.path);
       case 'lifecycle':
-        return 'Lifecycle';
+        return pathText(block.data.path);
     }
   }
+
+  function headerTitle(): string {
+    if (block.kind === 'completion') {
+      switch (block.data.result.state) {
+        case 'errored':
+          return 'Errored';
+        case 'dead':
+          return 'Ended';
+        case 'stopped':
+          return 'Stopped';
+        default:
+          return 'Completed';
+      }
+    }
+    if (block.kind === 'lifecycle') return { interrupt: 'Interrupted', teardown: 'Torn down', resurrect: 'Resurrected' }[block.data.operation];
+    return block.title;
+  }
+
+  let subject = $derived(headerSubject());
 
   function usageText(result: SemanticChildResult): string {
     const parts: string[] = [];
@@ -171,20 +189,16 @@
     {:else}
       <RefreshCw class="subagent-semantic-icon" size={14} />
     {/if}
-    <span class="subagent-semantic-title">{block.title}</span>
-    {#if block.kind === 'message_thread'}
-      <span class="subagent-semantic-peer">{pathText(samePath(viewerPath, block.data.sourcePath) ? block.data.targetPath : block.data.sourcePath)}</span>
-      {#if block.data.responseExpected !== undefined}
-        <span
-          class="subagent-response-cue"
-          aria-label={block.data.responseExpected ? 'Response expected' : 'No response expected'}
-          title={block.data.responseExpected ? 'Response expected' : 'No response expected'}
-        >
-          {#if block.data.responseExpected}<Reply size={14} aria-hidden="true" />{:else}<ArrowRight size={14} aria-hidden="true" />{/if}
-        </span>
-      {/if}
-    {:else}
-      <span class="subagent-semantic-kind">{kindLabel(block.kind)}</span>
+    <span class="subagent-semantic-title">{headerTitle()}</span>
+    {#if subject}<span class="subagent-semantic-subject" title={subject}>{subject}</span>{/if}
+    {#if block.kind === 'message_thread' && block.data.responseExpected !== undefined}
+      <span
+        class="subagent-response-cue"
+        aria-label={block.data.responseExpected ? 'Response expected' : 'No response expected'}
+        title={block.data.responseExpected ? 'Response expected' : 'No response expected'}
+      >
+        {#if block.data.responseExpected}<Reply size={14} aria-hidden="true" />{:else}<ArrowRight size={14} aria-hidden="true" />{/if}
+      </span>
     {/if}
   </button>
 
@@ -347,15 +361,7 @@
     white-space: nowrap;
   }
 
-  .subagent-semantic-kind {
-    flex-shrink: 0;
-    margin-left: auto;
-    color: var(--muted-foreground);
-    font-size: 0.7rem;
-    font-weight: 400;
-  }
-
-  .subagent-semantic-peer {
+  .subagent-semantic-subject {
     min-width: 0;
     max-width: 45%;
     margin-left: auto;
