@@ -89,3 +89,19 @@ A child's own tool operations belong in its child transcript. Messages delivered
 Subagents appeared in the sidepane without a corresponding visible spawning entry in the parent transcript.
 
 Each spawn or resurrection must have a parent transcript entry linked to the resulting children.
+
+## BUG-012: Await settles on idle despite an open session
+
+**Status:** Open.
+
+An await on a child settled as soon as the child went idle, even though the user had the session open.
+
+Idle must not release an await while the user has the session open. The wait holds until the open-session condition ends.
+
+## BUG-013: UI steering to a subagent window is not queued
+
+**Status:** Open.
+
+A steering message sent from the UI to a running subagent window did not queue for the child.
+
+The UI must queue steering messages to a running subagent window and deliver them to the child.
