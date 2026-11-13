@@ -366,33 +366,45 @@ function hydrateMessageEntryIds(session: Pick<PerSessionState, 'messages' | 'mes
   }
 }
 
-function streamingParentTargetsFutureRow(parentMessageId: string, messageCount: number): boolean {
+type ProjectedTranscript = Pick<PerSessionState, 'messages' | 'messageKeys' | 'optimisticEntries' | 'projectedSubagentContent'>;
+
+function confirmedTranscriptRows(transcript: ProjectedTranscript) {
+  const pendingKeys = new Set(transcript.optimisticEntries.map((entry) => entry.key));
+  const rows = transcript.messages.map((message, index) => ({ message, key: transcript.messageKeys[index] }));
+  return {
+    confirmed: rows.filter((row) => !pendingKeys.has(row.key)),
+    pending: rows.filter((row) => pendingKeys.has(row.key)),
+  };
+}
+
+function applyProjectedEventToTranscript(transcript: ProjectedTranscript, event: SubagentContentEvent, generateKeys: (count: number) => string[]): void {
+  const { confirmed, pending } = confirmedTranscriptRows(transcript);
+  const projected = applySubagentContentEvent({ messages: confirmed.map((row) => row.message), active: transcript.projectedSubagentContent.active }, event);
+  const addedKeys = generateKeys(projected.messages.length - confirmed.length);
+  transcript.projectedSubagentContent = projected;
+  transcript.messages = [...projected.messages, ...pending.map((row) => row.message)];
+  transcript.messageKeys = [...confirmed.map((row) => row.key), ...addedKeys, ...pending.map((row) => row.key)];
+}
+
+function streamingParentTargetsFutureRow(parentMessageId: string, transcript: ProjectedTranscript): boolean {
   const match = /^message-(\d+)$/.exec(parentMessageId);
-  return match !== null && Number(match[1]) >= messageCount;
+  if (!match) return false;
+  const pendingCount = transcript.optimisticEntries.filter((entry) => transcript.messageKeys.includes(entry.key)).length;
+  return Number(match[1]) >= transcript.messages.length - pendingCount;
 }
 
-function applyProjectedEventToStreaming(session: PerSessionState, event: SubagentContentEvent): boolean {
-  if (!session.streamingMessage || session.streamingMessage.role !== 'assistant') return false;
-  if (!streamingParentTargetsFutureRow(event.parentMessageId, session.messages.length)) return false;
-  session.streamingMessage = applySubagentContentToStreaming(session.streamingMessage, event);
+function applyProjectedEventToStreaming(transcript: ProjectedTranscript & Pick<PerSessionState, 'streamingMessage'>, event: SubagentContentEvent): boolean {
+  if (!transcript.streamingMessage || transcript.streamingMessage.role !== 'assistant') return false;
+  if (!streamingParentTargetsFutureRow(event.parentMessageId, transcript)) return false;
+  transcript.streamingMessage = applySubagentContentToStreaming(transcript.streamingMessage, event);
   return true;
 }
 
-function applyProjectedEventToAttachmentStreaming(attachment: SubagentAttachmentState, event: SubagentContentEvent): boolean {
-  if (!attachment.streamingMessage || attachment.streamingMessage.role !== 'assistant') return false;
-  if (!streamingParentTargetsFutureRow(event.parentMessageId, attachment.messages.length)) return false;
-  attachment.streamingMessage = applySubagentContentToStreaming(attachment.streamingMessage, event);
-  return true;
-}
-
-function applyChildNativeEvent(attachment: SubagentAttachmentState, event: PimoteEvent): void {
+function applyChildNativeEvent(attachment: SubagentAttachmentState, event: PimoteEvent, generateKeys: (count: number) => string[]): void {
   if (isSubagentContentEvent(event)) {
-    if (applyProjectedEventToAttachmentStreaming(attachment, event)) return;
-    const projected = applySubagentContentEvent(attachment.projectedSubagentContent, event);
-    attachment.projectedSubagentContent = projected;
-    attachment.messages = [...projected.messages];
+    if (applyProjectedEventToStreaming(attachment, event)) return;
+    applyProjectedEventToTranscript(attachment, event, generateKeys);
     attachment.transcript = attachment.messages;
-    attachment.messageKeys = attachment.messages.map((_, index) => `child-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${index}`);
     attachment.state = { ...attachment.state, messageCount: attachment.messages.length };
     return;
   }
@@ -1423,7 +1435,7 @@ export class SessionRegistry {
     if (event.viewCursor < attachment.observerCursor || (event.viewCursor === attachment.observerCursor && !ephemeral)) return;
     attachment.viewCursor = Math.max(attachment.viewCursor, event.viewCursor);
     attachment.observerCursor = Math.max(attachment.observerCursor, event.viewCursor);
-    applyChildNativeEvent(attachment, event.event);
+    applyChildNativeEvent(attachment, event.event, (count) => this.generateMessageKeys(count));
     if ('timestamp' in event.event && typeof (event.event as { timestamp?: unknown }).timestamp === 'string') {
       attachment.lastBotActivityTimestamp = (event.event as { timestamp: string }).timestamp;
     }
@@ -1490,9 +1502,7 @@ export class SessionRegistry {
       if (!sessionId || !this.sessions[sessionId]) return;
       const session = this.sessions[sessionId];
       if (applyProjectedEventToStreaming(session, event)) return;
-      const projected = applySubagentContentEvent(session.projectedSubagentContent, event);
-      session.projectedSubagentContent = projected;
-      session.messages = [...projected.messages];
+      applyProjectedEventToTranscript(session, event, (count) => this.generateMessageKeys(count));
       session.messageCount = session.messages.length;
       return;
     }

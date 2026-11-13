@@ -149,6 +149,53 @@ describe('MessageList streaming menus', () => {
   });
 });
 
+describe('MessageList transcript preservation', () => {
+  it('keeps the previous answer visible after a projected row and the next user echo', () => {
+    sessionRegistry.addSession('s1', '/workspace/project', 'project');
+    sessionRegistry.handleEvent({ type: 'message_start', sessionId: 's1', cursor: 1, role: 'user' });
+    sessionRegistry.handleEvent({ type: 'message_end', sessionId: 's1', cursor: 2, message: { role: 'user', content: [{ type: 'text', text: 'Initial question.' }] } });
+    sessionRegistry.handleEvent({
+      type: 'subagent_content_start',
+      sessionId: 's1',
+      cursor: 3,
+      parentMessageId: 'message-1',
+      contentIndex: 0,
+      operationId: 'send-call',
+      kind: 'send',
+      placement: { toolCallId: 'send-call', contentIndex: 0 },
+      content: {
+        type: 'subagent',
+        operationId: 'send-call',
+        subagentKind: 'send',
+        subagentState: 'active',
+        data: { operation: 'send', to: ['worker'], request: 'Check the result.', response: '', phase: 'sending' },
+      },
+    });
+    const answer = 'The previous answer must remain readable.';
+    sessionRegistry.handleEvent({ type: 'message_start', sessionId: 's1', cursor: 4, role: 'assistant' });
+    sessionRegistry.handleEvent({ type: 'message_end', sessionId: 's1', cursor: 5, message: { role: 'assistant', content: [{ type: 'text', text: answer }] } });
+    flushSync();
+    expect(inner.textContent).toContain(answer);
+
+    const prompt = 'The next question.';
+    sessionRegistry.addOptimisticUserMessage('s1', prompt, 'prompt-1');
+    flushSync();
+    expect(inner.textContent).toContain(answer);
+    sessionRegistry.handleEvent({ type: 'message_start', sessionId: 's1', cursor: 6, role: 'user', clientMessageId: 'prompt-1' });
+    sessionRegistry.handleEvent({
+      type: 'message_end',
+      sessionId: 's1',
+      cursor: 7,
+      message: { role: 'user', content: [{ type: 'text', text: prompt }] },
+      clientMessageId: 'prompt-1',
+    });
+    flushSync();
+
+    expect(inner.textContent).toContain(answer);
+    expect([...inner.querySelectorAll('.user-message')].filter((row) => row.textContent?.includes(prompt))).toHaveLength(1);
+  });
+});
+
 describe('MessageList scroll pin', () => {
   it('keeps following streamed output when a scroll event arrives before the next frame', async () => {
     const session = sessionRegistry.viewed!;
