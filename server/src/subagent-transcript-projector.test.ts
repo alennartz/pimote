@@ -105,6 +105,7 @@ describe('subagent transcript projector', () => {
         },
       },
     } as unknown as IncomingSdkEvent);
+    expect(nativeEvents).toContainEqual(expect.objectContaining({ type: 'message_end', message: expect.objectContaining({ role: 'custom' }) }));
     expect(nativeEvents).toContainEqual(expect.objectContaining({ type: 'subagent_content_start', operationId: 'custom-send' }));
     expect(current.snapshot().messages[0]).toMatchObject({ role: 'custom', content: [expect.objectContaining({ operationId: 'custom-send', subagentState: 'complete' })] });
 

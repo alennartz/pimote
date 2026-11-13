@@ -596,6 +596,32 @@ describe('SessionRegistry', () => {
       expect(registry.sessions['s1'].streamingMessage).toBeNull();
     });
 
+    it('keeps source-less custom projections in their custom message row', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent(
+        makeSessionEvent('message_end', 's1', {
+          message: { role: 'custom', customType: 'subagents', content: [] },
+        }),
+      );
+      registry.handleEvent(
+        makeSessionEvent('subagent_content_start', 's1', {
+          parentMessageId: 'message-0',
+          contentIndex: 0,
+          operationId: 'custom-send',
+          kind: 'send',
+          placement: { entryId: 'message-0' },
+          content: {
+            type: 'subagent',
+            operationId: 'custom-send',
+            subagentKind: 'send',
+            subagentState: 'complete',
+            data: { operation: 'send', to: ['worker'], request: 'check', response: 'done' },
+          },
+        }),
+      );
+      expect(registry.sessions['s1'].messages[0]).toMatchObject({ role: 'custom', content: [expect.objectContaining({ operationId: 'custom-send' })] });
+    });
+
     it('message_update subtype start creates content block at contentIndex', () => {
       registry.addSession('s1', '/path', 'proj');
       registry.handleEvent(makeSessionEvent('message_start', 's1', { role: 'assistant' }));

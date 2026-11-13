@@ -703,11 +703,15 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     if (event.type === 'message_end') {
       if (event.message.role === 'custom' && typeof event.message.customType === 'string' && hiddenCustomTypes.has(event.message.customType)) {
         const mapped = cloneMessage(mapAgentMessage(event.message));
+        const nativeEntryId = (event.message as unknown as { entryId?: unknown }).entryId;
+        if (mapped.entryId === undefined && typeof nativeEntryId === 'string') mapped.entryId = nativeEntryId;
         const entryId = typeof mapped.entryId === 'string' ? mapped.entryId : undefined;
         const existing = entryId ? findMessageByEntry(entryId) : -1;
         const index = existing >= 0 ? existing : messages.length;
         if (existing < 0) {
-          messages.push({ ...mapped, content: [] });
+          const { details: _details, ...withoutDetails } = mapped;
+          void _details;
+          messages.push({ ...withoutDetails, content: [] });
           nativeBlocks.push([]);
         } else {
           messages[existing] = { ...messages[existing], content: messages[existing].content.filter(isSubagentContent) };
@@ -715,13 +719,14 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
         }
         hiddenCustomEntries.add(messageId(messages[index], index));
         if (entryId) hiddenCustomEntries.add(entryId);
+        const messageEvent: PimoteSessionEvent = { ...emitBase(), type: 'message_end', message: cloneMessage(messages[index]) };
         const payload = customPayloadForMessage(mapped);
         const validPayload = Array.isArray(payload) && payload.length > 0 && payload.every((item) => isPersistedSubagentContent(item));
         if (!validPayload) {
-          return protocolErrorForRow(index, `Hidden custom entry ${mapped.customType} contains malformed subagent content.`);
+          return [messageEvent, ...protocolErrorForRow(index, `Hidden custom entry ${mapped.customType} contains malformed subagent content.`)];
         }
         const events = payload.flatMap((item) => flushPendingCustomOperation(item.operationId as string, index));
-        return events;
+        return [messageEvent, ...events];
       }
       const mapped = cloneMessage(mapAgentMessage(event.message));
       const existing = mapped.entryId
