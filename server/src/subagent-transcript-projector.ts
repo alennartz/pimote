@@ -45,6 +45,7 @@ type NativeBlock = { sourceIndex: number; content: PimoteMessageContent };
 type ProjectedSource = { messageIndex: number; sourceIndex: number; order: number };
 type OperationRecord = { target: SubagentOperationTarget; data: SubagentStartData; slot: MutableSlot };
 type ProtocolErrorData = Readonly<{ operation: 'protocol_error'; message: string }>;
+type PresentationProviderEvent = Extract<SubagentProviderEvent, { target: SubagentOperationTarget }>;
 
 const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object';
 const PRESENTATION_KINDS = new Set<SubagentOperationKindLike>(['send', 'respond', 'await', 'delegation', 'completion', 'interrupt', 'teardown', 'resurrect']);
@@ -157,6 +158,8 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
   const operationSlots = new Map<string, MutableSlot>();
   const projectedSources = new Map<string, ProjectedSource>();
   const customProtocolErrors = new Map<string, string>();
+  const customOperationRows = new Map<string, number>();
+  const pendingCustomEvents = new Map<string, PresentationProviderEvent[]>();
   let nextProjectedOrder = 0;
   let streamingAssistantSlot: MutableSlot | undefined;
   const hiddenStreamingIndexes = new Set<number>();
@@ -212,7 +215,14 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     return { content, slots };
   };
 
-  const findMessageByEntry = (entryId: string): number => messages.findIndex((message) => message.entryId === entryId);
+  const findMessageByEntry = (entryId: string): number => {
+    const byEntry = messages.findIndex((message) => message.entryId === entryId);
+    if (byEntry >= 0) return byEntry;
+    const match = /^message-(\d+)$/.exec(entryId);
+    if (!match) return -1;
+    const index = Number(match[1]);
+    return Number.isInteger(index) && index >= 0 && index < messages.length ? index : -1;
+  };
 
   const messageForTarget = (target: SubagentOperationTarget): Slot => {
     const placement = target.placement;
@@ -504,6 +514,29 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     ];
   };
 
+  const protocolErrorForRow = (messageIndex: number, message: string): readonly PimoteSessionEvent[] => {
+    const parentMessageId = messageId(messages[messageIndex] ?? { role: 'custom', content: [] }, messageIndex);
+    return protocolErrorForEntry(parentMessageId, message);
+  };
+
+  const customPayloadForMessage = (message: PimoteAgentMessage): readonly Record<string, unknown>[] | undefined => {
+    const details = isObject(message.details) ? message.details : undefined;
+    const payload = details?.subagentContent;
+    return Array.isArray(payload) ? payload.filter(isObject) : undefined;
+  };
+
+  const customTargetForRow = (event: PresentationProviderEvent, messageIndex: number): PresentationProviderEvent => {
+    const parentMessageId = messageId(messages[messageIndex], messageIndex);
+    return { ...event, target: { ...event.target, placement: { entryId: parentMessageId } } } as PresentationProviderEvent;
+  };
+
+  const flushPendingCustomOperation = (operationId: string, messageIndex: number): readonly PimoteSessionEvent[] => {
+    customOperationRows.set(operationId, messageIndex);
+    const pending = pendingCustomEvents.get(operationId) ?? [];
+    pendingCustomEvents.delete(operationId);
+    return pending.flatMap((event) => routeProviderEvent(customTargetForRow(event, messageIndex)));
+  };
+
   const rehydrate = (nextMessages: readonly PimoteAgentMessage[]): void => {
     const active = [...operations.values()].map((record) => ({ target: cloneTarget(record.target), data: record.data }));
     const preserved = messages.flatMap((message) =>
@@ -523,6 +556,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     hiddenToolSlots.clear();
     hiddenCustomEntries.clear();
     customProtocolErrors.clear();
+    customOperationRows.clear();
     streamingAssistantSlot = undefined;
     hiddenStreamingIndexes.clear();
     for (const source of nextMessages) {
@@ -531,13 +565,15 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
         void _details;
         const hidden = { ...withoutDetails, content: [] };
         if (hidden.entryId) hiddenCustomEntries.add(hidden.entryId);
+        const index = messages.length;
         messages.push(hidden);
         nativeBlocks.push([]);
-        if (hidden.entryId) {
-          const payload = isObject(_details) ? _details.subagentContent : undefined;
-          if (!Array.isArray(payload) || payload.length === 0 || payload.some((item) => !isPersistedSubagentContent(item))) {
-            protocolErrorForEntry(hidden.entryId, `Hidden custom entry ${source.customType} contains malformed subagent content.`);
-          }
+        hiddenCustomEntries.add(messageId(hidden, index));
+        const payload = customPayloadForMessage(source);
+        if (!Array.isArray(payload) || payload.length === 0 || payload.some((item) => !isPersistedSubagentContent(item))) {
+          if (hidden.entryId) protocolErrorForEntry(hidden.entryId, `Hidden custom entry ${source.customType} contains malformed subagent content.`);
+        } else {
+          for (const item of payload) customOperationRows.set(item.operationId as string, index);
         }
         continue;
       }
@@ -666,8 +702,26 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     }
     if (event.type === 'message_end') {
       if (event.message.role === 'custom' && typeof event.message.customType === 'string' && hiddenCustomTypes.has(event.message.customType)) {
-        if (typeof (event.message as unknown as { entryId?: unknown }).entryId === 'string') hiddenCustomEntries.add((event.message as unknown as { entryId: string }).entryId);
-        return [];
+        const mapped = cloneMessage(mapAgentMessage(event.message));
+        const entryId = typeof mapped.entryId === 'string' ? mapped.entryId : undefined;
+        const existing = entryId ? findMessageByEntry(entryId) : -1;
+        const index = existing >= 0 ? existing : messages.length;
+        if (existing < 0) {
+          messages.push({ ...mapped, content: [] });
+          nativeBlocks.push([]);
+        } else {
+          messages[existing] = { ...messages[existing], content: messages[existing].content.filter(isSubagentContent) };
+          nativeBlocks[existing] = [];
+        }
+        hiddenCustomEntries.add(messageId(messages[index], index));
+        if (entryId) hiddenCustomEntries.add(entryId);
+        const payload = customPayloadForMessage(mapped);
+        const validPayload = Array.isArray(payload) && payload.length > 0 && payload.every((item) => isPersistedSubagentContent(item));
+        if (!validPayload) {
+          return protocolErrorForRow(index, `Hidden custom entry ${mapped.customType} contains malformed subagent content.`);
+        }
+        const events = payload.flatMap((item) => flushPendingCustomOperation(item.operationId as string, index));
+        return events;
       }
       const mapped = cloneMessage(mapAgentMessage(event.message));
       const existing = mapped.entryId
@@ -858,6 +912,39 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     }
   };
 
+  const routeProviderEvent = (event: SubagentProviderEvent): readonly PimoteSessionEvent[] => {
+    const wireEvent = event as unknown as Record<string, unknown>;
+    if (typeof wireEvent.type !== 'string' || !('target' in event)) return [];
+    const presentation = event as PresentationProviderEvent;
+    let routed: PresentationProviderEvent = presentation;
+    if (!presentation.target.placement) {
+      const messageIndex = customOperationRows.get(presentation.target.operationId);
+      if (messageIndex === undefined) {
+        const pending = pendingCustomEvents.get(presentation.target.operationId) ?? [];
+        pending.push(presentation);
+        pendingCustomEvents.set(presentation.target.operationId, pending);
+        return [];
+      }
+      routed = customTargetForRow(presentation, messageIndex);
+    }
+    switch (wireEvent.type) {
+      case 'subagent_start': {
+        const start = routed as Extract<SubagentProviderEvent, { type: 'subagent_start' }>;
+        return createStart(start.target, start.data, true);
+      }
+      case 'subagent_delta':
+        return applyDelta(routed as Extract<SubagentProviderEvent, { type: 'subagent_delta' }>);
+      case 'subagent_end':
+        return finish(routed as Extract<SubagentProviderEvent, { type: 'subagent_end' }>);
+      case 'subagent_snapshot_event':
+        return finite(routed as Extract<SubagentProviderEvent, { type: 'subagent_snapshot_event' }>);
+      default:
+        // Topology events are consumed by SubagentHost. They carry no
+        // transcript content and must never reach the client row.
+        return [];
+    }
+  };
+
   return {
     acceptNativeEvent,
     acceptProviderEvent(event) {
@@ -870,29 +957,18 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
         if (seenProviderEvents.has(identity)) return [];
         seenProviderEvents.add(identity);
       }
-      switch (wireEvent.type) {
-        case 'subagent_start': {
-          const start = event as Extract<SubagentProviderEvent, { type: 'subagent_start' }>;
-          return createStart(start.target, start.data, true);
-        }
-        case 'subagent_delta':
-          return applyDelta(event as Extract<SubagentProviderEvent, { type: 'subagent_delta' }>);
-        case 'subagent_end':
-          return finish(event as Extract<SubagentProviderEvent, { type: 'subagent_end' }>);
-        case 'subagent_snapshot_event':
-          return finite(event as Extract<SubagentProviderEvent, { type: 'subagent_snapshot_event' }>);
-        default:
-          // Topology events are consumed by SubagentHost. They carry no
-          // transcript content and must never reach the client row.
-          return [];
-      }
+      return routeProviderEvent(event);
     },
     projectStreamingMessage,
     restoreProjection,
     snapshot() {
       return {
         messages: messages
-          .filter((message) => !(message.role === 'custom' && message.entryId && hiddenCustomEntries.has(message.entryId) && !message.content.some(isSubagentContent)))
+          .filter((message, index) => {
+            if (message.role !== 'custom' || message.content.some(isSubagentContent)) return true;
+            const identity = message.entryId ?? `message-${index}`;
+            return !hiddenCustomEntries.has(identity);
+          })
           .map(cloneMessage),
         activeOperations: [...operations.values()].map((record) => ({ target: cloneTarget(record.target), data: record.data })),
       };

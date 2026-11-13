@@ -75,6 +75,68 @@ describe('subagent transcript projector', () => {
     expect(snapshot.messages[0]?.content[1]).toMatchObject({ operationId: 'send-call', subagentState: 'complete' });
   });
 
+  it('stages source-less custom provider events until the hidden message_end row arrives', () => {
+    const current = projector();
+    const event = {
+      type: 'subagent_snapshot_event',
+      eventId: 'custom-before-native',
+      cursor: cursor(1),
+      target: { operationId: 'custom-send', kind: 'send', path: [] },
+      state: 'complete',
+      data: { operation: 'send', to: ['worker'], request: 'Incoming task', response: 'Done' },
+    } as const;
+    expect(current.acceptProviderEvent(event)).toEqual([]);
+    const nativeEvents = current.acceptNativeEvent({
+      type: 'message_end',
+      message: {
+        role: 'custom',
+        customType: 'subagents',
+        content: [],
+        details: {
+          subagentContent: [
+            {
+              operationId: 'custom-send',
+              kind: 'send',
+              state: 'complete',
+              source: 'custom_entry',
+              data: event.data,
+            },
+          ],
+        },
+      },
+    } as unknown as IncomingSdkEvent);
+    expect(nativeEvents).toContainEqual(expect.objectContaining({ type: 'subagent_content_start', operationId: 'custom-send' }));
+    expect(current.snapshot().messages[0]).toMatchObject({ role: 'custom', content: [expect.objectContaining({ operationId: 'custom-send', subagentState: 'complete' })] });
+
+    const afterNative = projector();
+    afterNative.acceptNativeEvent({
+      type: 'message_end',
+      message: {
+        role: 'custom',
+        customType: 'subagents',
+        content: [],
+        details: {
+          subagentContent: [
+            {
+              operationId: 'custom-after-native',
+              kind: 'send',
+              state: 'complete',
+              source: 'custom_entry',
+              data: { operation: 'send', to: ['worker'], request: 'Now', response: 'Done' },
+            },
+          ],
+        },
+      },
+    } as unknown as IncomingSdkEvent);
+    afterNative.acceptProviderEvent({
+      ...event,
+      eventId: 'custom-after-native',
+      target: { operationId: 'custom-after-native', kind: 'send', path: [] },
+      data: { operation: 'send', to: ['worker'], request: 'Now', response: 'Done' },
+    });
+    expect(afterNative.snapshot().messages[0]).toMatchObject({ role: 'custom', content: [expect.objectContaining({ operationId: 'custom-after-native' })] });
+  });
+
   it('replaces an incoming hidden custom entry with typed send content', () => {
     const current = projector();
     current.rehydrate([{ role: 'custom', customType: 'subagents', entryId: 'incoming-entry', content: [{ type: 'text', text: '<agent_message>hidden</agent_message>' }] }]);

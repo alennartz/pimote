@@ -300,7 +300,10 @@ function isSubagentContentBlock(block: import('../../shared/dist/index.js').Pimo
  * delivery from the listener that observed it at the snapshot boundary. */
 function messageIsInSnapshot(event: PimoteSessionEvent, snapshot: SessionSurfaceSnapshot): boolean {
   if (event.type === 'subagent_content_start' || event.type === 'subagent_content_delta' || event.type === 'subagent_content_end') {
-    return snapshot.messages.some((message) => message.content.some((content) => content.type === 'subagent' && content.operationId === event.operationId));
+    return (
+      snapshot.messages.some((message) => message.content.some((content) => content.type === 'subagent' && content.operationId === event.operationId)) ||
+      snapshot.streamingMessage?.content.some((content) => content.type === 'subagent' && content.operationId === event.operationId) === true
+    );
   }
   if (event.type !== 'message_end' || event.clientMessageId !== undefined) return false;
   const encoded = JSON.stringify(event.message);
