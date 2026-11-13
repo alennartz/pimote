@@ -339,9 +339,9 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
 
   const appendProviderEvent = (event: ProviderFeedEvent): void => {
     if (closed) return;
-    // Older providers replay lifecycle facts (`completion`, `resurrect`,
-    // `teardown`, and similar) through the former semantic overlay channel.
-    // They are not topology and must never cross Pimote's typed wire seam.
+    // Older providers can replay lifecycle facts (`completion`, `resurrect`,
+    // `teardown`, and similar) through the provider feed. They are not
+    // topology and must never cross Pimote's typed wire seam.
     if (!isPresentationEvent(event) && !isSupportedTopologyEvent(event)) return;
     const identity = providerEventIdentity(event);
     if (seenEventIdentities.has(identity)) return;
@@ -350,7 +350,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
       const path = (event as SubagentProviderEvent & { target: { path: AgentPath } }).target.path;
       const surface = path.length === 0 ? options.parentSurface : surfaceForPath(path);
       // Presentation operations belong to the transcript surface that owns the
-      // logical path. They never enter the root hierarchy overlay stream.
+      // logical path. They never enter the root hierarchy event stream.
       surface?.acceptProviderEvent?.(event);
       return;
     }
