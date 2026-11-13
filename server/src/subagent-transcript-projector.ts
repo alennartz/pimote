@@ -721,14 +721,13 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
         }
         hiddenCustomEntries.add(messageId(messages[index], index));
         if (entryId) hiddenCustomEntries.add(entryId);
-        const messageEvent: PimoteSessionEvent = { ...emitBase(), type: 'message_end', message: cloneMessage(messages[index]) };
         const payload = customPayloadForMessage(mapped);
         const validPayload = Array.isArray(payload) && payload.length > 0 && payload.every((item) => isPersistedSubagentContent(item));
-        if (!validPayload) {
-          return [messageEvent, ...protocolErrorForRow(index, `Hidden custom entry ${mapped.customType} contains malformed subagent content.`)];
-        }
-        const events = payload.flatMap((item) => (isObject(item) && typeof item.operationId === 'string' ? flushPendingCustomOperation(item.operationId, index) : []));
-        return [messageEvent, ...events];
+        const contentEvents = validPayload
+          ? payload.flatMap((item) => (isObject(item) && typeof item.operationId === 'string' ? flushPendingCustomOperation(item.operationId, index) : []))
+          : protocolErrorForRow(index, `Hidden custom entry ${mapped.customType} contains malformed subagent content.`);
+        const messageEvent: PimoteSessionEvent = { ...emitBase(), type: 'message_end', message: cloneMessage(messages[index]) };
+        return [messageEvent, ...contentEvents];
       }
       const mapped = cloneMessage(mapAgentMessage(event.message));
       const existing = mapped.entryId
