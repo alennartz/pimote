@@ -759,8 +759,11 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
         const contentEvents = validPayload
           ? payload.flatMap((item) => (isObject(item) && typeof item.operationId === 'string' ? flushPendingCustomOperation(item.operationId, index) : []))
           : protocolErrorForRow(index, `Hidden custom entry ${mapped.customType} contains malformed subagent content.`);
-        const messageEvent: PimoteSessionEvent = { ...emitBase(), type: 'message_end', message: cloneMessage(messages[index]) };
-        return [messageEvent, ...contentEvents];
+        // Emit the projected row only when it carries subagent content. An empty
+        // native substitute would render an empty block in the generic renderer.
+        const row = messages[index];
+        const messageEvents = row.content.some(isSubagentContent) ? ([{ ...emitBase(), type: 'message_end', message: cloneMessage(row) }] as PimoteSessionEvent[]) : [];
+        return [...messageEvents, ...contentEvents];
       }
       const mapped = cloneMessage(mapAgentMessage(event.message));
       const existing = mapped.entryId

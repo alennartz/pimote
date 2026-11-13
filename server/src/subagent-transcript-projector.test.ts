@@ -507,6 +507,40 @@ describe('subagent transcript projector', () => {
     expect(current.snapshot().messages[0]?.content[0]).toMatchObject({ type: 'subagent', subagentState: 'protocol_error' });
   });
 
+  it('emits no message_end for a hidden custom entry whose semantic payload is pending elsewhere', () => {
+    const current = projector();
+    current.acceptProviderEvent({
+      type: 'subagent_snapshot_event',
+      eventId: 'settled-send',
+      cursor: cursor(1),
+      target: { operationId: 'settled-op', kind: 'send', path: [], placement: { toolCallId: 'settled-call', contentIndex: 0 } },
+      state: 'complete',
+      data: { operation: 'send', parameters: { to: ['worker'], message: 'Check' }, result: { response: 'Done' } },
+    });
+    const events = current.acceptNativeEvent({
+      type: 'message_end',
+      message: {
+        role: 'custom',
+        customType: 'subagents',
+        entryId: 'pending-entry',
+        content: [],
+        details: {
+          subagentContent: [
+            {
+              operationId: 'settled-op',
+              kind: 'send',
+              state: 'complete',
+              source: 'custom_entry',
+              data: { operation: 'send', parameters: { to: ['worker'], message: 'Check' }, result: { response: 'Done' } },
+            },
+          ],
+        },
+      },
+    } as unknown as IncomingSdkEvent);
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'message_end', message: expect.objectContaining({ content: [] }) }));
+    expect(current.snapshot().messages).not.toContainEqual(expect.objectContaining({ entryId: 'pending-entry' }));
+  });
+
   it('suppresses the native tool stream before transmission', () => {
     const current = projector();
     const events = current.acceptNativeEvent({ type: 'tool_execution_start', toolCallId: 'send-call', toolName: 'send', args: { message: 'hidden request' } } as IncomingSdkEvent);
