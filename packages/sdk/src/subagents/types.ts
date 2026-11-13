@@ -382,17 +382,17 @@ export type SubagentProviderRequest = Readonly<{
 
 /** EventBus response payload used by provider registration and discovery. */
 export type SubagentProviderResponse = Readonly<{
-  provider: SubagentProvider;
+  provider: import('./presentation.js').SubagentPresentationProvider;
 }>;
 
 /** A live discovery handle that tracks late registration and replacement. */
 export interface SubagentProviderDiscovery {
-  readonly provider: SubagentProvider | undefined;
+  readonly provider: import('./presentation.js').SubagentPresentationProvider | undefined;
   /** Alias for callers that model discovery as a mutable current value. */
-  readonly current: SubagentProvider | undefined;
-  subscribe(listener: (provider: SubagentProvider | undefined) => void): () => void;
+  readonly current: import('./presentation.js').SubagentPresentationProvider | undefined;
+  subscribe(listener: (provider: import('./presentation.js').SubagentPresentationProvider | undefined) => void): () => void;
   /** Alias for subscribe, useful at the host event boundary. */
-  onProvider(listener: (provider: SubagentProvider | undefined) => void): () => void;
+  onProvider(listener: (provider: import('./presentation.js').SubagentPresentationProvider | undefined) => void): () => void;
   close(): void;
 }
 
