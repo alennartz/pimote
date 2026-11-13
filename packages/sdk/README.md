@@ -116,9 +116,9 @@ When pimote isn't present, the EventBus emit fires with no listener, `detect()` 
 
 ## Subagents — `@pimote/sdk/subagents`
 
-This module defines the per-session provider seam for interactive subagent views. A provider publishes a root-relative hierarchy, replayable semantic events, and leases to existing child sessions. Pimote discovers providers on the root session's EventBus; child runtimes stay owned by the extension that created them.
+This module defines the per-session presentation provider for interactive subagent views. A provider publishes a root-relative hierarchy, typed subagent operations, one ordered replay cursor, and leases to existing child sessions. Pimote discovers providers on the root session's EventBus; child runtimes stay owned by the extension that created them.
 
-Use `registerProvider(pi, provider)` to publish a provider. Use `discoverProvider(pi, onProvider)` or the discovery handle to find providers, including late registration and replacement. Registration and discovery return cleanup functions or handles. Cleanup stops discovery or registration; it does not dispose the provider or child sessions. The `SubagentProvider` contract, event data, cursors, snapshots, and borrowed-session lease types are exported from this module. The my-pi subagents extension implements this provider for Pimote.
+Use `registerProvider(pi, provider)` to publish a provider. Use `discoverProvider(pi, onProvider)` or the discovery handle to find providers, including late registration and replacement. Registration and discovery return cleanup functions or handles. Cleanup stops discovery or registration; it does not dispose the provider or child sessions. The `SubagentPresentationProvider` contract, typed operation data, cursors, snapshots, and borrowed-session lease types are exported from this module. The my-pi subagents extension implements this provider for Pimote.
 
 A fact can include `transcriptPosition` from its owning native session. Set `afterEntryId` to the native leaf ID, or `null` before the first entry. Preserve this boundary in provider replay and native tool-result or custom-message metadata. Pimote derives `messageIndex` for the current transcript projection. Position controls insertion only. `relatedPiEvents` controls native replacement. Do not acquire a child lease to calculate placement.
 
