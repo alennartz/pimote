@@ -151,10 +151,22 @@ export type PimoteSubagentResurrectedAgent = Readonly<{
   error?: string;
 }>;
 
+export type PimoteSubagentToolParameters = Readonly<Record<string, unknown>>;
+
+export type PimoteSubagentAwaitResult = Readonly<{
+  statuses: readonly SubagentAwaitChildStatus[];
+  interrupted?: boolean;
+  error?: string;
+}>;
+
 export type PimoteSubagentStartData =
-  | { operation: 'send'; to: AgentPath; request: string; response: string; phase: 'ready' | 'sending' | 'waiting' | 'responding' }
-  | { operation: 'respond'; body: string }
-  | { operation: 'await'; requested: readonly AgentPath[]; statuses: readonly SubagentAwaitChildStatus[] };
+  | {
+      operation: 'send';
+      parameters: PimoteSubagentToolParameters;
+      result: Readonly<{ response: string; phase: 'ready' | 'sending' | 'waiting' | 'responding' }>;
+    }
+  | { operation: 'respond'; parameters: PimoteSubagentToolParameters; result: Readonly<Record<string, unknown>> }
+  | { operation: 'await'; parameters: PimoteSubagentToolParameters; result: PimoteSubagentAwaitResult };
 export type PimoteActiveSubagentContent = {
   parentMessageId: string;
   contentIndex: number;
@@ -188,21 +200,22 @@ export type PimotePersistedSubagentContent = Readonly<{
   (Readonly<{ source: 'tool'; placement: { toolCallId: string; contentIndex: number; entryId?: string } }> | Readonly<{ source: 'custom_entry'; placement?: { entryId: string } }>);
 
 export type PimoteSubagentFinalData =
-  | { operation: 'send'; to: AgentPath; request: string; response: string; error?: string }
-  | { operation: 'respond'; body: string; error?: string }
-  | { operation: 'await'; result: { statuses: readonly SubagentAwaitChildStatus[]; interrupted?: boolean; error?: string } }
-  | { operation: 'delegation'; children: readonly { path: AgentPath; task: string; persona?: string }[] }
+  | { operation: 'send'; parameters?: PimoteSubagentToolParameters; result: Readonly<Record<string, unknown>> }
+  | { operation: 'respond'; parameters?: PimoteSubagentToolParameters; result: Readonly<Record<string, unknown>> }
+  | { operation: 'await'; parameters: PimoteSubagentToolParameters; result: PimoteSubagentAwaitResult }
+  | { operation: 'delegation'; parameters: PimoteSubagentToolParameters; result: { children: readonly { path: AgentPath; task: string; persona?: string }[] } }
   | { operation: 'completion'; result: { state: 'idle' | 'errored' | 'dead' | 'stopped'; output?: string; error?: string; usage?: SubagentUsage } }
-  | { operation: 'interrupt'; result: PimoteSubagentInterruptResult }
+  | { operation: 'interrupt'; parameters: PimoteSubagentToolParameters; result: PimoteSubagentInterruptResult }
   | {
       operation: 'teardown';
+      parameters: PimoteSubagentToolParameters;
       result: {
         status: 'removed' | 'already_removed' | 'not_found';
         affectedAgents: readonly { path: AgentPath; sessionId: string; incarnation: string; state: SubagentAwaitState; usage: SubagentUsage; output?: string; error?: string }[];
       };
     }
-  | { operation: 'resurrect'; result: { affectedAgents: readonly PimoteSubagentResurrectedAgent[] } }
-  | { operation: 'protocol_error'; message: string };
+  | { operation: 'resurrect'; parameters: PimoteSubagentToolParameters; result: { affectedAgents: readonly PimoteSubagentResurrectedAgent[] } }
+  | { operation: 'protocol_error'; result: { error: string } };
 
 /** Common fields for projected message content. */
 interface PimoteMessageContentBase {

@@ -87,7 +87,7 @@ function projection(parentMessageId: string): SubagentContentStartEvent {
       operationId: 'send-call',
       subagentKind: 'send',
       subagentState: 'active',
-      data: { operation: 'send', to: ['worker'], request: 'Check the result.', response: '', phase: 'sending' },
+      data: { operation: 'send', parameters: { to: ['worker'], message: 'Check the result.' }, result: { response: '', phase: 'sending' } },
     },
   };
 }

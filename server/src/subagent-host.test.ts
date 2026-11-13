@@ -376,7 +376,7 @@ describe('SubagentHost', () => {
     const base = {
       type: 'subagent_start',
       cursor: { epoch: 'epoch-1', sequence: 1 },
-      data: { operation: 'send', to: ['worker'], request: 'hello', response: '', phase: 'sending' },
+      data: { operation: 'send', parameters: { to: ['worker'], message: 'hello' }, result: { response: '', phase: 'sending' } },
     } as const;
     const root: SubagentProviderEvent = {
       ...base,

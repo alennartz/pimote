@@ -206,7 +206,7 @@ describe('SessionSurface', () => {
         placement: { toolCallId: 'send-call', contentIndex: 0, entryId: 'assistant-entry' },
       },
       state: 'complete',
-      data: { operation: 'send', to: ['worker'], request: 'Check', response: 'Done' },
+      data: { operation: 'send', parameters: { to: ['worker'], message: 'Check' }, result: { response: 'Done' } },
     } as const;
     const listeners = new Set<(event: import('@pimote/sdk/subagents').SubagentProviderEvent) => void>();
     const provider = {
@@ -247,7 +247,9 @@ describe('SessionSurface', () => {
     const snapshot = await first;
     expect(snapshot.messages).toContainEqual(
       expect.objectContaining({
-        content: expect.arrayContaining([expect.objectContaining({ type: 'subagent', data: { operation: 'send', to: ['worker'], request: 'Check', response: 'Done' } })]),
+        content: expect.arrayContaining([
+          expect.objectContaining({ type: 'subagent', data: { operation: 'send', parameters: { to: ['worker'], message: 'Check' }, result: { response: 'Done' } } }),
+        ]),
       }),
     );
     expect(JSON.stringify(snapshot)).not.toContain('native hidden');
@@ -312,7 +314,7 @@ describe('SessionSurface', () => {
     const cursor = { epoch: 'epoch-1', sequence: 0 };
     const active = {
       target: { operationId: 'send-call', kind: 'send', path: ['worker'], placement: { toolCallId: 'send-call', contentIndex: 0 } },
-      data: { operation: 'send', to: ['worker'], request: 'check', response: '', phase: 'sending' },
+      data: { operation: 'send', parameters: { to: ['worker'], message: 'check' }, result: { response: '', phase: 'sending' } },
     } as const;
     const provider = {
       snapshot: () => ({ manifest: { hiddenToolNames: ['send'], hiddenCustomTypes: [] }, nodes: [], cursor, activeOperations: [active] }),
@@ -368,7 +370,7 @@ describe('SessionSurface', () => {
       eventId: 'start',
       cursor: { ...cursor, sequence: 1 },
       target,
-      data: { operation: 'send', to: ['worker'], request: 'Check', response: '', phase: 'sending' },
+      data: { operation: 'send', parameters: { to: ['worker'], message: 'Check' }, result: { response: '', phase: 'sending' } },
     });
     surface.acceptProviderEvent!({
       type: 'subagent_delta',
@@ -381,7 +383,9 @@ describe('SessionSurface', () => {
     const replay = surface.replay(first.cursor);
     if (replay.kind === 'events') expect(replay.events).not.toContainEqual(expect.objectContaining({ type: 'subagent_content_delta' }));
     const snapshot = surface.refreshSnapshot();
-    expect(snapshot.activeSubagentContent).toContainEqual(expect.objectContaining({ operationId: 'send-call', data: expect.objectContaining({ request: 'Check config' }) }));
+    expect(snapshot.activeSubagentContent).toContainEqual(
+      expect.objectContaining({ operationId: 'send-call', data: expect.objectContaining({ parameters: expect.objectContaining({ message: 'Check config' }) }) }),
+    );
     surface.close();
   });
 

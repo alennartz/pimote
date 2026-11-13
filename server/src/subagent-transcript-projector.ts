@@ -44,7 +44,7 @@ type MutableSlot = { messageIndex: number; contentIndex: number; parentMessageId
 type NativeBlock = { sourceIndex: number; content: PimoteMessageContent };
 type ProjectedSource = { messageIndex: number; sourceIndex: number; order: number };
 type OperationRecord = { target: SubagentOperationTarget; data: SubagentStartData; slot: MutableSlot };
-type ProtocolErrorData = Readonly<{ operation: 'protocol_error'; message: string }>;
+type ProtocolErrorData = Readonly<{ operation: 'protocol_error'; result: Readonly<{ error: string }> }>;
 type PresentationProviderEvent = Extract<SubagentProviderEvent, { target: SubagentOperationTarget }>;
 
 const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object';
@@ -109,7 +109,7 @@ function isToolLifecycleEnd(event: IncomingSdkEvent): boolean {
 
 function dataForProtocolError(operation: SubagentOperationKindLike, message: string): ProtocolErrorData {
   void operation;
-  return { operation: 'protocol_error', message };
+  return { operation: 'protocol_error', result: { error: message } };
 }
 
 type SubagentOperationKindLike = SubagentOperationTarget['kind'];
@@ -395,13 +395,19 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     const current = record.data;
     if (delta.operation === 'send' && current.operation === 'send') {
       if ('field' in delta) {
-        if (delta.field === 'request') return { ...current, request: current.request + delta.delta };
-        return { ...current, response: current.response + delta.delta };
+        if (delta.field === 'request') {
+          const message = typeof current.parameters.message === 'string' ? current.parameters.message : '';
+          return { ...current, parameters: { ...current.parameters, message: message + delta.delta } };
+        }
+        return { ...current, result: { ...current.result, response: current.result.response + delta.delta } };
       }
-      return { ...current, phase: delta.phase };
+      return { ...current, result: { ...current.result, phase: delta.phase } };
     }
-    if (delta.operation === 'respond' && current.operation === 'respond') return { ...current, body: current.body + delta.delta };
-    if (delta.operation === 'await' && current.operation === 'await') return { ...current, statuses: delta.statuses };
+    if (delta.operation === 'respond' && current.operation === 'respond') {
+      const message = typeof current.parameters.message === 'string' ? current.parameters.message : '';
+      return { ...current, parameters: { ...current.parameters, message: message + delta.delta } };
+    }
+    if (delta.operation === 'await' && current.operation === 'await') return { ...current, result: { ...current.result, statuses: delta.statuses } };
     return current;
   };
 
@@ -497,7 +503,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
   const protocolErrorForEntry = (entryId: string, message: string): readonly PimoteSessionEvent[] => {
     const operationId = `protocol-error:${entryId}`;
     const target: SubagentOperationTarget = { operationId, kind: 'completion', path: [], placement: { entryId } };
-    const data: ProtocolErrorData = { operation: 'protocol_error', message };
+    const data: ProtocolErrorData = { operation: 'protocol_error', result: { error: message } };
     const content = mapSubagentBlock(operationId, 'completion', 'protocol_error', data, target.placement);
     const slot = placeBlock(target, content);
     operationSlots.set(operationId, slot);

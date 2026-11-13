@@ -554,7 +554,7 @@ describe('SessionRegistry', () => {
         subagentKind: 'send',
         subagentState: 'active',
         placement: { toolCallId: 'send-call', contentIndex: 0 },
-        data: { operation: 'send', to: ['worker'], request: 'check', response: '', phase: 'sending' },
+        data: { operation: 'send', parameters: { to: ['worker'], message: 'check' }, result: { response: '', phase: 'sending' } },
       };
       registry.handleEvent(
         makeSessionEvent('subagent_content_start', 's1', {
@@ -577,8 +577,8 @@ describe('SessionRegistry', () => {
           data: { operation: 'send', field: 'request', delta: ' now' },
         }),
       );
-      expect(registry.sessions['s1'].streamingMessage?.content[0]).toMatchObject({ data: { request: 'check now' } });
-      const completed = { ...block, subagentState: 'complete', data: { operation: 'send', to: ['worker'], request: 'check now', response: 'done' } };
+      expect(registry.sessions['s1'].streamingMessage?.content[0]).toMatchObject({ data: { parameters: { message: 'check now' } } });
+      const completed = { ...block, subagentState: 'complete', data: { operation: 'send', parameters: { to: ['worker'], message: 'check now' }, result: { response: 'done' } } };
       registry.handleEvent(
         makeSessionEvent('subagent_content_end', 's1', {
           parentMessageId: 'message-0',
@@ -615,7 +615,7 @@ describe('SessionRegistry', () => {
             operationId: 'custom-send',
             subagentKind: 'send',
             subagentState: 'complete',
-            data: { operation: 'send', to: ['worker'], request: 'check', response: 'done' },
+            data: { operation: 'send', parameters: { to: ['worker'], message: 'check' }, result: { response: 'done' } },
           },
         }),
       );

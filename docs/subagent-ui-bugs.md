@@ -20,7 +20,7 @@ Commits: `ffda0a7` in `my-pi`, pushed to `origin/main`, and `c12857b` in Pimote.
 
 ## BUG-003: Empty await body and missing tool parameters
 
-**Status:** In progress.
+**Status:** Fixed in source. Deployment pending.
 
 An await block had no body before child statuses arrived, despite the call naming `sleeper`. The renderer ignored requested targets. The extension also omitted target updates and final target parameters.
 
@@ -28,7 +28,7 @@ Await starts after complete model arguments arrive. Named targets appear as a li
 
 ## BUG-004: Inconsistent semantic text rendering
 
-**Status:** In progress with BUG-003.
+**Status:** Fixed in source. Deployment pending.
 
 Semantic cards used different typography and plain text instead of the transcript Markdown renderer. Some summaries also omitted received fields or displayed output instead of an accompanying error.
 

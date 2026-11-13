@@ -13,7 +13,7 @@ const start: SubagentProviderEvent = {
   eventId: 'start',
   cursor: cursor(1),
   target,
-  data: { operation: 'send', to: ['worker'], request: 'Check', response: '', phase: 'sending' },
+  data: { operation: 'send', parameters: { to: ['worker'], message: 'Check' }, result: { response: '', phase: 'sending' } },
 };
 
 function projector() {
@@ -36,7 +36,7 @@ describe('subagent transcript projector', () => {
     const content = current.snapshot().messages[0]!.content;
     expect(content.map((block) => block.type)).toEqual(['text', 'subagent', 'text', 'tool_call']);
     expect(content[0]).toMatchObject({ text: 'before' });
-    expect(content[1]).toMatchObject({ operationId: 'send-call', data: { operation: 'send', request: 'Check' } });
+    expect(content[1]).toMatchObject({ operationId: 'send-call', data: { operation: 'send', parameters: { message: 'Check' }, result: {} } });
     expect(content[2]).toMatchObject({ text: 'after' });
     expect(content[3]).toMatchObject({ toolName: 'read', toolCallId: 'read-call' });
     expect(JSON.stringify(current.snapshot())).not.toContain('secret native argument');
@@ -62,11 +62,11 @@ describe('subagent transcript projector', () => {
       cursor: cursor(1),
       target: { operationId: 'incoming-message', kind: 'send', path: [], placement: { entryId: 'await-result-entry' } },
       state: 'complete',
-      data: { operation: 'send', to: [], request: 'Please inspect the failure.', response: '' },
+      data: { operation: 'send', parameters: { to: [], message: 'Please inspect the failure.' }, result: { response: '' } },
     });
     const messages = current.snapshot().messages;
     expect(messages[0]?.content.map((block) => block.type)).toEqual(['text', 'subagent', 'text']);
-    expect(messages[0]?.content[1]).toMatchObject({ data: { operation: 'send', request: 'Please inspect the failure.' } });
+    expect(messages[0]?.content[1]).toMatchObject({ data: { operation: 'send', parameters: { message: 'Please inspect the failure.' }, result: {} } });
     expect(messages).not.toContainEqual(expect.objectContaining({ entryId: 'await-result-entry' }));
   });
 
@@ -86,7 +86,7 @@ describe('subagent transcript projector', () => {
       eventId: 'await-start',
       cursor: cursor(1),
       target: awaitTarget,
-      data: { operation: 'await', requested: [['worker']], statuses: [] },
+      data: { operation: 'await', parameters: { agents: [['worker']] }, result: { statuses: [] } },
     });
     const statuses = interrupted
       ? ([
@@ -94,7 +94,7 @@ describe('subagent transcript projector', () => {
           { path: ['scout'], state: 'errored', output: 'Partial findings.', error: 'Connection lost.' },
         ] as const)
       : ([{ path: ['worker'], state: 'idle', output: 'Work completed.' }] as const);
-    const data = { operation: 'await', result: { statuses, ...(interrupted ? { interrupted: true } : {}) } } as const;
+    const data = { operation: 'await', result: { statuses, ...(interrupted ? { interrupted: true } : {}) }, parameters: {} } as const;
     current.acceptProviderEvent({ type: 'subagent_end', eventId: 'await-end', cursor: cursor(2), target: awaitTarget, state: 'complete', data });
     const saved = { type: 'subagent_snapshot_event', eventId: 'await-saved', cursor: cursor(3), target: awaitTarget, state: 'complete', data } as const;
     current.acceptProviderEvent(saved);
@@ -133,7 +133,7 @@ describe('subagent transcript projector', () => {
       cursor: cursor(1),
       target: { operationId: 'send-call', kind: 'send', path: [], placement: { toolCallId: 'send-call', contentIndex: 1, entryId: 'result-entry' } },
       state: 'complete',
-      data: { operation: 'send', to: ['worker'], request: 'Check', response: 'Done' },
+      data: { operation: 'send', parameters: { to: ['worker'], message: 'Check' }, result: { response: 'Done' } },
     });
 
     const snapshot = current.snapshot();
@@ -151,7 +151,7 @@ describe('subagent transcript projector', () => {
       cursor: cursor(1),
       target: { operationId: 'custom-send', kind: 'send', path: [] },
       state: 'complete',
-      data: { operation: 'send', to: ['worker'], request: 'Incoming task', response: 'Done' },
+      data: { operation: 'send', parameters: { to: ['worker'], message: 'Incoming task' }, result: { response: 'Done' } },
     } as const;
     expect(current.acceptProviderEvent(event)).toEqual([]);
     const nativeEvents = current.acceptNativeEvent({
@@ -191,7 +191,7 @@ describe('subagent transcript projector', () => {
               kind: 'send',
               state: 'complete',
               source: 'custom_entry',
-              data: { operation: 'send', to: ['worker'], request: 'Now', response: 'Done' },
+              data: { operation: 'send', parameters: { to: ['worker'], message: 'Now' }, result: { response: 'Done' } },
             },
           ],
         },
@@ -201,7 +201,7 @@ describe('subagent transcript projector', () => {
       ...event,
       eventId: 'custom-after-native',
       target: { operationId: 'custom-after-native', kind: 'send', path: [] },
-      data: { operation: 'send', to: ['worker'], request: 'Now', response: 'Done' },
+      data: { operation: 'send', parameters: { to: ['worker'], message: 'Now' }, result: { response: 'Done' } },
     });
     expect(afterNative.snapshot().messages[0]).toMatchObject({ role: 'custom', content: [expect.objectContaining({ operationId: 'custom-after-native' })] });
   });
@@ -211,7 +211,7 @@ describe('subagent transcript projector', () => {
     current.hydrateActiveOperations?.([
       {
         target: { operationId: 'active-custom', kind: 'send', path: [] },
-        data: { operation: 'send', to: ['worker'], request: 'check', response: '', phase: 'sending' },
+        data: { operation: 'send', parameters: { to: ['worker'], message: 'check' }, result: { response: '', phase: 'sending' } },
       },
     ]);
     expect(current.snapshot().messages).toEqual([]);
@@ -228,7 +228,7 @@ describe('subagent transcript projector', () => {
               kind: 'send',
               state: 'complete',
               source: 'custom_entry',
-              data: { operation: 'send', to: ['worker'], request: 'check', response: 'done' },
+              data: { operation: 'send', parameters: { to: ['worker'], message: 'check' }, result: { response: 'done' } },
             },
           ],
         },
@@ -246,7 +246,7 @@ describe('subagent transcript projector', () => {
       cursor: cursor(1),
       target: { operationId: 'incoming-send', kind: 'send', path: ['worker'], placement: { entryId: 'incoming-entry' } },
       state: 'complete',
-      data: { operation: 'send', to: ['worker'], request: 'Incoming task', response: '' },
+      data: { operation: 'send', parameters: { to: ['worker'], message: 'Incoming task' }, result: { response: '' } },
     });
 
     const messages = current.snapshot().messages;
@@ -300,11 +300,11 @@ describe('subagent transcript projector', () => {
     expect(response).toContainEqual(expect.objectContaining({ type: 'subagent_content_delta', operationId: 'send-call' }));
     const snapshot = current.snapshot();
     expect(snapshot.messages[0]?.content.filter((block) => block.type === 'subagent')).toHaveLength(1);
-    expect(snapshot.messages[0]?.content[1]).toMatchObject({ data: { operation: 'send', request: 'Check config', response: 'All present' } });
+    expect(snapshot.messages[0]?.content[1]).toMatchObject({ data: { operation: 'send', parameters: { message: 'Check config' }, result: { response: 'All present' } } });
     expect(snapshot.activeOperations).toContainEqual(
       expect.objectContaining({
         target: expect.objectContaining({ operationId: 'send-call' }),
-        data: expect.objectContaining({ request: 'Check config', response: 'All present' }),
+        data: expect.objectContaining({ parameters: expect.objectContaining({ message: 'Check config' }), result: expect.objectContaining({ response: 'All present' }) }),
       }),
     );
   });
@@ -327,6 +327,7 @@ describe('subagent transcript projector', () => {
           },
         ],
       },
+      parameters: {},
     } as const;
     const events = current.acceptProviderEvent({
       type: 'subagent_snapshot_event',
@@ -357,7 +358,7 @@ describe('subagent transcript projector', () => {
       eventId: 'live-start',
       cursor: cursor(1),
       target: { operationId: 'live-call', kind: 'send', path: [], placement: { toolCallId: 'live-call', contentIndex: 0 } },
-      data: { operation: 'send', to: ['worker'], request: 'live', response: '', phase: 'sending' },
+      data: { operation: 'send', parameters: { to: ['worker'], message: 'live' }, result: { response: '', phase: 'sending' } },
     });
     expect(current.snapshot().messages).toHaveLength(2);
     expect(current.snapshot().messages[1]?.content[0]).toMatchObject({ type: 'subagent', operationId: 'live-call' });
@@ -384,7 +385,7 @@ describe('subagent transcript projector', () => {
         cursor: cursor(sequence),
         target: { operationId, kind: 'send', path: [], placement: { toolCallId, contentIndex: toolCallId === 'first-call' ? 1 : 3 } },
         state: 'complete',
-        data: { operation: 'send', to: ['worker'], request: operationId, response: '' },
+        data: { operation: 'send', parameters: { to: ['worker'], message: operationId }, result: { response: '' } },
       });
     }
     expect(current.snapshot().messages[0]?.content.map((block) => (block.type === 'subagent' ? block.operationId : block.type === 'text' ? block.text : block.type))).toEqual([
@@ -406,7 +407,7 @@ describe('subagent transcript projector', () => {
       cursor: cursor(1),
       target,
       state: 'complete',
-      data: { operation: 'send', to: ['worker'], request: 'check', response: 'done' },
+      data: { operation: 'send', parameters: { to: ['worker'], message: 'check' }, result: { response: 'done' } },
     });
     current.rehydrate(native);
     expect(current.snapshot().messages[0]?.content[0]).toMatchObject({ type: 'subagent', operationId: 'send-call', subagentState: 'complete' });
@@ -453,7 +454,7 @@ describe('subagent transcript projector', () => {
       cursor: cursor(1),
       target,
       state: 'complete',
-      data: { operation: 'send', to: ['worker'], request: 'check', response: 'done' },
+      data: { operation: 'send', parameters: { to: ['worker'], message: 'check' }, result: { response: 'done' } },
     });
     const saved = source.snapshot();
     const fresh = projector();
@@ -522,7 +523,7 @@ describe('subagent transcript projector', () => {
       eventId: 'hidden-start',
       cursor: cursor(1),
       target: { operationId: 'send-call', kind: 'send', path: [], placement: { toolCallId: 'send-call', contentIndex: 1 } },
-      data: { operation: 'send', to: ['worker'], request: 'hidden', response: '', phase: 'sending' },
+      data: { operation: 'send', parameters: { to: ['worker'], message: 'hidden' }, result: { response: '', phase: 'sending' } },
     });
     const events = current.acceptNativeEvent({
       type: 'message_end',

@@ -60,5 +60,6 @@ export type {
   SubagentProviderSnapshot,
   SubagentStartData,
   SubagentStartEvent,
+  SubagentToolParameters,
   SubagentTopologyEvent,
 } from './presentation.js';

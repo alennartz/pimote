@@ -17,6 +17,9 @@ export type SubagentPresentationManifest = Readonly<{
 
 export type SubagentOperationKind = 'send' | 'respond' | 'await' | 'delegation' | 'completion' | 'interrupt' | 'teardown' | 'resurrect';
 
+/** Normalized public tool inputs. Final operations carry complete values. */
+export type SubagentToolParameters = Readonly<Record<string, unknown>>;
+
 export type SubagentPlacement = Readonly<{ toolCallId: string; contentIndex: number; entryId?: string }> | Readonly<{ entryId: string }>;
 
 export type SubagentOperationTarget = Readonly<{
@@ -48,9 +51,13 @@ export type SubagentAwaitResult = Readonly<{
 }>;
 
 export type SubagentStartData =
-  | Readonly<{ operation: 'send'; to: AgentPath; request: string; response: string; phase: 'ready' | 'sending' | 'waiting' | 'responding' }>
-  | Readonly<{ operation: 'respond'; body: string }>
-  | Readonly<{ operation: 'await'; requested: readonly AgentPath[]; statuses: readonly SubagentAwaitStatus[] }>;
+  | Readonly<{
+      operation: 'send';
+      parameters: SubagentToolParameters;
+      result: Readonly<{ response: string; phase: 'ready' | 'sending' | 'waiting' | 'responding' }>;
+    }>
+  | Readonly<{ operation: 'respond'; parameters: SubagentToolParameters; result: Readonly<Record<string, unknown>> }>
+  | Readonly<{ operation: 'await'; parameters: SubagentToolParameters; result: SubagentAwaitResult }>;
 
 export type SubagentDeltaData =
   | Readonly<{ operation: 'send'; field: 'request' | 'response'; delta: string }>
@@ -59,9 +66,9 @@ export type SubagentDeltaData =
   | Readonly<{ operation: 'await'; statuses: readonly SubagentAwaitStatus[] }>;
 
 export type SubagentEndData =
-  | Readonly<{ operation: 'send'; to: AgentPath; request: string; response: string; error?: string }>
-  | Readonly<{ operation: 'respond'; body: string; error?: string }>
-  | Readonly<{ operation: 'await'; result: SubagentAwaitResult }>;
+  | Readonly<{ operation: 'send'; parameters?: SubagentToolParameters; result: Readonly<Record<string, unknown>> }>
+  | Readonly<{ operation: 'respond'; parameters?: SubagentToolParameters; result: Readonly<Record<string, unknown>> }>
+  | Readonly<{ operation: 'await'; parameters: SubagentToolParameters; result: SubagentAwaitResult }>;
 
 export type SubagentDelegatedChild = Readonly<{ path: AgentPath; task: string; persona?: string }>;
 
@@ -88,11 +95,12 @@ export type SubagentResurrectedAgent = Readonly<{
 }>;
 
 export type SubagentFiniteData =
-  | Readonly<{ operation: 'delegation'; children: readonly SubagentDelegatedChild[] }>
+  | Readonly<{ operation: 'delegation'; parameters: SubagentToolParameters; result: Readonly<{ children: readonly SubagentDelegatedChild[] }> }>
   | Readonly<{ operation: 'completion'; result: SubagentCompletionResult }>
-  | Readonly<{ operation: 'interrupt'; result: SubagentInterruptResult }>
+  | Readonly<{ operation: 'interrupt'; parameters: SubagentToolParameters; result: SubagentInterruptResult }>
   | Readonly<{
       operation: 'teardown';
+      parameters: SubagentToolParameters;
       result: Readonly<{
         affectedAgents: readonly Readonly<{
           path: AgentPath;
@@ -106,8 +114,8 @@ export type SubagentFiniteData =
         status: 'removed' | 'already_removed' | 'not_found';
       }>;
     }>
-  | Readonly<{ operation: 'resurrect'; result: Readonly<{ affectedAgents: readonly SubagentResurrectedAgent[] }> }>
-  | Readonly<{ operation: 'protocol_error'; message: string }>;
+  | Readonly<{ operation: 'resurrect'; parameters: SubagentToolParameters; result: Readonly<{ affectedAgents: readonly SubagentResurrectedAgent[] }> }>
+  | Readonly<{ operation: 'protocol_error'; result: Readonly<{ error: string }> }>;
 
 export type SubagentFinalData = SubagentEndData | SubagentFiniteData;
 export type SubagentProtocolErrorData = Readonly<{ operationId: string; operation: SubagentOperationKind; message: string }>;

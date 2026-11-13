@@ -120,7 +120,23 @@ This module defines the per-session presentation provider for interactive subage
 
 Use `registerProvider(pi, provider)` to publish a provider. Use `discoverProvider(pi, onProvider)` or the discovery handle to find providers, including late registration and replacement. Registration and discovery return cleanup functions or handles. Cleanup stops discovery or registration; it does not dispose the provider or child sessions. The `SubagentPresentationProvider` contract, typed operation data, cursors, snapshots, and borrowed-session lease types are exported from this module. The my-pi subagents extension implements this provider for Pimote.
 
-Provider operations carry typed placement through `toolCallId` and `contentIndex`, or through the containing custom entry's `entryId`. Pimote's server projector suppresses the declared native renderers and places each operation as typed subagent content inside its originating assistant row, preserving surrounding native content order. An await operation contains the child results returned by that tool call. Standalone completion operations replace asynchronous subagent custom messages only. Router correlation IDs stay inside my-pi. Pimote restores persisted operations through provider hydration rather than decoding extension details.
+Provider operations carry typed placement through `toolCallId` and `contentIndex`, or through the containing custom entry's `entryId`. Pimote's server projector suppresses the declared native renderers and places each operation as typed subagent content inside its originating assistant row, preserving surrounding native content order.
+
+Tool-backed final payloads use `{ operation, parameters, result }`. Parameters contain the complete normalized public inputs. Results retain output, errors, outcome flags, and received metadata. Target references use root-relative agent paths. Router correlation IDs stay inside my-pi. Asynchronous custom messages carry result-only payloads rather than invented tool parameters. Pimote renders these fields as labeled data and uses its transcript Markdown renderer for free-form prose.
+
+Await starts only after complete tool arguments arrive. Omitted or empty `parameters.agents` means all agents. Named targets remain in the final parameters, including when a wait is interrupted or returns no child results. Send and respond retain progressive prose in `parameters.message`; send responses stream into `result.response`. Existing lifecycle event types remain unchanged.
+
+An await result contains the child completions returned by that tool call. Standalone completion operations replace asynchronous subagent custom messages only. Pimote restores persisted operations through provider hydration. The provider normalizes older saved payloads into the current envelope rather than making the client decode extension details.
+
+```ts
+{
+  operation: 'await',
+  parameters: { agents: [['worker']] },
+  result: {
+    statuses: [{ path: ['worker'], state: 'idle', output: 'Checks passed.' }]
+  }
+}
+```
 
 ## Pimote extensions — `@pimote/sdk/pimote`
 

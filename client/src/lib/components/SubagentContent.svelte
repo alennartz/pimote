@@ -1,62 +1,29 @@
 <script lang="ts">
-  import type { PimoteMessageContent, PimoteSubagentFinalData, PimoteSubagentStartData } from '@pimote/shared';
+  import type { PimoteMessageContent } from '@pimote/shared';
+  import SubagentData from './SubagentData.svelte';
 
-  let { content }: { content: Extract<PimoteMessageContent, { type: 'subagent' }> } = $props();
+  type SubagentContent = Extract<PimoteMessageContent, { type: 'subagent' }>;
+  let { content }: { content: SubagentContent } = $props();
 
-  function pathText(path: readonly string[]): string {
-    return path.length > 0 ? path.join('/') : 'root';
-  }
-
-  function title(): string {
-    switch (content.subagentKind) {
-      case 'send':
-        return 'Subagent send operation';
-      case 'respond':
-        return 'Subagent respond operation';
-      case 'await':
-        return 'Subagent await operation';
-      default:
-        return `Subagent ${content.subagentKind} operation`;
-    }
-  }
-
-  function stateLabel(): string {
+  function stateLabel(content: SubagentContent): string {
     if (content.subagentState === 'protocol_error') return 'protocol error';
-    if (content.subagentState === 'active') {
-      const data = content.data as PimoteSubagentStartData;
-      return data.operation === 'send' ? data.phase : 'active';
-    }
+    if (content.subagentState === 'active' && content.data.operation === 'send') return String(content.data.result.phase ?? 'active');
     return content.subagentState;
   }
 
-  function bodyLines(): string[] {
-    const data = content.data as PimoteSubagentStartData | PimoteSubagentFinalData;
-    if (data.operation === 'protocol_error') return [data.message];
-    if (data.operation === 'send') {
-      return [
-        `To: ${pathText(data.to)}`,
-        data.request ? `Request: ${data.request}` : 'Ready to send.',
-        data.response ? `Response: ${data.response}` : '',
-        'error' in data && data.error ? `Error: ${data.error}` : '',
-      ].filter(Boolean);
+  function parameterValues(content: SubagentContent): Readonly<Record<string, unknown>> | undefined {
+    if (!('parameters' in content.data) || content.data.parameters === undefined) return undefined;
+    const parameters = content.data.parameters;
+    if (content.data.operation === 'await' && (parameters.agents === undefined || (Array.isArray(parameters.agents) && parameters.agents.length === 0))) {
+      return { ...parameters, agents: 'All agents' };
     }
-    if (data.operation === 'respond') return [data.body, 'error' in data && data.error ? `Error: ${data.error}` : ''].filter(Boolean);
-    if (data.operation === 'await') {
-      const statuses = 'statuses' in data ? data.statuses : data.result.statuses;
-      return statuses.map((status) => `${pathText(status.path)}: ${status.state}${status.output ? ` — ${status.output}` : ''}${status.error ? ` — ${status.error}` : ''}`);
-    }
-    if (data.operation === 'delegation') return data.children.map((child) => `${pathText(child.path)}: ${child.task}`);
-    if (data.operation === 'completion') return [data.result.output ?? data.result.error ?? data.result.state];
-    if (data.operation === 'interrupt')
-      return [...data.result.interrupted, ...data.result.pending, ...data.result.failed].map((target) => `${pathText(target.path)}${target.error ? `: ${target.error}` : ''}`);
-    if (data.operation === 'teardown') return data.result.affectedAgents.map((agent) => `${pathText(agent.path)}: ${agent.state}`);
-    if (data.operation === 'resurrect') return data.result.affectedAgents.map((agent) => `${pathText(agent.path)}: ${agent.state}`);
-    return [];
+    return parameters;
   }
 
-  let lines = $derived(bodyLines());
-  let label = $derived(title());
-  let status = $derived(stateLabel());
+  let label = $derived(`Subagent ${content.subagentKind} operation`);
+  let status = $derived(stateLabel(content));
+  let parameters = $derived(parameterValues(content));
+  let proseStreaming = $derived(content.subagentState === 'active' && (content.data.operation === 'send' || content.data.operation === 'respond'));
 </script>
 
 <article class="subagent-content-card" aria-label={label} data-subagent-state={content.subagentState}>
@@ -65,21 +32,31 @@
     <span class="subagent-content-state">{status}</span>
   </header>
   <div class="subagent-content-body">
-    {#each lines as line (line)}
-      <p>{line}</p>
-    {/each}
+    {#key content.operationId}
+      {#if parameters !== undefined}
+        <section aria-label="Parameters">
+          <h3>Parameters</h3>
+          <SubagentData value={parameters} streaming={proseStreaming} />
+        </section>
+      {/if}
+      <section aria-label="Result">
+        <h3>Result</h3>
+        <SubagentData value={content.data.result} streaming={proseStreaming} />
+      </section>
+    {/key}
   </div>
 </article>
 
 <style>
   .subagent-content-card {
+    min-width: 0;
     margin: 0.35rem 0;
-    overflow: hidden;
     border: 1px solid var(--border);
     border-left: 3px solid var(--custom-accent);
     border-radius: 6px;
     background: color-mix(in oklch, var(--custom-surface) 50%, transparent);
-    font-size: 0.82rem;
+    font-size: 0.9rem;
+    overflow-wrap: anywhere;
   }
 
   .subagent-content-card[data-subagent-state='complete'] {
@@ -93,11 +70,14 @@
 
   .subagent-content-header {
     display: flex;
-    align-items: center;
+    flex-wrap: wrap;
+    align-items: baseline;
     justify-content: space-between;
-    gap: 0.75rem;
-    padding: 0.35rem 0.55rem;
+    gap: 0.25rem 0.75rem;
+    padding: 0.4rem 0.65rem;
+    border-radius: 4px 4px 0 0;
     background: var(--surface-raised);
+    font-size: 0.75rem;
   }
 
   .subagent-content-state {
@@ -106,12 +86,20 @@
   }
 
   .subagent-content-body {
-    padding: 0.45rem 0.65rem;
+    min-width: 0;
+    padding: 0.65rem;
   }
 
-  .subagent-content-body p {
-    margin: 0.15rem 0;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
+  section + section {
+    margin-top: 0.85rem;
+    padding-top: 0.65rem;
+    border-top: 1px solid var(--border);
+  }
+
+  h3 {
+    margin: 0 0 0.5rem;
+    color: var(--custom-foreground);
+    font-size: 0.75rem;
+    font-weight: 600;
   }
 </style>

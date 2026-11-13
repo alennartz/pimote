@@ -22,7 +22,7 @@ const start: SubagentContentStartEvent = {
     operationId: 'send-call',
     subagentKind: 'send',
     subagentState: 'active',
-    data: { operation: 'send', to: ['worker'], request: 'Check', response: '', phase: 'sending' },
+    data: { operation: 'send', parameters: { to: ['worker'], message: 'Check' }, result: { response: '', phase: 'sending' } },
     streaming: true,
   },
 };
@@ -38,7 +38,7 @@ const end: SubagentContentEndEvent = {
     operationId: 'send-call',
     subagentKind: 'send',
     subagentState: 'complete',
-    data: { operation: 'send', to: ['worker'], request: 'Check config', response: 'All present' },
+    data: { operation: 'send', parameters: { to: ['worker'], message: 'Check config' }, result: { response: 'All present' } },
   },
 };
 
@@ -56,11 +56,17 @@ describe('projected subagent content', () => {
     let state = hydrateSubagentContent([assistant]);
     for (const event of [start, request, response]) state = applySubagentContentEvent(state, event);
     expect(state.messages[0]?.content.map((block) => block.type)).toEqual(['text', 'subagent', 'text', 'tool_call']);
-    expect(state.messages[0]?.content[1]).toMatchObject({ operationId: 'send-call', data: { operation: 'send', request: 'Check config', response: 'All present' } });
+    expect(state.messages[0]?.content[1]).toMatchObject({
+      operationId: 'send-call',
+      data: { operation: 'send', parameters: { message: 'Check config' }, result: { response: 'All present' } },
+    });
     expect(state.messages[0]?.content[2]).toMatchObject({ text: 'after' });
     expect(state.messages[0]?.content[3]).toMatchObject({ toolName: 'read' });
     state = applySubagentContentEvent(state, end);
-    expect(state.messages[0]?.content[1]).toMatchObject({ subagentState: 'complete', data: { operation: 'send', request: 'Check config', response: 'All present' } });
+    expect(state.messages[0]?.content[1]).toMatchObject({
+      subagentState: 'complete',
+      data: { operation: 'send', parameters: { message: 'Check config' }, result: { response: 'All present' } },
+    });
     expect(state.active).toEqual([]);
   });
 
@@ -70,7 +76,7 @@ describe('projected subagent content', () => {
       contentIndex: 1,
       operationId: 'send-call',
       kind: 'send',
-      data: { operation: 'send', to: ['worker'], request: 'Check config', response: '', phase: 'waiting' },
+      data: { operation: 'send', parameters: { to: ['worker'], message: 'Check config' }, result: { response: '', phase: 'waiting' } },
     } as const;
     const snapshot: PimoteAgentMessage = {
       ...assistant,
@@ -81,7 +87,7 @@ describe('projected subagent content', () => {
       ],
     };
     const state = applySubagentContentEvent(hydrateSubagentContent([snapshot], [active]), response);
-    expect(state.messages[0]?.content[1]).toMatchObject({ data: { operation: 'send', request: 'Check config', response: 'All present' } });
+    expect(state.messages[0]?.content[1]).toMatchObject({ data: { operation: 'send', parameters: { message: 'Check config' }, result: { response: 'All present' } } });
     expect(state.active).toHaveLength(1);
   });
 
@@ -95,11 +101,11 @@ describe('projected subagent content', () => {
         operationId: 'send-call',
         subagentKind: 'send',
         subagentState: 'protocol_error',
-        data: { operation: 'protocol_error', message: 'Missing subagent lifecycle' },
+        data: { operation: 'protocol_error', result: { error: 'Missing subagent lifecycle' } },
       },
     };
     const completed = applySubagentContentEvent(state, error);
-    expect(completed.messages[0]?.content[1]).toMatchObject({ type: 'subagent', subagentState: 'protocol_error', data: { message: 'Missing subagent lifecycle' } });
+    expect(completed.messages[0]?.content[1]).toMatchObject({ type: 'subagent', subagentState: 'protocol_error', data: { result: { error: 'Missing subagent lifecycle' } } });
     expect(completed.active).toEqual([]);
   });
 });

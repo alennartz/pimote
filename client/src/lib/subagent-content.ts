@@ -47,11 +47,20 @@ function ensureParent(messages: PimoteAgentMessage[], event: SubagentContentEven
 
 function applyDelta(data: PimoteSubagentStartData, delta: PimoteSubagentDeltaData): PimoteSubagentStartData {
   if (data.operation === 'send' && delta.operation === 'send') {
-    if ('field' in delta) return delta.field === 'request' ? { ...data, request: data.request + delta.delta } : { ...data, response: data.response + delta.delta };
-    return { ...data, phase: delta.phase };
+    if ('field' in delta) {
+      if (delta.field === 'request') {
+        const message = typeof data.parameters.message === 'string' ? data.parameters.message : '';
+        return { ...data, parameters: { ...data.parameters, message: message + delta.delta } };
+      }
+      return { ...data, result: { ...data.result, response: data.result.response + delta.delta } };
+    }
+    return { ...data, result: { ...data.result, phase: delta.phase } };
   }
-  if (data.operation === 'respond' && delta.operation === 'respond') return { ...data, body: data.body + delta.delta };
-  if (data.operation === 'await' && delta.operation === 'await') return { ...data, statuses: delta.statuses };
+  if (data.operation === 'respond' && delta.operation === 'respond') {
+    const message = typeof data.parameters.message === 'string' ? data.parameters.message : '';
+    return { ...data, parameters: { ...data.parameters, message: message + delta.delta } };
+  }
+  if (data.operation === 'await' && delta.operation === 'await') return { ...data, result: { ...data.result, statuses: delta.statuses } };
   return data;
 }
 
