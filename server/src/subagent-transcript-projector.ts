@@ -519,10 +519,10 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     return protocolErrorForEntry(parentMessageId, message);
   };
 
-  const customPayloadForMessage = (message: PimoteAgentMessage): readonly Record<string, unknown>[] | undefined => {
+  const customPayloadForMessage = (message: PimoteAgentMessage): readonly unknown[] | undefined => {
     const details = isObject(message.details) ? message.details : undefined;
     const payload = details?.subagentContent;
-    return Array.isArray(payload) ? payload.filter(isObject) : undefined;
+    return Array.isArray(payload) ? payload : undefined;
   };
 
   const customTargetForRow = (event: PresentationProviderEvent, messageIndex: number): PresentationProviderEvent => {
@@ -573,7 +573,9 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
         if (!Array.isArray(payload) || payload.length === 0 || payload.some((item) => !isPersistedSubagentContent(item))) {
           if (hidden.entryId) protocolErrorForEntry(hidden.entryId, `Hidden custom entry ${source.customType} contains malformed subagent content.`);
         } else {
-          for (const item of payload) customOperationRows.set(item.operationId as string, index);
+          for (const item of payload) {
+            if (isObject(item) && typeof item.operationId === 'string') customOperationRows.set(item.operationId, index);
+          }
         }
         continue;
       }
@@ -725,7 +727,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
         if (!validPayload) {
           return [messageEvent, ...protocolErrorForRow(index, `Hidden custom entry ${mapped.customType} contains malformed subagent content.`)];
         }
-        const events = payload.flatMap((item) => flushPendingCustomOperation(item.operationId as string, index));
+        const events = payload.flatMap((item) => (isObject(item) && typeof item.operationId === 'string' ? flushPendingCustomOperation(item.operationId, index) : []));
         return [messageEvent, ...events];
       }
       const mapped = cloneMessage(mapAgentMessage(event.message));

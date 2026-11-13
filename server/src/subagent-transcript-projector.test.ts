@@ -400,7 +400,7 @@ describe('subagent transcript projector', () => {
         id: 'malformed-custom',
         type: 'custom',
         customType: 'subagents',
-        details: { subagentContent: [{ operationId: 'bad', kind: 'send' }] },
+        details: { subagentContent: [{ operationId: 'bad', kind: 'send' }, 'not-an-object'] },
       },
     } as unknown as IncomingSdkEvent);
     expect(events).toContainEqual(expect.objectContaining({ type: 'subagent_content_end', state: 'protocol_error' }));
