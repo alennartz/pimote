@@ -204,6 +204,26 @@ describe('subagent transcript projector', () => {
     expect(active.snapshot().activeOperations).toContainEqual(expect.objectContaining({ target: expect.objectContaining({ operationId: 'send-call' }) }));
   });
 
+  it('shows a protocol error for a hidden custom entry without a typed lifecycle', () => {
+    const current = projector();
+    const events = current.acceptNativeEvent({
+      type: 'entry_appended',
+      entry: { id: 'hidden-custom', type: 'custom', customType: 'subagents', data: { text: 'native fallback' } },
+    } as unknown as IncomingSdkEvent);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'subagent_content_end', state: 'protocol_error' }));
+    expect(current.snapshot().messages[0]?.content[0]).toMatchObject({ type: 'subagent', subagentState: 'protocol_error' });
+
+    current.acceptProviderEvent({
+      type: 'subagent_snapshot_event',
+      eventId: 'custom-completion',
+      cursor: cursor(1),
+      target: { operationId: 'completion', kind: 'completion', path: [], placement: { entryId: 'hidden-custom' } },
+      state: 'complete',
+      data: { operation: 'completion', result: { state: 'idle', output: 'finished' } },
+    });
+    expect(current.snapshot().messages[0]?.content).toEqual([expect.objectContaining({ type: 'subagent', operationId: 'completion', subagentState: 'complete' })]);
+  });
+
   it('suppresses the native tool stream before transmission', () => {
     const current = projector();
     const events = current.acceptNativeEvent({ type: 'tool_execution_start', toolCallId: 'send-call', toolName: 'send', args: { message: 'hidden request' } } as IncomingSdkEvent);

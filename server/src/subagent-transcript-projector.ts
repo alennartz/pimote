@@ -134,6 +134,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
   const seenProviderEvents = new Set<string>();
   const operationSlots = new Map<string, MutableSlot>();
   const projectedSources = new Map<string, ProjectedSource>();
+  const customProtocolErrors = new Map<string, string>();
   let nextProjectedOrder = 0;
   let streamingAssistantSlot: MutableSlot | undefined;
   const hiddenStreamingIndexes = new Set<number>();
@@ -172,6 +173,10 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     if (placement && 'entryId' in placement && !('toolCallId' in placement)) {
       const byEntry = findMessageByEntry(placement.entryId);
       if (byEntry >= 0) return { messageIndex: byEntry, contentIndex: 0, parentMessageId: messageId(messages[byEntry], byEntry) };
+      const messageIndex = messages.push({ role: 'custom', entryId: placement.entryId, content: [] }) - 1;
+      nativeBlocks.push([]);
+      hiddenCustomEntries.add(placement.entryId);
+      return { messageIndex, contentIndex: 0, parentMessageId: placement.entryId };
     }
     if (placement && 'toolCallId' in placement) {
       const hiddenSlot = hiddenToolSlots.get(placement.toolCallId);
@@ -248,7 +253,26 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     }
   };
 
+  const clearCustomProtocolError = (entryId: string): void => {
+    const operationId = customProtocolErrors.get(entryId);
+    if (!operationId) return;
+    const slot = operationSlots.get(operationId);
+    if (slot) {
+      const message = messages[slot.messageIndex];
+      if (message) {
+        messages[slot.messageIndex] = { ...message, content: message.content.filter((content) => !(content.type === 'subagent' && content.operationId === operationId)) };
+        refreshOperationSlots(slot.messageIndex);
+      }
+    }
+    operationSlots.delete(operationId);
+    completedOperations.delete(operationId);
+    completedTargets.delete(operationId);
+    projectedSources.delete(operationId);
+    customProtocolErrors.delete(entryId);
+  };
+
   const placeBlock = (target: SubagentOperationTarget, block: PimoteMessageContent): MutableSlot => {
+    if (target.placement && 'entryId' in target.placement && !('toolCallId' in target.placement)) clearCustomProtocolError(target.placement.entryId);
     const located = messageForTarget(target);
     const message = messages[located.messageIndex] ?? { role: 'assistant', content: [] };
     if (!messages[located.messageIndex]) {
@@ -407,6 +431,30 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     ];
   };
 
+  const protocolErrorForEntry = (entryId: string, message: string): readonly PimoteSessionEvent[] => {
+    const operationId = `protocol-error:${entryId}`;
+    const target: SubagentOperationTarget = { operationId, kind: 'completion', path: [], placement: { entryId } };
+    const data: ProtocolErrorData = { operation: 'protocol_error', message };
+    const content = mapSubagentBlock(operationId, 'completion', 'protocol_error', data, target.placement);
+    const slot = placeBlock(target, content);
+    operationSlots.set(operationId, slot);
+    completedOperations.add(operationId);
+    completedTargets.set(operationId, target);
+    customProtocolErrors.set(entryId, operationId);
+    return [
+      {
+        ...emitBase(),
+        type: 'subagent_content_end',
+        parentMessageId: slot.parentMessageId,
+        contentIndex: slot.contentIndex,
+        operationId,
+        kind: 'completion',
+        state: 'protocol_error',
+        content,
+      },
+    ];
+  };
+
   const rehydrate = (nextMessages: readonly PimoteAgentMessage[]): void => {
     const active = [...operations.values()].map((record) => ({ target: cloneTarget(record.target), data: record.data }));
     const preserved = messages.flatMap((message) =>
@@ -425,6 +473,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     hiddenToolCalls.clear();
     hiddenToolSlots.clear();
     hiddenCustomEntries.clear();
+    customProtocolErrors.clear();
     streamingAssistantSlot = undefined;
     hiddenStreamingIndexes.clear();
     for (const source of nextMessages) {
@@ -515,7 +564,23 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     }
     if (event.type === 'entry_appended') {
       if (event.entry.type === 'custom' && hiddenCustomTypes.has(event.entry.customType)) {
-        if (typeof event.entry.id === 'string') hiddenCustomEntries.add(event.entry.id);
+        const entryId = typeof event.entry.id === 'string' ? event.entry.id : undefined;
+        if (entryId !== undefined) {
+          hiddenCustomEntries.add(entryId);
+          const existing = findMessageByEntry(entryId);
+          const projected = existing >= 0 ? messages[existing].content.filter(isSubagentContent) : [];
+          if (existing >= 0) {
+            messages[existing] = { ...messages[existing], content: projected };
+            nativeBlocks[existing] = [];
+            refreshOperationSlots(existing);
+          } else {
+            messages.push({ role: 'custom', entryId, content: [] });
+            nativeBlocks.push([]);
+          }
+          const details = (event.entry as unknown as { details?: unknown; data?: unknown }).details ?? (event.entry as unknown as { data?: unknown }).data;
+          const hasPersistedContent = isObject(details) && Array.isArray(details.subagentContent) && details.subagentContent.length > 0;
+          return hasPersistedContent ? [] : protocolErrorForEntry(entryId, `Hidden custom entry ${event.entry.customType} ended without a complete subagent lifecycle.`);
+        }
         return [];
       }
       if (event.entry.type === 'custom') {
