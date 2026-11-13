@@ -355,6 +355,20 @@ function fixture(retainedEvents: readonly SubagentEvent[] = []) {
 }
 
 describe('SubagentHost', () => {
+  it('drops legacy lifecycle facts instead of projecting them as topology', async () => {
+    const legacy = {
+      eventId: 'legacy-completion',
+      cursor: { epoch: 'epoch-1', sequence: 1 },
+      path: scout,
+      kind: 'completion',
+      relatedPiEvents: [],
+      data: { status: 'idle' },
+    } as unknown as SubagentProviderEvent;
+    const f = fixture([legacy as unknown as SubagentEvent]);
+    await f.host.start();
+    expect(f.parentEvents).toEqual([]);
+  });
+
   it('routes presentation operations only to their root or child session surface', async () => {
     const f = fixture();
     await f.host.start();

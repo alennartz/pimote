@@ -272,6 +272,26 @@ function mapStreamingMessage(value: unknown): StreamingMessage | undefined {
   };
 }
 
+function hasMessageContent(message: AgentMessage): boolean {
+  if (!('content' in message)) return false;
+  if (typeof message.content === 'string') return message.content.length > 0;
+  return Array.isArray(message.content) && message.content.length > 0;
+}
+
+/**
+ * Some providers emit an empty message_end while the completed message is
+ * already present in the native session. Resolve that tail before semantic
+ * projection so hidden blocks are sanitized by the projector, not by the
+ * untrusted event-buffer fallback.
+ */
+function messageEndForProjection(event: IncomingSdkEvent, session: BorrowedAgentSession): IncomingSdkEvent {
+  if (event.type !== 'message_end' || hasMessageContent(event.message)) return event;
+  const messages = Array.isArray(session.messages) ? session.messages : [];
+  const fallback = messages[messages.length - 1];
+  if (!isAgentMessage(fallback) || fallback.role !== event.message.role) return event;
+  return { ...event, message: fallback };
+}
+
 /** A persisted final message already present in a snapshot needs no second
  * delivery from the listener that observed it at the snapshot boundary. */
 function messageIsInSnapshot(event: PimoteSessionEvent, snapshot: SessionSurfaceSnapshot): boolean {
@@ -558,16 +578,24 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
 
   const mapAndReceive = (sdkEvent: IncomingSdkEvent): void => {
     if (closed) return;
-    const projected = projector?.acceptNativeEvent(sdkEvent) ?? [];
+    const projectionInput = projector ? messageEndForProjection(sdkEvent, options.session) : sdkEvent;
+    const projected = projector?.acceptNativeEvent(projectionInput) ?? [];
     for (const event of projected) appendProjected(event);
-    if (projector?.isNativeEventSuppressed?.(sdkEvent)) return;
-    const projectedNativeEvent = projector?.projectNativeEvent?.(sdkEvent) ?? sdkEvent;
+    if (projector?.isNativeEventSuppressed?.(projectionInput)) return;
+    const projectedNativeEvent = projector?.projectNativeEvent?.(projectionInput) ?? projectionInput;
     if (!projectedNativeEvent) return;
-    eventBuffer.onEvent(projectedNativeEvent, options.sessionId, receive, () => {
-      const messages = options.session.messages;
-      const last = messages[messages.length - 1];
-      return last as AgentMessage | undefined;
-    });
+    eventBuffer.onEvent(
+      projectedNativeEvent,
+      options.sessionId,
+      receive,
+      projector
+        ? undefined
+        : () => {
+            const messages = options.session.messages;
+            const last = messages[messages.length - 1];
+            return last as AgentMessage | undefined;
+          },
+    );
   };
 
   const receiveProviderEvent = (event: SubagentProviderEvent): void => {
@@ -892,13 +920,15 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     try {
       // Native reload is the persistence authority. Project the saved branch
       // before provider hydration so provider events have a stable placement.
+      projector?.rehydrate(fullMessagesFor(options, capabilities));
       if (projector && options.initialProjection) {
         // A rebuilt child view can retain completed projected blocks while its
-        // provider's idempotent hydration remains silent.
-        projector.rehydrate(options.initialProjection.messages);
+        // provider's idempotent hydration remains silent. Restore after the
+        // native branch so the retained projection does not erase fresh rows.
+        projector.restoreProjection?.(options.initialProjection);
+        if (!projector.restoreProjection) projector.rehydrate(options.initialProjection.messages);
         projector.hydrateActiveOperations?.(options.initialProjection.activeOperations);
       }
-      projector?.rehydrate(fullMessagesFor(options, capabilities));
       const provider = subagentProvider;
       const providerState = provider?.snapshot?.();
       const initialActive = activeOperationsForSurface(providerState?.activeOperations);
@@ -961,6 +991,7 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     if (closed) throw new Error('session surface is closed');
     providerUnsubscribe?.();
     providerUnsubscribe = undefined;
+    const previousProjection = projector?.snapshot();
     subagentProvider = provider;
     providerSnapshot = provider.snapshot();
     projector = createSubagentTranscriptProjector({
@@ -968,6 +999,11 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
       manifest: providerSnapshot.manifest ?? { hiddenToolNames: [], hiddenCustomTypes: [] },
     });
     projector.rehydrate(fullMessagesFor(options, capabilities));
+    if (previousProjection) {
+      projector.restoreProjection?.(previousProjection);
+      if (!projector.restoreProjection) projector.rehydrate(previousProjection.messages);
+      projector.hydrateActiveOperations?.(previousProjection.activeOperations);
+    }
     const initialActive = activeOperationsForSurface(providerSnapshot.activeOperations);
     if (initialActive.length > 0) projector.hydrateActiveOperations?.(initialActive);
     providerUnsubscribe = provider.subscribe(receiveProviderEvent);

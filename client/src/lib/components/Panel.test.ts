@@ -55,6 +55,8 @@ beforeEach(() => {
     type: 'subagent_snapshot',
     sessionId: 'root',
     cursor: { epoch: 'epoch-1', sequence: 1 },
+    manifest: { hiddenToolNames: [], hiddenCustomTypes: [] },
+    activeOperations: [],
     nodes: [node(['worker']), node(['worker', 'scout'])],
   });
   sessionRegistry.handleEvent({

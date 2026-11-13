@@ -70,19 +70,19 @@ import { coordinateDownloadUpdate } from '../download-coordinator.js';
 import { handleDownloadNotificationIntent, type DownloadNotificationIntent } from '../download-notification-intent.js';
 import { getActiveSessions } from './persistence.js';
 import { summarizeAssistantRowUsage, type ToolResultUsageIndex } from '../assistant-row-usage.js';
-import { applySubagentContentEvent, hydrateSubagentContent, isSubagentContentEvent, type SubagentContentState } from '../subagent-content.js';
+import {
+  applySubagentContentEvent,
+  applySubagentContentToStreaming,
+  hydrateSubagentContent,
+  isSubagentContentEvent,
+  type SubagentContentEvent,
+  type SubagentContentState,
+} from '../subagent-content.js';
 
 /** Maximum UTF-8 bytes retained from live bash deltas per execution. */
 export const MAX_BASH_LIVE_OUTPUT_BYTES = 256 * 1024;
 
 const bashTextEncoder = new TextEncoder();
-
-type LegacySubagentSnapshotEvent = {
-  type: 'subagent_snapshot';
-  sessionId: string;
-  cursor: FeedCursor;
-  nodes: readonly SubagentNodeSnapshot[];
-};
 
 export type SubagentPath = AgentPath;
 
@@ -366,8 +366,28 @@ function hydrateMessageEntryIds(session: Pick<PerSessionState, 'messages' | 'mes
   }
 }
 
+function streamingParentTargetsFutureRow(parentMessageId: string, messageCount: number): boolean {
+  const match = /^message-(\d+)$/.exec(parentMessageId);
+  return match !== null && Number(match[1]) >= messageCount;
+}
+
+function applyProjectedEventToStreaming(session: PerSessionState, event: SubagentContentEvent): boolean {
+  if (!session.streamingMessage || session.streamingMessage.role !== 'assistant') return false;
+  if (!streamingParentTargetsFutureRow(event.parentMessageId, session.messages.length)) return false;
+  session.streamingMessage = applySubagentContentToStreaming(session.streamingMessage, event);
+  return true;
+}
+
+function applyProjectedEventToAttachmentStreaming(attachment: SubagentAttachmentState, event: SubagentContentEvent): boolean {
+  if (!attachment.streamingMessage || attachment.streamingMessage.role !== 'assistant') return false;
+  if (!streamingParentTargetsFutureRow(event.parentMessageId, attachment.messages.length)) return false;
+  attachment.streamingMessage = applySubagentContentToStreaming(attachment.streamingMessage, event);
+  return true;
+}
+
 function applyChildNativeEvent(attachment: SubagentAttachmentState, event: PimoteEvent): void {
   if (isSubagentContentEvent(event)) {
+    if (applyProjectedEventToAttachmentStreaming(attachment, event)) return;
     const projected = applySubagentContentEvent(attachment.projectedSubagentContent, event);
     attachment.projectedSubagentContent = projected;
     attachment.messages = [...projected.messages];
@@ -1200,17 +1220,18 @@ export class SessionRegistry {
   private applySubagentHierarchySnapshot(event: SubagentSnapshotEvent): void {
     const rootSessionId = event.sessionId;
     const snapshot = 'snapshot' in event ? event.snapshot : event;
+    if (!snapshot.manifest || !Array.isArray(snapshot.nodes) || !Array.isArray(snapshot.activeOperations)) return;
     const root = this.ensureSubagentRoot(rootSessionId);
     const previousCursor = root.providerCursor;
     const epochChanged = previousCursor !== null && previousCursor.epoch !== snapshot.cursor.epoch;
     const staleSameEpoch = previousCursor !== null && previousCursor.epoch === snapshot.cursor.epoch && snapshot.cursor.sequence < previousCursor.sequence;
     const shouldApplyNodes = !root.hierarchySnapshotReceived || !staleSameEpoch || epochChanged;
     if (shouldApplyNodes) {
-      const manifest = snapshot.manifest ?? { hiddenToolNames: [], hiddenCustomTypes: [] };
+      const manifest = snapshot.manifest;
       root.manifest = { hiddenToolNames: [...manifest.hiddenToolNames], hiddenCustomTypes: [...manifest.hiddenCustomTypes] };
-      root.activeOperations = [...(snapshot.activeOperations ?? [])];
+      root.activeOperations = [...snapshot.activeOperations];
       root.hierarchySnapshotReceived = true;
-      root.nodes = [...(snapshot.nodes ?? [])].map((node) => ({
+      root.nodes = [...snapshot.nodes].map((node) => ({
         ...node,
         path: copyAgentPath(node.path),
         channels: [...(node.channels ?? [])],
@@ -1232,7 +1253,7 @@ export class SessionRegistry {
       }
     }
     const rootMessages = this.sessions[rootSessionId]?.messages ?? root.projectedSubagentContent.messages;
-    const active = (snapshot.activeOperations ?? []).map((operation) => {
+    const active = snapshot.activeOperations.map((operation) => {
       let parentMessageId = `message-${Math.max(
         0,
         rootMessages.findIndex((message) => message.role === 'assistant'),
@@ -1430,11 +1451,8 @@ export class SessionRegistry {
     this.setDraftText(sessionId, text);
   }
 
-  handleEvent(input: PimoteEvent | LegacySubagentSnapshotEvent): void {
-    const event =
-      input.type === 'subagent_snapshot' && !('manifest' in input)
-        ? ({ ...input, manifest: { hiddenToolNames: [], hiddenCustomTypes: [] }, activeOperations: [] } as SubagentSnapshotEvent)
-        : input;
+  handleEvent(input: PimoteEvent): void {
+    const event = input;
     const sessionId = 'sessionId' in event ? event.sessionId : undefined;
 
     // buffered_events: iterate root sub-events. Child-view events never enter
@@ -1471,6 +1489,7 @@ export class SessionRegistry {
     if (isSubagentContentEvent(event)) {
       if (!sessionId || !this.sessions[sessionId]) return;
       const session = this.sessions[sessionId];
+      if (applyProjectedEventToStreaming(session, event)) return;
       const projected = applySubagentContentEvent(session.projectedSubagentContent, event);
       session.projectedSubagentContent = projected;
       session.messages = [...projected.messages];

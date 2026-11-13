@@ -20,6 +20,12 @@ interface BufferEntry {
   event: PimoteSessionEvent;
 }
 
+const SUPPORTED_TOPOLOGY_KINDS = new Set<ProviderTopologyEvent['kind']>(['node_added', 'node_updated', 'node_removed', 'runtime_replaced']);
+
+function isSupportedTopologyKind(kind: unknown): kind is ProviderTopologyEvent['kind'] {
+  return typeof kind === 'string' && SUPPORTED_TOPOLOGY_KINDS.has(kind as ProviderTopologyEvent['kind']);
+}
+
 /**
  * Forward mapped events live and buffer non-streaming events for reconnect replay.
  * Streaming updates are live-only and are not stored in the replay buffer.
@@ -80,7 +86,12 @@ export class EventBuffer {
   /**
    * Map and forward an SDK or tree-navigation event. Buffer non-streaming events.
    */
-  onEvent(sdkEvent: IncomingSdkEvent, sessionId: string, sendLive: (event: PimoteSessionEvent) => void, getLastMessage?: () => AgentMessage | undefined): void {
+  onEvent(
+    sdkEvent: IncomingSdkEvent,
+    sessionId: string,
+    sendLive: (event: PimoteSessionEvent) => void,
+    getLastMessage?: (event: IncomingSdkEvent) => AgentMessage | undefined,
+  ): void {
     const cursor = sdkEvent.type === 'bash_execution_update' ? this._cursor : ++this._cursor;
 
     const pimoteEvent = this.mapEvent(sdkEvent, sessionId, cursor, getLastMessage);
@@ -100,6 +111,7 @@ export class EventBuffer {
 
   /** Append one topology event to this surface's replay stream. */
   appendTopologyEvent(semanticEvent: ProviderTopologyEvent, sessionId: string, sendLive: (event: PimoteSessionEvent) => void): number {
+    if (!isSupportedTopologyKind(semanticEvent.kind)) return this._cursor;
     const cursor = ++this._cursor;
     const event = {
       sessionId,
@@ -157,7 +169,12 @@ export class EventBuffer {
     return events;
   }
 
-  private mapEvent(sdkEvent: IncomingSdkEvent, sessionId: string, cursor: number, getLastMessage?: () => AgentMessage | undefined): PimoteSessionEvent | null {
+  private mapEvent(
+    sdkEvent: IncomingSdkEvent,
+    sessionId: string,
+    cursor: number,
+    getLastMessage?: (event: IncomingSdkEvent) => AgentMessage | undefined,
+  ): PimoteSessionEvent | null {
     const base = { sessionId, cursor, timestamp: new Date().toISOString() };
 
     switch (sdkEvent.type) {
@@ -238,7 +255,11 @@ export class EventBuffer {
         let message: AgentMessage | undefined = sdkEvent.message;
         const isEmpty = (m: AgentMessage | undefined): boolean => !m || !('content' in m) || !m.content || (Array.isArray(m.content) && m.content.length === 0);
         if (isEmpty(message) && getLastMessage) {
-          message = getLastMessage();
+          const fallback = getLastMessage(sdkEvent);
+          // The SDK can emit an empty terminal event while the completed
+          // message is only available from session.messages. A stale tail from
+          // another role is not that message and must not cross this boundary.
+          if (fallback?.role === message.role) message = fallback;
         }
         let clientMessageId: string | undefined;
         if (sdkEvent.message.role === 'user' && this.pendingPromptEcho !== undefined) {

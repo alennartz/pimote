@@ -31,6 +31,8 @@ export interface SubagentTranscriptProjector {
   projectStreamingMessage?(message: StreamingMessage): StreamingMessage;
   /** Restore provider active state without replaying its live deltas. */
   hydrateActiveOperations?(operations: readonly ActiveSubagentOperation[]): void;
+  /** Preserve projected blocks when a fresh surface replaces its provider. */
+  restoreProjection?(snapshot: SubagentProjectionSnapshot): void;
   /** Remap visible streaming content indexes after hidden slots are removed. */
   projectNativeEvent?(event: IncomingSdkEvent): IncomingSdkEvent | undefined;
   /** True when the native event is a declared replacement. */
@@ -45,6 +47,26 @@ type OperationRecord = { target: SubagentOperationTarget; data: SubagentStartDat
 type ProtocolErrorData = Readonly<{ operation: 'protocol_error'; message: string }>;
 
 const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object';
+const PRESENTATION_KINDS = new Set<SubagentOperationKindLike>(['send', 'respond', 'await', 'delegation', 'completion', 'interrupt', 'teardown', 'resurrect']);
+const FINAL_STATES = new Set(['complete', 'error', 'aborted']);
+
+function isPersistedSubagentContent(value: unknown): boolean {
+  if (!isObject(value) || typeof value.operationId !== 'string' || value.operationId.length === 0) return false;
+  if (typeof value.kind !== 'string' || !PRESENTATION_KINDS.has(value.kind as SubagentOperationKindLike)) return false;
+  if (typeof value.state !== 'string' || !FINAL_STATES.has(value.state)) return false;
+  if (!isObject(value.data)) return false;
+  const operation = value.data.operation;
+  if (operation !== value.kind && operation !== 'protocol_error') return false;
+  if (value.source !== 'tool' && value.source !== 'custom_entry') return false;
+  if (value.source === 'tool') {
+    if (!isObject(value.placement) || typeof value.placement.toolCallId !== 'string' || !Number.isInteger(value.placement.contentIndex)) return false;
+    if (value.placement.entryId !== undefined && typeof value.placement.entryId !== 'string') return false;
+  } else if (value.placement !== undefined && (!isObject(value.placement) || typeof value.placement.entryId !== 'string')) {
+    return false;
+  }
+  return true;
+}
+
 const cloneContent = (content: PimoteMessageContent): PimoteMessageContent => ({ ...content });
 const cloneMessage = (message: PimoteAgentMessage): PimoteAgentMessage => ({ ...message, content: message.content.map(cloneContent) });
 const clonePath = (path: readonly string[]): readonly string[] => Object.freeze([...path]);
@@ -140,6 +162,31 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
   const hiddenStreamingIndexes = new Set<number>();
 
   const messageId = (message: PimoteAgentMessage, index: number): string => message.entryId ?? `message-${index}`;
+
+  const seedStreamingHiddenState = (message: StreamingMessage): void => {
+    if (message.role !== 'assistant') return;
+    const messageIndex = streamingAssistantSlot?.messageIndex ?? messages.length;
+    const parentMessageId = streamingAssistantSlot?.parentMessageId ?? `message-${messageIndex}`;
+    streamingAssistantSlot = {
+      messageIndex,
+      contentIndex: streamingAssistantSlot?.contentIndex ?? 0,
+      parentMessageId,
+    };
+    for (const [contentIndex, block] of message.content.entries()) {
+      const hidden =
+        (block.type === 'tool_call' &&
+          ((block.toolName !== undefined && hiddenTools.has(block.toolName)) || (block.toolCallId !== undefined && hiddenToolCalls.has(block.toolCallId)))) ||
+        (block.type === 'tool_result' &&
+          ((block.toolName !== undefined && hiddenTools.has(block.toolName)) || (block.toolCallId !== undefined && hiddenToolCalls.has(block.toolCallId))));
+      if (hidden) hiddenStreamingIndexes.add(contentIndex);
+      if (block.type === 'tool_call' && block.toolCallId && ((block.toolName !== undefined && hiddenTools.has(block.toolName)) || hiddenToolCalls.has(block.toolCallId))) {
+        hiddenToolCalls.add(block.toolCallId);
+        if (!hiddenToolSlots.has(block.toolCallId)) {
+          hiddenToolSlots.set(block.toolCallId, { messageIndex, contentIndex, parentMessageId });
+        }
+      }
+    }
+  };
 
   const visibleContentFor = (message: PimoteAgentMessage, messageIndex: number): { content: PimoteMessageContent[]; slots: NativeBlock[] } => {
     const content: PimoteMessageContent[] = [];
@@ -322,6 +369,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
 
   const createStart = (target: SubagentOperationTarget, data: SubagentStartData, emit: boolean): readonly PimoteSessionEvent[] => {
     const key = operationKey(target);
+    if (operations.has(key) && operationSlots.has(key)) return [];
     const clonedTarget = cloneTarget(target);
     const block = mapSubagentBlock(key, clonedTarget.kind, 'active', data, clonedTarget.placement);
     const slot = placeBlock(clonedTarget, block);
@@ -391,6 +439,8 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
   };
 
   const finite = (event: Extract<SubagentProviderEvent, { type: 'subagent_snapshot_event' }>): readonly PimoteSessionEvent[] => {
+    const existing = operationSlots.get(event.target.operationId);
+    if (completedOperations.has(event.target.operationId) && existing) return [];
     const state = event.state;
     const target = cloneTarget(event.target);
     const block = mapSubagentBlock(target.operationId, target.kind, stateFromEnd(state), event.data, target.placement);
@@ -485,6 +535,12 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
         if (hidden.entryId) hiddenCustomEntries.add(hidden.entryId);
         messages.push(hidden);
         nativeBlocks.push([]);
+        if (hidden.entryId) {
+          const payload = isObject(_details) ? _details.subagentContent : undefined;
+          if (!Array.isArray(payload) || payload.length === 0 || payload.some((item) => !isPersistedSubagentContent(item))) {
+            protocolErrorForEntry(hidden.entryId, `Hidden custom entry ${source.customType} contains malformed subagent content.`);
+          }
+        }
         continue;
       }
       const mapped = cloneMessage(source);
@@ -513,6 +569,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
         completedTargets.set(block.operationId, completedTargets.get(block.operationId) ?? target);
         operationSlots.set(block.operationId, { messageIndex: index, contentIndex, parentMessageId: messageId(filtered, index) });
         rememberProjectedSource(block.operationId, index, target.placement && 'toolCallId' in target.placement ? target.placement.contentIndex : 0);
+        if (block.subagentState !== 'active') completedOperations.add(block.operationId);
         if (block.subagentState === 'active' && block.data && isObject(block.data)) {
           operations.set(block.operationId, {
             target,
@@ -579,8 +636,9 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
             nativeBlocks.push([]);
           }
           const details = (event.entry as unknown as { details?: unknown; data?: unknown }).details ?? (event.entry as unknown as { data?: unknown }).data;
-          const hasPersistedContent = isObject(details) && Array.isArray(details.subagentContent) && details.subagentContent.length > 0;
-          return hasPersistedContent ? [] : protocolErrorForEntry(entryId, `Hidden custom entry ${event.entry.customType} ended without a complete subagent lifecycle.`);
+          const payload = isObject(details) ? details.subagentContent : undefined;
+          const hasValidPersistedContent = Array.isArray(payload) && payload.length > 0 && payload.every((item) => isPersistedSubagentContent(item));
+          return hasValidPersistedContent ? [] : protocolErrorForEntry(entryId, `Hidden custom entry ${event.entry.customType} contains malformed subagent content.`);
         }
         return [];
       }
@@ -651,8 +709,8 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
       hiddenStreamingIndexes.clear();
       if (hidden) {
         const projected = existing >= 0 ? messages[existing] : mapped.role === 'toolResult' && visible.content.length === 0 ? undefined : messages[messages.length - 1];
-        if (mapped.role === 'toolResult' && visible.content.length === 0 && !projected?.content.some(isSubagentContent)) return [];
-        return projected ? [{ type: 'message_end', message: projected } as PimoteSessionEvent] : [];
+        if (!projected?.content.some(isSubagentContent)) return [];
+        return [{ type: 'message_end', message: projected } as PimoteSessionEvent];
       }
     }
     return [];
@@ -709,9 +767,11 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
   };
 
   const projectStreamingMessage = (message: StreamingMessage): StreamingMessage => {
+    seedStreamingHiddenState(message);
     const content = message.content
       .filter((block) => {
-        if (block.type === 'tool_call') return !(block.toolName !== undefined && hiddenTools.has(block.toolName));
+        if (block.type === 'tool_call')
+          return !(block.toolName !== undefined && hiddenTools.has(block.toolName)) && !(block.toolCallId !== undefined && hiddenToolCalls.has(block.toolCallId));
         if (block.type === 'tool_result')
           return !(block.toolName !== undefined && hiddenTools.has(block.toolName)) && !(block.toolCallId !== undefined && hiddenToolCalls.has(block.toolCallId));
         return true;
@@ -726,7 +786,70 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
   const hydrateActiveOperations = (active: readonly ActiveSubagentOperation[]): void => {
     for (const operation of active) {
       operations.delete(operation.target.operationId);
+      completedOperations.delete(operation.target.operationId);
       createStart(operation.target, operation.data, false);
+    }
+  };
+
+  const restoreProjection = (projection: SubagentProjectionSnapshot): void => {
+    const activeByOperation = new Map(projection.activeOperations.map((operation) => [operation.target.operationId, operation]));
+    for (const [messageIndex, source] of projection.messages.entries()) {
+      for (const block of source.content) {
+        if (!isSubagentContent(block)) continue;
+        const active = activeByOperation.get(block.operationId);
+        const target: SubagentOperationTarget = cloneTarget(
+          active?.target ?? {
+            operationId: block.operationId,
+            kind: block.subagentKind,
+            path: [],
+            ...(block.placement ? { placement: block.placement } : {}),
+          },
+        );
+        const existingMessageIndex = source.entryId ? findMessageByEntry(source.entryId) : messages[messageIndex]?.role === source.role ? messageIndex : -1;
+        let slot: MutableSlot;
+        if (existingMessageIndex >= 0) {
+          const existing = messages[existingMessageIndex];
+          const existingBlock = existing.content.findIndex((candidate) => isSubagentContent(candidate) && candidate.operationId === block.operationId);
+          if (existingBlock >= 0) {
+            messages[existingMessageIndex] = {
+              ...existing,
+              content: existing.content.map((candidate, index) => (index === existingBlock ? cloneContent(block) : candidate)),
+            };
+            slot = { messageIndex: existingMessageIndex, contentIndex: existingBlock, parentMessageId: messageId(existing, existingMessageIndex) };
+          } else {
+            const content = [...existing.content];
+            const sourceIndex = target.placement && 'toolCallId' in target.placement ? target.placement.contentIndex : content.length;
+            const index = outputIndexForSource(existingMessageIndex, sourceIndex, projectedSources.get(block.operationId)?.order ?? nextProjectedOrder++);
+            shiftSlots(existingMessageIndex, index);
+            content.splice(Math.min(index, content.length), 0, cloneContent(block));
+            messages[existingMessageIndex] = { ...existing, content };
+            slot = { messageIndex: existingMessageIndex, contentIndex: index, parentMessageId: messageId(existing, existingMessageIndex) };
+          }
+          rememberProjectedSource(
+            block.operationId,
+            existingMessageIndex,
+            target.placement && 'toolCallId' in target.placement ? target.placement.contentIndex : 0,
+            projectedSources.get(block.operationId)?.order,
+          );
+        } else {
+          const synthetic = cloneMessage(source);
+          synthetic.content = [];
+          messages.push(synthetic);
+          nativeBlocks.push([]);
+          const placement = target.placement && 'toolCallId' in target.placement ? target.placement : source.entryId ? { entryId: source.entryId } : target.placement;
+          const syntheticTarget = placement === target.placement ? target : { ...target, placement };
+          slot = placeBlock(syntheticTarget, cloneContent(block));
+        }
+        operationSlots.set(block.operationId, slot);
+        completedTargets.set(block.operationId, target);
+        if (active) {
+          completedOperations.delete(block.operationId);
+          operations.set(block.operationId, { target, data: active.data, slot });
+        } else {
+          operations.delete(block.operationId);
+          completedOperations.add(block.operationId);
+        }
+      }
     }
   };
 
@@ -760,6 +883,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
       }
     },
     projectStreamingMessage,
+    restoreProjection,
     snapshot() {
       return {
         messages: messages

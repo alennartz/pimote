@@ -514,6 +514,20 @@ describe('EventBuffer', () => {
   });
 
   describe('event mapping', () => {
+    it('does not use a stale tail from another role for an empty message_end', () => {
+      const buffer = new EventBuffer(10);
+      const live: PimoteSessionEvent[] = [];
+      buffer.onEvent(
+        makeSdkEvent('message_end', { message: { role: 'assistant', content: [] } }) as IncomingSdkEvent,
+        SESSION_ID,
+        (event) => live.push(event),
+        () => ({ role: 'toolResult', content: [{ type: 'text', text: 'hidden' }] }) as never,
+      );
+
+      expect(live[0]).toMatchObject({ type: 'message_end', message: { role: 'assistant', content: [] } });
+      expect(JSON.stringify(live)).not.toContain('hidden');
+    });
+
     it('maps agent lifecycle events correctly', () => {
       const buffer = new EventBuffer(10);
       const liveEvents: PimoteSessionEvent[] = [];

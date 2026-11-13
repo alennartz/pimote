@@ -256,6 +256,59 @@ describe('subagent transcript projector', () => {
     expect(active.snapshot().activeOperations).toContainEqual(expect.objectContaining({ target: expect.objectContaining({ operationId: 'send-call' }) }));
   });
 
+  it('seeds hidden IDs and slots from a mid-run streaming snapshot', () => {
+    const current = projector();
+    current.rehydrate([assistant([{ type: 'text', text: 'prior' }])]);
+    const projected = current.projectStreamingMessage?.({
+      role: 'assistant',
+      content: [
+        { type: 'text', text: 'before' },
+        { type: 'tool_call', toolCallId: 'mid-run', toolName: 'send', args: { message: 'secret' } },
+        { type: 'tool_result', toolCallId: 'mid-run', toolName: 'send', result: 'secret result' },
+        { type: 'text', text: 'after' },
+      ],
+    });
+    expect(projected?.content).toEqual([
+      { type: 'text', text: 'before' },
+      { type: 'text', text: 'after' },
+    ]);
+
+    current.acceptProviderEvent({
+      ...start,
+      eventId: 'mid-run-start',
+      target: { operationId: 'mid-run', kind: 'send', path: [], placement: { toolCallId: 'mid-run', contentIndex: 1 } },
+    });
+    expect(current.snapshot().messages[1]?.content[0]).toMatchObject({ type: 'subagent', operationId: 'mid-run' });
+  });
+
+  it('restores completed and active projections on a fresh projector', () => {
+    const source = projector();
+    const native = [assistant([{ type: 'tool_call', toolCallId: 'send-call', toolName: 'send', args: {} }])];
+    source.rehydrate(native);
+    source.acceptProviderEvent({
+      type: 'subagent_snapshot_event',
+      eventId: 'complete-send',
+      cursor: cursor(1),
+      target,
+      state: 'complete',
+      data: { operation: 'send', to: ['worker'], request: 'check', response: 'done' },
+    });
+    const saved = source.snapshot();
+    const fresh = projector();
+    fresh.rehydrate(native);
+    fresh.restoreProjection?.(saved);
+    expect(fresh.snapshot().messages[0]?.content[0]).toMatchObject({ type: 'subagent', operationId: 'send-call', subagentState: 'complete' });
+
+    const active = projector();
+    active.rehydrate(native);
+    active.acceptProviderEvent(start);
+    const activeSaved = active.snapshot();
+    const freshActive = projector();
+    freshActive.rehydrate(native);
+    freshActive.restoreProjection?.(activeSaved);
+    expect(freshActive.snapshot().activeOperations).toContainEqual(expect.objectContaining({ target: expect.objectContaining({ operationId: 'send-call' }) }));
+  });
+
   it('shows a protocol error for a hidden custom entry without a typed lifecycle', () => {
     const current = projector();
     const events = current.acceptNativeEvent({
@@ -274,6 +327,21 @@ describe('subagent transcript projector', () => {
       data: { operation: 'completion', result: { state: 'idle', output: 'finished' } },
     });
     expect(current.snapshot().messages[0]?.content).toEqual([expect.objectContaining({ type: 'subagent', operationId: 'completion', subagentState: 'complete' })]);
+  });
+
+  it('reports malformed hidden custom payloads as protocol errors', () => {
+    const current = projector();
+    const events = current.acceptNativeEvent({
+      type: 'entry_appended',
+      entry: {
+        id: 'malformed-custom',
+        type: 'custom',
+        customType: 'subagents',
+        details: { subagentContent: [{ operationId: 'bad', kind: 'send' }] },
+      },
+    } as unknown as IncomingSdkEvent);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'subagent_content_end', state: 'protocol_error' }));
+    expect(current.snapshot().messages[0]?.content[0]).toMatchObject({ type: 'subagent', subagentState: 'protocol_error' });
   });
 
   it('suppresses the native tool stream before transmission', () => {

@@ -16,6 +16,8 @@ import com.pimote.android.protocol.FullResyncEvent
 import com.pimote.android.protocol.SubagentViewSnapshotEvent
 import com.pimote.android.protocol.SubagentSnapshotEvent
 import com.pimote.android.protocol.SubagentViewEvent
+import com.pimote.android.protocol.SubagentViewClosedEvent
+import com.pimote.android.protocol.SubagentTopologyEvent
 import com.pimote.android.protocol.UnknownPimoteEventTypeException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -382,7 +384,7 @@ class WsClientImpl(
             val ev = try {
                 json.decodeFromJsonElement(PimoteEventSerializer, element)
             } catch (_: UnknownPimoteEventTypeException) { return } catch (_: Throwable) { return }
-            if (ev is SubagentContentStartEvent || ev is SubagentContentDeltaEvent || ev is SubagentContentEndEvent || ev is FullResyncEvent || ev is SubagentViewSnapshotEvent || ev is SubagentSnapshotEvent || ev is SubagentViewEvent) {
+            if (ev is SubagentContentStartEvent || ev is SubagentContentDeltaEvent || ev is SubagentContentEndEvent || ev is FullResyncEvent || ev is SubagentViewSnapshotEvent || ev is SubagentSnapshotEvent || ev is SubagentViewEvent || ev is SubagentViewClosedEvent || ev is SubagentTopologyEvent) {
                 // Android has no transcript renderer. Deliberately consume the
                 // projected web-only content and keep call/session events intact.
                 return

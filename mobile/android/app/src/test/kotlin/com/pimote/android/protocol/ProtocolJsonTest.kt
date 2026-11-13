@@ -197,6 +197,43 @@ class ProtocolJsonTest {
     }
 
     @Test
+    fun `decodes subagent snapshot and view lifecycle fields`() {
+        val snapshot = json.decodeFromString(
+            PimoteEventSerializer,
+            """{"type":"subagent_snapshot","sessionId":"root","cursor":{"epoch":"e1","sequence":7},"manifest":{"hiddenToolNames":["send"],"hiddenCustomTypes":["subagents"]},"nodes":[],"activeOperations":[]}""",
+        ) as SubagentSnapshotEvent
+        assertEquals("e1", snapshot.cursor.epoch)
+        assertEquals(7L, snapshot.cursor.sequence)
+        assertEquals(listOf("send"), snapshot.manifest.hiddenToolNames)
+
+        val view = json.decodeFromString(
+            PimoteEventSerializer,
+            """{"type":"subagent_view_snapshot","sessionId":"root","childSessionId":"child","path":["worker"],"incarnation":"inc-1","attachmentGeneration":"gen-1","viewCursor":12,"state":{"sessionId":"child"},"messages":[],"activeSubagentContent":[],"branchEntryIds":["entry-1"],"runningToolCallIds":["call-1"]}""",
+        ) as SubagentViewSnapshotEvent
+        assertEquals("inc-1", view.incarnation)
+        assertEquals("gen-1", view.attachmentGeneration)
+        assertEquals(12L, view.viewCursor)
+        assertEquals(listOf("entry-1"), view.branchEntryIds)
+        assertEquals(listOf("call-1"), view.runningToolCallIds)
+    }
+
+    @Test
+    fun `decodes subagent view close and topology lifecycle fields`() {
+        val closed = json.decodeFromString(
+            PimoteEventSerializer,
+            """{"type":"subagent_view_closed","sessionId":"root","path":["worker"],"incarnation":"inc-1","attachmentGeneration":"gen-1","reason":"teardown"}""",
+        ) as SubagentViewClosedEvent
+        assertEquals("teardown", closed.reason)
+        val topology = json.decodeFromString(
+            PimoteEventSerializer,
+            """{"type":"subagent_event","sessionId":"root","cursor":9,"eventId":"evt-1","path":["worker"],"kind":"node_removed","data":{"node":{}},"relatedPiEvents":[],"providerCursor":{"epoch":"e1","sequence":8}}""",
+        ) as SubagentTopologyEvent
+        assertEquals("evt-1", topology.eventId)
+        assertEquals("node_removed", topology.kind)
+        assertEquals(8L, topology.providerCursor?.sequence)
+    }
+
+    @Test
     fun `unknown event type throws UnknownPimoteEventTypeException`() {
         val raw = """{"type":"not_a_real_event","x":1}"""
         val ex = assertThrows(UnknownPimoteEventTypeException::class.java) {

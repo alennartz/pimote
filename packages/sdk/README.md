@@ -120,7 +120,7 @@ This module defines the per-session presentation provider for interactive subage
 
 Use `registerProvider(pi, provider)` to publish a provider. Use `discoverProvider(pi, onProvider)` or the discovery handle to find providers, including late registration and replacement. Registration and discovery return cleanup functions or handles. Cleanup stops discovery or registration; it does not dispose the provider or child sessions. The `SubagentPresentationProvider` contract, typed operation data, cursors, snapshots, and borrowed-session lease types are exported from this module. The my-pi subagents extension implements this provider for Pimote.
 
-A fact can include `transcriptPosition` from its owning native session. Set `afterEntryId` to the native leaf ID, or `null` before the first entry. Preserve this boundary in provider replay and native tool-result or custom-message metadata. Pimote derives `messageIndex` for the current transcript projection. Position controls insertion only. `relatedPiEvents` controls native replacement. Do not acquire a child lease to calculate placement.
+Provider operations carry typed placement through `toolCallId` and `contentIndex`, or through the containing custom entry's `entryId`. Pimote projects each operation inside its originating assistant row and preserves native content order. Router correlation IDs and native transcript-position metadata stay outside this public seam.
 
 ## Pimote extensions — `@pimote/sdk/pimote`
 

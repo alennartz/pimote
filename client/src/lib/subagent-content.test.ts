@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { PimoteAgentMessage, SubagentContentDeltaEvent, SubagentContentEndEvent, SubagentContentStartEvent } from '../../../shared/src/protocol.js';
-import { applySubagentContentEvent, hydrateSubagentContent } from './subagent-content.js';
+import type { PimoteAgentMessage, StreamingMessage, SubagentContentDeltaEvent, SubagentContentEndEvent, SubagentContentStartEvent } from '../../../shared/src/protocol.js';
+import { applySubagentContentEvent, applySubagentContentToStreaming, hydrateSubagentContent } from './subagent-content.js';
 
 const assistant: PimoteAgentMessage = {
   role: 'assistant',
@@ -43,6 +43,15 @@ const end: SubagentContentEndEvent = {
 };
 
 describe('projected subagent content', () => {
+  it('keeps live projected content in one streaming row', () => {
+    let streaming: StreamingMessage = { role: 'assistant', content: [{ type: 'text', text: 'before' }] };
+    streaming = applySubagentContentToStreaming(streaming, start);
+    streaming = applySubagentContentToStreaming(streaming, request);
+    streaming = applySubagentContentToStreaming(streaming, end);
+    expect(streaming.content).toHaveLength(2);
+    expect(streaming.content[1]).toMatchObject({ type: 'subagent', operationId: 'send-call', subagentState: 'complete' });
+  });
+
   it('keeps one block and surrounding content through request, response, and completion', () => {
     let state = hydrateSubagentContent([assistant]);
     for (const event of [start, request, response]) state = applySubagentContentEvent(state, event);

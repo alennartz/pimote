@@ -28,9 +28,16 @@ export type ParentTopologyEventSink = (event: SubagentTopologyEvent, parentCurso
 type ProviderOperationEvent = Exclude<SubagentProviderEvent, SubagentTopologyEvent>;
 type ProviderFeedEvent = SubagentTopologyEvent | ProviderOperationEvent;
 
+const TOPOLOGY_KINDS = new Set<SubagentTopologyEvent['kind']>(['node_added', 'node_updated', 'node_removed', 'runtime_replaced']);
+const PRESENTATION_TYPES = new Set(['subagent_start', 'subagent_delta', 'subagent_end', 'subagent_snapshot_event']);
+
 function isPresentationEvent(event: ProviderFeedEvent): event is ProviderOperationEvent {
   const candidate = event as unknown as { type?: unknown };
-  return typeof candidate.type === 'string' && candidate.type.startsWith('subagent_');
+  return typeof candidate.type === 'string' && PRESENTATION_TYPES.has(candidate.type);
+}
+
+function isSupportedTopologyEvent(event: ProviderFeedEvent): event is SubagentTopologyEvent {
+  return !isPresentationEvent(event) && TOPOLOGY_KINDS.has((event as unknown as { kind?: SubagentTopologyEvent['kind'] }).kind as SubagentTopologyEvent['kind']);
 }
 
 function providerEventIdentity(event: ProviderFeedEvent): string {
@@ -332,6 +339,10 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
 
   const appendProviderEvent = (event: ProviderFeedEvent): void => {
     if (closed) return;
+    // Older providers replay lifecycle facts (`completion`, `resurrect`,
+    // `teardown`, and similar) through the former semantic overlay channel.
+    // They are not topology and must never cross Pimote's typed wire seam.
+    if (!isPresentationEvent(event) && !isSupportedTopologyEvent(event)) return;
     const identity = providerEventIdentity(event);
     if (seenEventIdentities.has(identity)) return;
     seenEventIdentities.add(identity);

@@ -37,6 +37,7 @@ function fixture() {
     steering: [] as string[],
     followUp: [] as string[],
     branch: saved,
+    messages: [recent.message] as unknown[],
   };
   const publish = (event: AgentSessionEvent) => {
     for (const listener of listeners) listener(event);
@@ -53,7 +54,7 @@ function fixture() {
     sessionFile: '/saved/child.jsonl',
     get messages() {
       snapshotRead();
-      return [recent.message];
+      return data.messages;
     },
     get model() {
       return data.model;
@@ -251,6 +252,46 @@ describe('SessionSurface', () => {
     );
     expect(JSON.stringify(snapshot)).not.toContain('native hidden');
     surface.close();
+  });
+
+  it('does not leak a hidden tail when message_end arrives empty', async () => {
+    const f = fixture();
+    f.data.messages = [
+      {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'send-call', name: 'send', arguments: { message: 'secret native argument' } }],
+      },
+    ];
+    f.data.branch = [
+      {
+        type: 'message',
+        id: 'assistant-entry',
+        parentId: null,
+        timestamp: '2026-01-01T00:00:00.000Z',
+        message: f.data.messages[0],
+      },
+    ] as unknown as typeof f.data.branch;
+    const cursor = { epoch: 'epoch-1', sequence: 0 };
+    const provider = {
+      snapshot: () => ({ manifest: { hiddenToolNames: ['send'], hiddenCustomTypes: [] }, nodes: [], cursor, activeOperations: [] }),
+      subscribe: () => () => {},
+      replay: () => ({ kind: 'events' as const, cursor, events: [] }),
+      rehydrate: async () => {},
+    };
+    const surface = createSessionSurface({
+      sessionId: 'child-session',
+      session: f.native,
+      kind: 'child',
+      capabilities: f.capabilities,
+      subagentProvider: provider,
+      subagentPath: ['worker'],
+    });
+    const live: PimoteSessionEvent[] = [];
+    surface.subscribe((event) => live.push(event));
+    await surface.initialize();
+    f.publish({ type: 'message_end', message: { role: 'assistant', content: [] } } as AgentSessionEvent);
+    expect(JSON.stringify(live)).not.toContain('secret native argument');
+    expect(live.find((event) => event.type === 'message_end')).toBeUndefined();
   });
 
   it('sends deltas live but restores accumulated active state instead of replaying deltas', async () => {

@@ -7,6 +7,7 @@ import type {
   SubagentContentDeltaEvent,
   SubagentContentEndEvent,
   SubagentContentStartEvent,
+  StreamingMessage,
 } from '../../../shared/src/protocol.js';
 
 export type SubagentContentEvent = SubagentContentStartEvent | SubagentContentDeltaEvent | SubagentContentEndEvent;
@@ -69,6 +70,29 @@ function activeFromBlock(message: PimoteAgentMessage, parentMessageId: string, c
 
 function replaceActive(active: readonly ActiveSubagentContent[], next: ActiveSubagentContent): ActiveSubagentContent[] {
   return [...active.filter((item) => item.operationId !== next.operationId), next];
+}
+
+/** Apply one projected lifecycle event to the in-flight assistant row. */
+export function applySubagentContentToStreaming(streaming: StreamingMessage, event: SubagentContentEvent): StreamingMessage {
+  const content = streaming.content.map(cloneContent);
+  const existing = content.findIndex((candidate) => candidate.type === 'subagent' && candidate.operationId === event.operationId);
+  if (event.type === 'subagent_content_start') {
+    const block = cloneContent(event.content);
+    if (existing >= 0) content[existing] = block;
+    else content.splice(Math.min(event.contentIndex, content.length), 0, block);
+    return { ...streaming, content };
+  }
+  const blockIndex = existing >= 0 ? existing : Math.min(event.contentIndex, content.length - 1);
+  if (event.type === 'subagent_content_delta') {
+    const block = content[blockIndex];
+    if (block?.type !== 'subagent') return streaming;
+    content[blockIndex] = { ...block, data: applyDelta(block.data as PimoteSubagentStartData, event.data), subagentState: 'active' };
+    return { ...streaming, content };
+  }
+  const nextBlock = cloneContent(event.content);
+  if (blockIndex >= 0 && blockIndex < content.length) content[blockIndex] = nextBlock;
+  else content.splice(Math.min(event.contentIndex, content.length), 0, nextBlock);
+  return { ...streaming, content };
 }
 
 /** Apply one projected content lifecycle event without native reconciliation. */

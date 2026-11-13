@@ -545,6 +545,57 @@ describe('SessionRegistry', () => {
       expect(session.streamingKey).toMatch(/^msg-\d+$/);
     });
 
+    it('keeps a live projected block in the streaming row until message_end', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent(makeSessionEvent('message_start', 's1', { role: 'assistant' }));
+      const block = {
+        type: 'subagent',
+        operationId: 'send-call',
+        subagentKind: 'send',
+        subagentState: 'active',
+        placement: { toolCallId: 'send-call', contentIndex: 0 },
+        data: { operation: 'send', to: ['worker'], request: 'check', response: '', phase: 'sending' },
+      };
+      registry.handleEvent(
+        makeSessionEvent('subagent_content_start', 's1', {
+          parentMessageId: 'message-0',
+          contentIndex: 0,
+          operationId: 'send-call',
+          kind: 'send',
+          placement: { toolCallId: 'send-call', contentIndex: 0 },
+          content: block,
+        }),
+      );
+      expect(registry.sessions['s1'].messages).toEqual([]);
+      expect(registry.sessions['s1'].streamingMessage?.content).toEqual([block]);
+      registry.handleEvent(
+        makeSessionEvent('subagent_content_delta', 's1', {
+          parentMessageId: 'message-0',
+          contentIndex: 0,
+          operationId: 'send-call',
+          kind: 'send',
+          data: { operation: 'send', field: 'request', delta: ' now' },
+        }),
+      );
+      expect(registry.sessions['s1'].streamingMessage?.content[0]).toMatchObject({ data: { request: 'check now' } });
+      const completed = { ...block, subagentState: 'complete', data: { operation: 'send', to: ['worker'], request: 'check now', response: 'done' } };
+      registry.handleEvent(
+        makeSessionEvent('subagent_content_end', 's1', {
+          parentMessageId: 'message-0',
+          contentIndex: 0,
+          operationId: 'send-call',
+          kind: 'send',
+          state: 'complete',
+          content: completed,
+        }),
+      );
+      expect(registry.sessions['s1'].messages).toEqual([]);
+      expect(registry.sessions['s1'].streamingMessage?.content[0]).toMatchObject({ subagentState: 'complete' });
+      registry.handleEvent(makeSessionEvent('message_end', 's1', { message: { role: 'assistant', content: [completed] } }));
+      expect(registry.sessions['s1'].messages).toHaveLength(1);
+      expect(registry.sessions['s1'].streamingMessage).toBeNull();
+    });
+
     it('message_update subtype start creates content block at contentIndex', () => {
       registry.addSession('s1', '/path', 'proj');
       registry.handleEvent(makeSessionEvent('message_start', 's1', { role: 'assistant' }));

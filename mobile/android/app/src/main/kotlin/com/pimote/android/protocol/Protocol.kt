@@ -297,6 +297,18 @@ data class CallStatusEvent(
     override val type: String = "call_status",
 ) : PimoteEvent
 
+@Serializable
+data class FeedCursor(
+    val epoch: String,
+    val sequence: Long,
+)
+
+@Serializable
+data class SubagentPresentationManifest(
+    val hiddenToolNames: List<String> = emptyList(),
+    val hiddenCustomTypes: List<String> = emptyList(),
+)
+
 // Pimote projects subagent content for the web transcript. Android does not
 // consume transcript rows, but it decodes these events before deliberately
 // discarding them so a wire cut cannot disrupt calls or session control.
@@ -305,6 +317,7 @@ data class CallStatusEvent(
 data class SubagentContentStartEvent(
     val sessionId: String,
     val cursor: Long,
+    val timestamp: String? = null,
     val parentMessageId: String,
     val contentIndex: Int,
     val operationId: String,
@@ -319,6 +332,7 @@ data class SubagentContentStartEvent(
 data class SubagentContentDeltaEvent(
     val sessionId: String,
     val cursor: Long,
+    val timestamp: String? = null,
     val parentMessageId: String,
     val contentIndex: Int,
     val operationId: String,
@@ -332,6 +346,7 @@ data class SubagentContentDeltaEvent(
 data class SubagentContentEndEvent(
     val sessionId: String,
     val cursor: Long,
+    val timestamp: String? = null,
     val parentMessageId: String,
     val contentIndex: Int,
     val operationId: String,
@@ -349,6 +364,9 @@ data class FullResyncEvent(
     val state: JsonElement? = null,
     val messages: List<JsonElement> = emptyList(),
     val activeSubagentContent: List<JsonElement> = emptyList(),
+    val branchEntryIds: List<String>? = null,
+    val streamingMessage: JsonElement? = null,
+    val runningToolCallIds: List<String> = emptyList(),
     override val type: String = "full_resync",
 ) : PimoteEvent
 
@@ -358,8 +376,15 @@ data class SubagentViewSnapshotEvent(
     val sessionId: String,
     val childSessionId: String? = null,
     val path: List<String> = emptyList(),
+    val incarnation: String? = null,
+    val attachmentGeneration: String? = null,
+    val viewCursor: Long = 0,
+    val state: JsonElement? = null,
     val messages: List<JsonElement> = emptyList(),
     val activeSubagentContent: List<JsonElement> = emptyList(),
+    val branchEntryIds: List<String>? = null,
+    val streamingMessage: JsonElement? = null,
+    val runningToolCallIds: List<String> = emptyList(),
     override val type: String = "subagent_view_snapshot",
 ) : PimoteEvent
 
@@ -367,6 +392,8 @@ data class SubagentViewSnapshotEvent(
 @SerialName("subagent_snapshot")
 data class SubagentSnapshotEvent(
     val sessionId: String,
+    val cursor: FeedCursor = FeedCursor(epoch = "", sequence = 0),
+    val manifest: SubagentPresentationManifest = SubagentPresentationManifest(),
     val nodes: List<JsonElement> = emptyList(),
     val activeOperations: List<JsonElement> = emptyList(),
     override val type: String = "subagent_snapshot",
@@ -378,8 +405,37 @@ data class SubagentViewEvent(
     val sessionId: String,
     val childSessionId: String? = null,
     val path: List<String> = emptyList(),
+    val incarnation: String? = null,
+    val attachmentGeneration: String? = null,
+    val viewCursor: Long = 0,
     val event: JsonElement? = null,
     override val type: String = "subagent_view_event",
+) : PimoteEvent
+
+@Serializable
+@SerialName("subagent_view_closed")
+data class SubagentViewClosedEvent(
+    val sessionId: String,
+    val path: List<String> = emptyList(),
+    val incarnation: String? = null,
+    val attachmentGeneration: String? = null,
+    val reason: String? = null,
+    override val type: String = "subagent_view_closed",
+) : PimoteEvent
+
+@Serializable
+@SerialName("subagent_event")
+data class SubagentTopologyEvent(
+    val sessionId: String,
+    val cursor: Long = 0,
+    val timestamp: String? = null,
+    val eventId: String? = null,
+    val path: List<String> = emptyList(),
+    val kind: String = "",
+    val data: JsonElement? = null,
+    val relatedPiEvents: List<JsonElement> = emptyList(),
+    val providerCursor: FeedCursor? = null,
+    override val type: String = "subagent_event",
 ) : PimoteEvent
 
 /**
@@ -416,6 +472,8 @@ object PimoteEventSerializer : JsonContentPolymorphicSerializer<PimoteEvent>(Pim
             "subagent_view_snapshot" -> SubagentViewSnapshotEvent.serializer()
             "subagent_snapshot" -> SubagentSnapshotEvent.serializer()
             "subagent_view_event" -> SubagentViewEvent.serializer()
+            "subagent_view_closed" -> SubagentViewClosedEvent.serializer()
+            "subagent_event" -> SubagentTopologyEvent.serializer()
             else -> throw UnknownPimoteEventTypeException(t)
         }
 }
