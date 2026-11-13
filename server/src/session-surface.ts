@@ -16,6 +16,7 @@ import { completeFileRefs } from './file-references.js';
 import { projectSessionUsage } from './session-usage.js';
 import { attributeDrained, type QueueOwnership } from './queue-ownership.js';
 import { mapTreeNodes, type SessionTreeNode } from './session-tree.js';
+import { createSubagentTranscriptProjector, type SubagentTranscriptProjector } from './subagent-transcript-projector.js';
 
 /** Commands allowed through both root and child session surfaces. */
 export type SessionSurfaceCommand =
@@ -186,6 +187,8 @@ export interface SessionSurface {
   acceptNativeEvent(event: IncomingSdkEvent): void;
   /** Accept a provider operation routed to this session surface. */
   acceptProviderEvent?(event: import('@pimote/sdk/subagents').SubagentProviderEvent): void;
+  /** Attach or replace the provider after root discovery. */
+  setSubagentProvider?(provider: Pick<SubagentPresentationProvider, 'rehydrate' | 'snapshot' | 'subscribe' | 'replay'>): Promise<void>;
   /** Rebuild the transcript/state snapshot and invalidate prior replay positions. */
   refreshSnapshot(): SessionSurfaceSnapshot;
   subscribe(listener: (event: PimoteSessionEvent) => void): () => void;
@@ -270,6 +273,9 @@ function mapStreamingMessage(value: unknown): StreamingMessage | undefined {
 /** A persisted final message already present in a snapshot needs no second
  * delivery from the listener that observed it at the snapshot boundary. */
 function messageIsInSnapshot(event: PimoteSessionEvent, snapshot: SessionSurfaceSnapshot): boolean {
+  if (event.type === 'subagent_content_start' || event.type === 'subagent_content_delta' || event.type === 'subagent_content_end') {
+    return snapshot.messages.some((message) => message.content.some((content) => content.type === 'subagent' && content.operationId === event.operationId));
+  }
   if (event.type !== 'message_end' || event.clientMessageId !== undefined) return false;
   const encoded = JSON.stringify(event.message);
   return snapshot.messages.some(
@@ -403,18 +409,62 @@ function nativeBranchEntryIds(session: BorrowedAgentSession): string[] | undefin
   return Array.isArray(entries) ? entries.flatMap((entry) => (typeof asRecord(entry).id === 'string' ? [asRecord(entry).id as string] : [])) : undefined;
 }
 
-function snapshotFor(options: SessionSurfaceOptions, capabilities: SessionSurfaceCapabilities, cursor: number): SessionSurfaceSnapshot {
+function activeContentForOperation(
+  operation: import('@pimote/sdk/subagents').ActiveSubagentOperation,
+  messages: readonly PimoteAgentMessage[],
+  sessionId: string,
+): import('../../shared/dist/index.js').PimoteActiveSubagentContent {
+  const placement = operation.target.placement;
+  let parentMessageId = `message-${Math.max(
+    0,
+    messages.findIndex((message) => message.role === 'assistant'),
+  )}`;
+  let contentIndex = placement && 'toolCallId' in placement ? placement.contentIndex : 0;
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
+    const message = messages[messageIndex];
+    const projectedIndex = message.content.findIndex((content) => content.type === 'subagent' && content.operationId === operation.target.operationId);
+    if (projectedIndex < 0) continue;
+    parentMessageId = message.entryId ?? `message-${messageIndex}`;
+    contentIndex = projectedIndex;
+    break;
+  }
+  if (placement && 'entryId' in placement) {
+    const index = messages.findIndex((message) => message.entryId === placement.entryId);
+    if (index >= 0 && !messages[index].content.some((content) => content.type === 'subagent' && content.operationId === operation.target.operationId)) {
+      parentMessageId = messages[index].entryId ?? `message-${index}`;
+      contentIndex = Math.min(contentIndex, messages[index].content.length);
+    }
+  } else if (placement && 'toolCallId' in placement) {
+    const index = messages.findIndex((message) => message.content.some((content) => content.toolCallId === placement.toolCallId));
+    if (index >= 0 && parentMessageId.startsWith('message-')) parentMessageId = messages[index].entryId ?? `message-${index}`;
+  }
+  void sessionId;
+  return {
+    parentMessageId,
+    contentIndex,
+    operationId: operation.target.operationId,
+    kind: operation.target.kind,
+    placement: placement ?? { entryId: parentMessageId },
+    data: operation.data as unknown as import('../../shared/dist/index.js').PimoteSubagentStartData,
+  };
+}
+
+function snapshotFor(options: SessionSurfaceOptions, capabilities: SessionSurfaceCapabilities, cursor: number, projector?: SubagentTranscriptProjector): SessionSurfaceSnapshot {
   const session = options.session;
   const branchEntryIds = nativeBranchEntryIds(session);
   const pending = session.state?.pendingToolCalls;
   const pendingToolCallIds = pending && typeof (pending as Set<string>).values === 'function' ? [...(pending as Set<string>)] : [];
   const partial = mapStreamingMessage(session.state?.streamingMessage);
+  const projected = projector?.snapshot();
+  const projectedPartial = partial ? (projector?.projectStreamingMessage?.(partial) ?? partial) : undefined;
+  const messages = [...(projected?.messages ?? fullMessagesFor(options, capabilities))];
   return {
     cursor,
     state: stateFor(session, capabilities),
-    messages: fullMessagesFor(options, capabilities),
+    messages,
+    ...(projected ? { activeSubagentContent: projected.activeOperations.map((operation) => activeContentForOperation(operation, messages, options.sessionId)) } : {}),
     ...(branchEntryIds !== undefined ? { branchEntryIds } : {}),
-    ...(partial ? { streamingMessage: partial } : {}),
+    ...(projectedPartial ? { streamingMessage: projectedPartial } : {}),
     ...(pendingToolCallIds.length > 0 ? { runningToolCallIds: pendingToolCallIds } : {}),
   };
 }
@@ -457,6 +507,14 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     return runner?.getEntryRenderer ? Boolean(runner.getEntryRenderer(customType)) : true;
   };
   const branchEntryIds = (): string[] => nativeBranchEntryIds(options.session) ?? [];
+  let subagentProvider = options.subagentProvider;
+  let providerSnapshot = subagentProvider?.snapshot?.();
+  let projector: SubagentTranscriptProjector | undefined = subagentProvider
+    ? createSubagentTranscriptProjector({
+        sessionId: options.sessionId,
+        manifest: providerSnapshot?.manifest ?? { hiddenToolNames: [], hiddenCustomTypes: [] },
+      })
+    : undefined;
   const eventBuffer =
     options.eventBuffer ??
     new EventBuffer(
@@ -470,6 +528,7 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
   const listeners = new Set<(event: PimoteSessionEvent) => void>();
   const observers = new Map<string, { cursor: number; active: boolean }>();
   let nativeUnsubscribe: (() => void) | undefined;
+  let providerUnsubscribe: (() => void) | undefined;
   let initialized = false;
   let initializing = false;
   let closed = false;
@@ -487,8 +546,16 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     else emit(event);
   };
 
+  const appendProjected = (event: PimoteSessionEvent): void => {
+    if (closed) return;
+    eventBuffer.appendProjectedEvent(event, options.sessionId, receive);
+  };
+
   const mapAndReceive = (sdkEvent: IncomingSdkEvent): void => {
     if (closed) return;
+    const projected = projector?.acceptNativeEvent(sdkEvent) ?? [];
+    for (const event of projected) appendProjected(event);
+    if (projector?.isNativeEventSuppressed?.(sdkEvent)) return;
     eventBuffer.onEvent(sdkEvent, options.sessionId, receive, () => {
       const messages = options.session.messages;
       const last = messages[messages.length - 1];
@@ -496,12 +563,21 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     });
   };
 
+  const receiveProviderEvent = (event: import('@pimote/sdk/subagents').SubagentProviderEvent): void => {
+    if (closed) return;
+    const projected = projector?.acceptProviderEvent(event) ?? [];
+    for (const item of projected) {
+      if (initializing || !initialized) staged.push(item);
+      else appendProjected(item);
+    }
+  };
+
   const ensureSubscription = (): void => {
     if (!listensToNative || nativeUnsubscribe || closed) return;
     nativeUnsubscribe = options.session.subscribe((event) => mapAndReceive(event));
   };
 
-  const readMessages = (): readonly PimoteAgentMessage[] => fullMessagesFor(options, capabilities);
+  const readMessages = (): readonly PimoteAgentMessage[] => projector?.snapshot().messages ?? fullMessagesFor(options, capabilities);
 
   const dispatch = async (command: SessionSurfaceCommand, caller?: SessionSurfaceCallerContext): Promise<unknown> => {
     if (closed) throw new Error('session surface is closed');
@@ -792,26 +868,34 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
   const refreshSnapshot = (): SessionSurfaceSnapshot => {
     if (closed) throw new Error('session surface is closed');
     eventBuffer.invalidateReplay();
-    return snapshotFor(options, capabilities, eventBuffer.currentCursor);
+    const native = fullMessagesFor(options, capabilities);
+    projector?.rehydrate(native);
+    providerSnapshot = subagentProvider?.snapshot?.() ?? providerSnapshot;
+    if (projector && providerSnapshot?.activeOperations) projector.hydrateActiveOperations?.(providerSnapshot.activeOperations);
+    return snapshotFor(options, capabilities, eventBuffer.currentCursor, projector);
   };
 
   const initialize = async (): Promise<SessionSurfaceSnapshot> => {
     if (closed) throw new Error('session surface is closed');
-    if (initialized) return snapshotFor(options, capabilities, eventBuffer.currentCursor);
+    if (initialized) return snapshotFor(options, capabilities, eventBuffer.currentCursor, projector);
     ensureSubscription();
+    if (subagentProvider && !providerUnsubscribe) providerUnsubscribe = subagentProvider.subscribe(receiveProviderEvent as never);
     initializing = true;
     try {
-      // Read every snapshot field only after the native listener is installed.
-      // Native getters can synchronously emit events in tests and during a
-      // runtime rebind, so all such events remain in `staged` until the
-      // boundary cursor is known.
-      const snapshot = snapshotFor(options, capabilities, eventBuffer.currentCursor);
-      snapshot.cursor = eventBuffer.currentCursor;
+      // Native reload is the persistence authority. Project the saved branch
+      // before provider hydration so provider events have a stable placement.
+      projector?.rehydrate(fullMessagesFor(options, capabilities));
+      const provider = subagentProvider;
+      const providerState = provider?.snapshot?.();
+      if (projector && providerState?.activeOperations) projector.hydrateActiveOperations?.(providerState.activeOperations);
+      if (provider && typeof provider.rehydrate === 'function') await provider.rehydrate({ session: options.session, path: options.subagentPath ?? [] });
+      const snapshot = snapshotFor(options, capabilities, eventBuffer.currentCursor, projector);
       initialized = true;
-      // Deliver staged events after the snapshot has been constructed. They
-      // retain their own cursors, and replayable events remain in EventBuffer.
       const pending = staged;
       staged = [];
+      // Provider/native events observed during hydration already participate in
+      // the projected snapshot. Only events not represented by that snapshot
+      // need to cross the first client boundary.
       for (const event of pending) {
         if (!messageIsInSnapshot(event, snapshot)) emit(event);
       }
@@ -851,6 +935,24 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     };
   };
 
+  const setSubagentProvider = async (provider: Pick<SubagentPresentationProvider, 'rehydrate' | 'snapshot' | 'subscribe' | 'replay'>): Promise<void> => {
+    if (closed) throw new Error('session surface is closed');
+    providerUnsubscribe?.();
+    providerUnsubscribe = undefined;
+    subagentProvider = provider;
+    providerSnapshot = provider.snapshot();
+    projector = createSubagentTranscriptProjector({
+      sessionId: options.sessionId,
+      manifest: providerSnapshot.manifest ?? { hiddenToolNames: [], hiddenCustomTypes: [] },
+    });
+    projector.rehydrate(fullMessagesFor(options, capabilities));
+    if (providerSnapshot.activeOperations) projector.hydrateActiveOperations?.(providerSnapshot.activeOperations);
+    providerUnsubscribe = provider.subscribe(receiveProviderEvent);
+    if (typeof provider.rehydrate === 'function') await provider.rehydrate({ session: options.session, path: options.subagentPath ?? [] });
+    providerSnapshot = provider.snapshot();
+    if (providerSnapshot.activeOperations) projector.hydrateActiveOperations?.(providerSnapshot.activeOperations);
+  };
+
   return {
     sessionId: options.sessionId,
     kind: options.kind,
@@ -862,6 +964,11 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     },
     initialize,
     acceptNativeEvent,
+    acceptProviderEvent(event) {
+      const projected = projector?.acceptProviderEvent(event) ?? [];
+      for (const item of projected) appendProjected(item);
+    },
+    setSubagentProvider,
     refreshSnapshot,
     subscribe(listener) {
       if (closed) return () => undefined;
@@ -873,6 +980,8 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
       closed = true;
       nativeUnsubscribe?.();
       nativeUnsubscribe = undefined;
+      providerUnsubscribe?.();
+      providerUnsubscribe = undefined;
       listeners.clear();
       observers.clear();
       staged = [];

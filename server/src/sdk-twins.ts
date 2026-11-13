@@ -15,6 +15,12 @@ import type {
   SubagentSnapshot,
   SubagentStopRequest,
   SubagentTeardownResult,
+  PimoteSubagentPresentationManifest,
+  PimoteSubagentStartData,
+  PimoteSubagentDeltaData,
+  PimoteSubagentFinalData,
+  PimoteActiveSubagentOperation,
+  PimotePersistedSubagentContent,
 } from '../../shared/dist/index.js';
 import type { Card as SdkCard, PanelMessage } from '@pimote/sdk/panels';
 import type { RepoInfo as SdkRepoInfo } from '@pimote/sdk/folders';
@@ -33,6 +39,12 @@ import type {
   SubagentSnapshot as SdkSubagentSnapshot,
   SubagentStopRequest as SdkSubagentStopRequest,
   SubagentTeardownResult as SdkSubagentTeardownResult,
+  SubagentPresentationManifest as SdkSubagentPresentationManifest,
+  SubagentStartData as SdkSubagentStartData,
+  SubagentDeltaData as SdkSubagentDeltaData,
+  SubagentFinalData as SdkSubagentFinalData,
+  ActiveSubagentOperation as SdkActiveSubagentOperation,
+  PersistedSubagentContent as SdkPersistedSubagentContent,
 } from '@pimote/sdk/subagents';
 
 type AssertEqual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
@@ -63,3 +75,9 @@ const _subagentStop: AssertEqual<SubagentStopRequest, SdkSubagentStopRequest> = 
 const _subagentTeardown: AssertEqual<SubagentTeardownResult, SdkSubagentTeardownResult> = true;
 const _subagentResurrectRequest: AssertEqual<SubagentResurrectRequest, SdkSubagentResurrectRequest> = true;
 const _subagentResurrectResult: AssertEqual<SubagentResurrectResult, SdkSubagentResurrectResult> = true;
+const _presentationManifest: AssertEqual<PimoteSubagentPresentationManifest, SdkSubagentPresentationManifest> = true;
+const _presentationStart: AssertEqual<PimoteSubagentStartData, SdkSubagentStartData> = true;
+const _presentationDelta: AssertEqual<PimoteSubagentDeltaData, SdkSubagentDeltaData> = true;
+const _presentationFinal: AssertEqual<PimoteSubagentFinalData, SdkSubagentFinalData> = true;
+const _activeOperation: AssertEqual<PimoteActiveSubagentOperation, SdkActiveSubagentOperation> = true;
+const _persistedContent: AssertEqual<PimotePersistedSubagentContent, SdkPersistedSubagentContent> = true;

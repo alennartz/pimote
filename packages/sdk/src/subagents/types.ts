@@ -1,4 +1,5 @@
 import type { AgentSession, EventBus } from '@earendil-works/pi-coding-agent';
+import type { SubagentOperationKind, SubagentPlacement, SubagentStartData } from './presentation.js';
 
 /** Root-relative identity of a my-pi child runtime. */
 export type AgentPath = readonly string[];
@@ -119,7 +120,8 @@ export type SubagentNodeSnapshot = Readonly<{
   contextFill?: number;
   channels: readonly string[];
   waitingFor: readonly AgentPath[];
-  pendingCorrelations: readonly string[];
+  /** Router-private pending IDs are omitted from presentation snapshots. */
+  pendingCorrelations?: readonly string[];
   hasSubgroup: boolean;
   lastOutput?: string;
   lastError?: string;
@@ -195,6 +197,12 @@ export type SubagentUsage = Readonly<{
 export type SubagentSnapshot = Readonly<{
   cursor: FeedCursor;
   nodes: readonly SubagentNodeSnapshot[];
+  /** Presentation fields are required on SubagentPresentationProvider snapshots. */
+  manifest?: Readonly<{ hiddenToolNames: readonly string[]; hiddenCustomTypes: readonly string[] }>;
+  activeOperations?: readonly Readonly<{
+    target: Readonly<{ operationId: string; kind: SubagentOperationKind; path: AgentPath; placement?: SubagentPlacement }>;
+    data: SubagentStartData;
+  }>[];
 }>;
 
 export type ReplayResult =

@@ -22,6 +22,7 @@
   import type { SemanticBlock, SemanticBlockAction } from '$lib/subagent-semantic.js';
   import { projectSemanticContent, projectSemanticMessage } from '$lib/subagent-semantic-rendering.js';
   import SubagentSemanticBlock from './SubagentSemanticBlock.svelte';
+  import SubagentContent from './SubagentContent.svelte';
 
   const MAX_COLLAPSED_LINES = 10;
   const SKILL_COLLAPSED_LINES = 3;
@@ -320,7 +321,9 @@
           {:else}
             {@const block = item.content}
             {@const blockStreaming = block.streaming ?? false}
-            {#if block.type === 'text'}
+            {#if block.type === 'subagent'}
+              <SubagentContent content={block} />
+            {:else if block.type === 'text'}
               <TextBlock text={block.text ?? ''} streaming={blockStreaming} />
             {:else if block.type === 'thinking'}
               <ThinkingBlock text={block.text ?? ''} streaming={blockStreaming} />
@@ -353,7 +356,15 @@
 {:else if message.role === 'bashExecution'}
   <BashExecution execution={message as FinalBashExecutionMessage} />
 {:else if message.role === 'custom'}
-  {#if semanticMessageBlocks.length > 0}
+  {#if message.content.some((content) => content.type === 'subagent')}
+    <div class="message custom-message">
+      {#each message.content as block (block.operationId ?? block.type)}
+        {#if block.type === 'subagent'}
+          <SubagentContent content={block} />
+        {/if}
+      {/each}
+    </div>
+  {:else if semanticMessageBlocks.length > 0}
     {#each semanticMessageBlocks as block (block.blockId)}
       <SubagentSemanticBlock {block} {viewerPath} onAction={onSemanticAction} />
     {/each}

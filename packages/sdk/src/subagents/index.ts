@@ -51,6 +51,10 @@ export type { DiscoverProviderOptions } from './provider.js';
 export type {
   ActiveSubagentOperation,
   PersistedSubagentContent,
+  SubagentDelegatedChild,
+  SubagentInterruptResult,
+  SubagentInterruptTarget,
+  SubagentResurrectedAgent,
   SubagentAwaitResult,
   SubagentAwaitStatus,
   SubagentCompletionResult,

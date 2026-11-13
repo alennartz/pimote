@@ -297,8 +297,93 @@ data class CallStatusEvent(
     override val type: String = "call_status",
 ) : PimoteEvent
 
+// Pimote projects subagent content for the web transcript. Android does not
+// consume transcript rows, but it decodes these events before deliberately
+// discarding them so a wire cut cannot disrupt calls or session control.
+@Serializable
+@SerialName("subagent_content_start")
+data class SubagentContentStartEvent(
+    val sessionId: String,
+    val cursor: Long,
+    val parentMessageId: String,
+    val contentIndex: Int,
+    val operationId: String,
+    val kind: String,
+    val placement: JsonElement? = null,
+    val content: JsonElement? = null,
+    override val type: String = "subagent_content_start",
+) : PimoteEvent
+
+@Serializable
+@SerialName("subagent_content_delta")
+data class SubagentContentDeltaEvent(
+    val sessionId: String,
+    val cursor: Long,
+    val parentMessageId: String,
+    val contentIndex: Int,
+    val operationId: String,
+    val kind: String,
+    val data: JsonElement? = null,
+    override val type: String = "subagent_content_delta",
+) : PimoteEvent
+
+@Serializable
+@SerialName("subagent_content_end")
+data class SubagentContentEndEvent(
+    val sessionId: String,
+    val cursor: Long,
+    val parentMessageId: String,
+    val contentIndex: Int,
+    val operationId: String,
+    val kind: String,
+    val state: String,
+    val content: JsonElement? = null,
+    override val type: String = "subagent_content_end",
+) : PimoteEvent
+
+/** Transcript snapshots are decoded only to discard projected content. */
+@Serializable
+@SerialName("full_resync")
+data class FullResyncEvent(
+    val sessionId: String,
+    val state: JsonElement? = null,
+    val messages: List<JsonElement> = emptyList(),
+    val activeSubagentContent: List<JsonElement> = emptyList(),
+    override val type: String = "full_resync",
+) : PimoteEvent
+
+@Serializable
+@SerialName("subagent_view_snapshot")
+data class SubagentViewSnapshotEvent(
+    val sessionId: String,
+    val childSessionId: String? = null,
+    val path: List<String> = emptyList(),
+    val messages: List<JsonElement> = emptyList(),
+    val activeSubagentContent: List<JsonElement> = emptyList(),
+    override val type: String = "subagent_view_snapshot",
+) : PimoteEvent
+
+@Serializable
+@SerialName("subagent_snapshot")
+data class SubagentSnapshotEvent(
+    val sessionId: String,
+    val nodes: List<JsonElement> = emptyList(),
+    val activeOperations: List<JsonElement> = emptyList(),
+    override val type: String = "subagent_snapshot",
+) : PimoteEvent
+
+@Serializable
+@SerialName("subagent_view_event")
+data class SubagentViewEvent(
+    val sessionId: String,
+    val childSessionId: String? = null,
+    val path: List<String> = emptyList(),
+    val event: JsonElement? = null,
+    override val type: String = "subagent_view_event",
+) : PimoteEvent
+
 /**
- * Thrown when an event arrives whose `type` is not part of the v1 native
+ * Thrown when an event arrives whose `type` is not part of the v1 native whose `type` is not part of the v1 native
  * client subset. Callers (e.g. WsClient) are expected to filter the firehose
  * before decoding, or catch this and skip.
  */
@@ -324,6 +409,13 @@ object PimoteEventSerializer : JsonContentPolymorphicSerializer<PimoteEvent>(Pim
             "call_ready" -> CallReadyEvent.serializer()
             "call_ended" -> CallEndedEvent.serializer()
             "call_status" -> CallStatusEvent.serializer()
+            "subagent_content_start" -> SubagentContentStartEvent.serializer()
+            "subagent_content_delta" -> SubagentContentDeltaEvent.serializer()
+            "subagent_content_end" -> SubagentContentEndEvent.serializer()
+            "full_resync" -> FullResyncEvent.serializer()
+            "subagent_view_snapshot" -> SubagentViewSnapshotEvent.serializer()
+            "subagent_snapshot" -> SubagentSnapshotEvent.serializer()
+            "subagent_view_event" -> SubagentViewEvent.serializer()
             else -> throw UnknownPimoteEventTypeException(t)
         }
 }

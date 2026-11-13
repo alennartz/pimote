@@ -71,6 +71,7 @@ import { coordinateDownloadUpdate } from '../download-coordinator.js';
 import { handleDownloadNotificationIntent, type DownloadNotificationIntent } from '../download-notification-intent.js';
 import { getActiveSessions } from './persistence.js';
 import { summarizeAssistantRowUsage, type ToolResultUsageIndex } from '../assistant-row-usage.js';
+import { applySubagentContentEvent, hydrateSubagentContent, isSubagentContentEvent, type SubagentContentState } from '../subagent-content.js';
 import {
   EMPTY_SEMANTIC_REDUCTION,
   projectSubagentWireTranscript,
@@ -137,6 +138,8 @@ export interface SubagentAttachmentState {
   /** Stable render key for the child partial, kept separate from the native message. */
   streamingKey: string | null;
   runningToolCallIds: string[];
+  /** Projected subagent blocks and accumulated in-flight operations. */
+  projectedSubagentContent: SubagentContentState;
   /** Last child EventBuffer position delivered by the server. */
   viewCursor: number;
   /** Observer cursor kept separately so reconnect code can reason about gaps. */
@@ -160,6 +163,7 @@ export interface SubagentRootState {
   providerCursor: FeedCursor | null;
   /** Distinguishes an empty authoritative tree from the pre-snapshot race. */
   hierarchySnapshotReceived: boolean;
+  projectedSubagentContent: SubagentContentState;
   semanticEvents: WireSubagentSemanticEvent[];
   semanticReduction: SemanticReductionState;
   semanticTranscript: readonly SemanticTranscriptItem[];
@@ -618,10 +622,21 @@ function hydrateMessageEntryIds(session: Pick<PerSessionState, 'messages' | 'mes
 }
 
 function applyChildNativeEvent(attachment: SubagentAttachmentState, event: PimoteEvent): void {
+  if (isSubagentContentEvent(event)) {
+    const projected = applySubagentContentEvent(attachment.projectedSubagentContent, event);
+    attachment.projectedSubagentContent = projected;
+    attachment.messages = [...projected.messages];
+    attachment.transcript = attachment.messages;
+    attachment.messageKeys = attachment.messages.map((_, index) => `child-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${index}`);
+    attachment.state = { ...attachment.state, messageCount: attachment.messages.length };
+    return;
+  }
   if (event.type === 'full_resync') {
     const full = event as FullResyncEvent;
     attachment.state = cloneSessionState(full.state);
     attachment.messages = [...full.messages];
+    attachment.projectedSubagentContent = hydrateSubagentContent(full.messages, full.activeSubagentContent ?? []);
+    attachment.messages = [...attachment.projectedSubagentContent.messages];
     attachment.branchEntryIds = full.branchEntryIds !== undefined ? [...full.branchEntryIds] : undefined;
     attachment.transcript = attachment.messages;
     attachment.messageKeys = attachment.messages.map((_, index) => `child-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${index}`);
@@ -703,6 +718,8 @@ function applyChildNativeEvent(attachment: SubagentAttachmentState, event: Pimot
         attachment.messages = [...attachment.messages, end.message];
         attachment.messageKeys = [...attachment.messageKeys, `child-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${attachment.messages.length - 1}`];
       }
+      attachment.projectedSubagentContent = hydrateSubagentContent(attachment.messages, attachment.projectedSubagentContent.active);
+      attachment.messages = [...attachment.projectedSubagentContent.messages];
       attachment.transcript = attachment.messages;
       attachment.state = { ...attachment.state, messageCount: attachment.messages.length };
       attachment.streamingMessage = null;
@@ -711,6 +728,8 @@ function applyChildNativeEvent(attachment: SubagentAttachmentState, event: Pimot
     }
     case 'custom_entry': {
       attachment.messages = [...attachment.messages, (event as CustomEntryEvent).message];
+      attachment.projectedSubagentContent = hydrateSubagentContent(attachment.messages, attachment.projectedSubagentContent.active);
+      attachment.messages = [...attachment.projectedSubagentContent.messages];
       attachment.transcript = attachment.messages;
       attachment.messageKeys = [...attachment.messageKeys, `child-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${attachment.messages.length - 1}`];
       attachment.state = { ...attachment.state, messageCount: attachment.messages.length };
@@ -821,6 +840,8 @@ export interface PerSessionState {
   folder: FolderInfo | null;
   firstMessage: string | undefined;
   messages: PimoteAgentMessage[];
+  /** Projected subagent blocks in the mixed assistant transcript. */
+  projectedSubagentContent: SubagentContentState;
   /** Raw native branch at the last root snapshot boundary. */
   branchEntryIds?: readonly string[];
   isStreaming: boolean;
@@ -993,6 +1014,7 @@ export class SessionRegistry {
       nodes: [],
       providerCursor: null,
       hierarchySnapshotReceived: false,
+      projectedSubagentContent: hydrateSubagentContent([]),
       semanticEvents: [],
       semanticReduction: EMPTY_SEMANTIC_REDUCTION,
       semanticTranscript: [],
@@ -1293,6 +1315,7 @@ export class SessionRegistry {
       streamingMessage: snapshot.streamingMessage ? { ...snapshot.streamingMessage, content: snapshot.streamingMessage.content.map((block) => ({ ...block })) } : null,
       streamingKey: snapshot.streamingMessage ? `child-stream-${rootSessionId}-${JSON.stringify(snapshot.path)}-${snapshot.childSessionId}` : null,
       runningToolCallIds: [...(snapshot.runningToolCallIds ?? [])],
+      projectedSubagentContent: hydrateSubagentContent(messages, snapshot.activeSubagentContent ?? []),
       viewCursor: snapshot.viewCursor,
       observerCursor: snapshot.viewCursor,
       draftText: '',
@@ -1344,6 +1367,7 @@ export class SessionRegistry {
       folder: null,
       firstMessage: undefined,
       messages: [],
+      projectedSubagentContent: hydrateSubagentContent([]),
       isStreaming: false,
       streamingRevision: 0,
       isCompacting: false,
@@ -1529,6 +1553,38 @@ export class SessionRegistry {
         else if (node.incarnation !== attachment.incarnation) this.closeSubagentAttachment(root, attachment, 'replaced');
       }
     }
+    const rootMessages = this.sessions[rootSessionId]?.messages ?? root.projectedSubagentContent.messages;
+    const active = (snapshot.activeOperations ?? []).map((operation) => {
+      let parentMessageId = `message-${Math.max(
+        0,
+        rootMessages.findIndex((message) => message.role === 'assistant'),
+      )}`;
+      let contentIndex = operation.target.placement && 'toolCallId' in operation.target.placement ? operation.target.placement.contentIndex : 0;
+      for (let messageIndex = 0; messageIndex < rootMessages.length; messageIndex += 1) {
+        const projectedIndex = rootMessages[messageIndex].content.findIndex((content) => content.type === 'subagent' && content.operationId === operation.target.operationId);
+        if (projectedIndex < 0) continue;
+        parentMessageId = rootMessages[messageIndex].entryId ?? `message-${messageIndex}`;
+        contentIndex = projectedIndex;
+        break;
+      }
+      if (
+        operation.target.placement &&
+        'entryId' in operation.target.placement &&
+        !('toolCallId' in operation.target.placement) &&
+        !rootMessages.some((message) => message.content.some((content) => content.type === 'subagent' && content.operationId === operation.target.operationId))
+      ) {
+        parentMessageId = operation.target.placement.entryId;
+      }
+      return {
+        parentMessageId,
+        contentIndex,
+        operationId: operation.target.operationId,
+        kind: operation.target.kind,
+        ...(operation.target.placement ? { placement: operation.target.placement } : {}),
+        data: operation.data,
+      };
+    });
+    root.projectedSubagentContent = hydrateSubagentContent(rootMessages, active);
     this.rebuildSubagentSemantic(rootSessionId);
   }
 
@@ -1637,6 +1693,8 @@ export class SessionRegistry {
     attachment.childSessionId = snapshot.childSessionId;
     attachment.state = cloneSessionState(snapshot.state);
     attachment.messages = [...(snapshot.messages ?? [])];
+    attachment.projectedSubagentContent = hydrateSubagentContent(attachment.messages, snapshot.activeSubagentContent ?? []);
+    attachment.messages = [...attachment.projectedSubagentContent.messages];
     attachment.branchEntryIds = snapshot.branchEntryIds !== undefined ? [...snapshot.branchEntryIds] : undefined;
     attachment.transcript = attachment.messages;
     attachment.messageKeys = attachment.messages.map((_, index) => `child-${snapshot.sessionId}-${JSON.stringify(snapshot.path)}-${index}`);
@@ -1746,6 +1804,15 @@ export class SessionRegistry {
     }
     if (event.type === 'subagent_view_closed') {
       this.applySubagentViewClosed(event as SubagentViewClosedEvent);
+      return;
+    }
+    if (isSubagentContentEvent(event)) {
+      if (!sessionId || !this.sessions[sessionId]) return;
+      const session = this.sessions[sessionId];
+      const projected = applySubagentContentEvent(session.projectedSubagentContent, event);
+      session.projectedSubagentContent = projected;
+      session.messages = [...projected.messages];
+      session.messageCount = session.messages.length;
       return;
     }
 
@@ -1905,6 +1972,8 @@ export class SessionRegistry {
         // renderer — appended in arrival order; no streaming state involved.
         const entryEvent = event as CustomEntryEvent;
         session.messages = [...session.messages, entryEvent.message];
+        session.projectedSubagentContent = hydrateSubagentContent(session.messages, session.projectedSubagentContent.active);
+        session.messages = [...session.projectedSubagentContent.messages];
         session.messageKeys = [...session.messageKeys, 'msg-' + this._nextMessageKey++];
         session.messageCount++;
         this.rebuildSubagentSemantic(sessionId);
@@ -1985,6 +2054,8 @@ export class SessionRegistry {
         if (message.role === 'toolResult') {
           this.applyToolResults(session, message);
         }
+        session.projectedSubagentContent = hydrateSubagentContent(session.messages, session.projectedSubagentContent.active);
+        session.messages = [...session.projectedSubagentContent.messages];
         this.rebuildSubagentSemantic(sessionId);
         break;
       }
@@ -2074,7 +2145,8 @@ export class SessionRegistry {
         rebuilt.autoCompactionEnabled = state.autoCompactionEnabled;
         rebuilt.messageCount = state.messageCount;
         rebuilt.sessionName = state.sessionName ?? null;
-        rebuilt.messages = messages;
+        rebuilt.projectedSubagentContent = hydrateSubagentContent(messages, resync.activeSubagentContent ?? []);
+        rebuilt.messages = [...rebuilt.projectedSubagentContent.messages];
         rebuilt.branchEntryIds = resync.branchEntryIds !== undefined ? [...resync.branchEntryIds] : undefined;
         rebuilt.firstMessage = this.firstUserMessage(messages);
         rebuilt.status = state.isStreaming ? 'working' : 'idle';

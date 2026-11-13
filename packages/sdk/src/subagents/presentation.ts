@@ -53,10 +53,34 @@ export type SubagentEndData =
   | Readonly<{ operation: 'respond'; body: string; error?: string }>
   | Readonly<{ operation: 'await'; result: SubagentAwaitResult }>;
 
+export type SubagentDelegatedChild = Readonly<{ path: AgentPath; task: string; persona?: string }>;
+
+export type SubagentInterruptTarget = Readonly<{
+  path: AgentPath;
+  output?: string;
+  error?: string;
+}>;
+
+export type SubagentInterruptResult = Readonly<{
+  interrupted: readonly SubagentInterruptTarget[];
+  pending: readonly SubagentInterruptTarget[];
+  failed: readonly SubagentInterruptTarget[];
+}>;
+
+export type SubagentResurrectedAgent = Readonly<{
+  path: AgentPath;
+  sessionId: string;
+  incarnation: string;
+  state: 'idle' | 'running';
+  usage: SubagentUsage;
+  output?: string;
+  error?: string;
+}>;
+
 export type SubagentFiniteData =
-  | Readonly<{ operation: 'delegation'; children: readonly Readonly<{ path: AgentPath; task: string; persona?: string }>[] }>
+  | Readonly<{ operation: 'delegation'; children: readonly SubagentDelegatedChild[] }>
   | Readonly<{ operation: 'completion'; result: SubagentCompletionResult }>
-  | Readonly<{ operation: 'interrupt'; result: Readonly<{ path: AgentPath; status: 'interrupted' | 'already_idle'; output?: string; error?: string }> }>
+  | Readonly<{ operation: 'interrupt'; result: SubagentInterruptResult }>
   | Readonly<{
       operation: 'teardown';
       result: Readonly<{
@@ -72,7 +96,8 @@ export type SubagentFiniteData =
         status: 'removed' | 'already_removed' | 'not_found';
       }>;
     }>
-  | Readonly<{ operation: 'resurrect'; result: Readonly<{ path: AgentPath; sessionId: string; incarnation: string; state: 'idle' | 'running' }> }>;
+  | Readonly<{ operation: 'resurrect'; result: Readonly<{ affectedAgents: readonly SubagentResurrectedAgent[] }> }>
+  | Readonly<{ operation: 'protocol_error'; message: string }>;
 
 export type SubagentFinalData = SubagentEndData | SubagentFiniteData;
 export type SubagentProtocolErrorData = Readonly<{ operationId: string; operation: SubagentOperationKind; message: string }>;
@@ -89,10 +114,13 @@ export type SubagentProviderEvent = SubagentTopologyEvent | SubagentStartEvent |
 export type PersistedSubagentContent = Readonly<{
   operationId: string;
   kind: SubagentOperationKind;
-  placement: SubagentPlacement;
   state: 'complete' | 'error' | 'aborted';
   data: SubagentFinalData;
-}>;
+}> &
+  (
+    | Readonly<{ source: 'tool'; placement: Extract<SubagentPlacement, { toolCallId: string }> }>
+    | Readonly<{ source: 'custom_entry'; placement?: Extract<SubagentPlacement, { entryId: string }> }>
+  );
 
 export type SubagentProviderSnapshot = Readonly<{
   manifest: SubagentPresentationManifest;

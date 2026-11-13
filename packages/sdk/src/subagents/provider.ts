@@ -1,5 +1,8 @@
 import type { ExtensionAPI, EventBus } from '@earendil-works/pi-coding-agent';
-import type { SubagentEventBusOwner, SubagentProvider, SubagentProviderDiscovery, SubagentProviderRequest, SubagentProviderResponse } from './types.js';
+import type { SubagentEventBusOwner, SubagentProviderDiscovery, SubagentProviderRequest } from './types.js';
+import type { SubagentPresentationProvider } from './presentation.js';
+
+type RegisteredProvider = SubagentPresentationProvider;
 
 /** EventBus channel emitted by a Pimote host to discover a provider. */
 export const SUBAGENT_PROVIDER_REQUEST = 'pimote:subagents:request' as const;
@@ -17,15 +20,15 @@ function eventBusOf(owner: SubagentEventBusOwner | ExtensionAPI): Pick<EventBus,
   return owner;
 }
 
-function providerFrom(data: unknown): SubagentProvider | undefined {
+function providerFrom(data: unknown): RegisteredProvider | undefined {
   if (data && typeof data === 'object' && 'provider' in data) {
     const provider = (data as { provider?: unknown }).provider;
-    return provider && typeof provider === 'object' ? (provider as SubagentProvider) : undefined;
+    return provider && typeof provider === 'object' ? (provider as RegisteredProvider) : undefined;
   }
-  return data && typeof data === 'object' ? (data as SubagentProvider) : undefined;
+  return data && typeof data === 'object' ? (data as RegisteredProvider) : undefined;
 }
 
-function response(provider: SubagentProvider): SubagentProviderResponse {
+function response(provider: RegisteredProvider): { provider: RegisteredProvider } {
   return { provider };
 }
 
@@ -45,7 +48,7 @@ interface Registration {
  */
 const registrations = new WeakMap<object, Registration>();
 
-export function registerProvider(owner: SubagentEventBusOwner | ExtensionAPI, provider: SubagentProvider): () => void {
+export function registerProvider(owner: SubagentEventBusOwner | ExtensionAPI, provider: RegisteredProvider): () => void {
   const bus = eventBusOf(owner);
   const key = bus as object;
   const previous = registrations.get(key);
@@ -76,7 +79,7 @@ export function registerProvider(owner: SubagentEventBusOwner | ExtensionAPI, pr
 
 export interface DiscoverProviderOptions {
   /** Called whenever the provider first appears or is replaced. */
-  onProvider?: (provider: SubagentProvider) => void;
+  onProvider?: (provider: RegisteredProvider) => void;
 }
 
 /**
@@ -89,23 +92,23 @@ export interface DiscoverProviderOptions {
  * after installing its response listener, so a provider registered before or
  * during the handshake cannot be missed.
  */
-export function discoverProvider(owner: SubagentEventBusOwner | ExtensionAPI, onProvider: (provider: SubagentProvider) => void): () => void;
+export function discoverProvider(owner: SubagentEventBusOwner | ExtensionAPI, onProvider: (provider: RegisteredProvider) => void): () => void;
 export function discoverProvider(owner: SubagentEventBusOwner | ExtensionAPI, options?: DiscoverProviderOptions): SubagentProviderDiscovery;
 export function discoverProvider(
   owner: SubagentEventBusOwner | ExtensionAPI,
-  callbackOrOptions?: ((provider: SubagentProvider) => void) | DiscoverProviderOptions,
+  callbackOrOptions?: ((provider: RegisteredProvider) => void) | DiscoverProviderOptions,
 ): (() => void) | SubagentProviderDiscovery {
   const bus = eventBusOf(owner);
-  let current: SubagentProvider | undefined;
+  let current: RegisteredProvider | undefined;
   let closed = false;
-  const listeners = new Set<(provider: SubagentProvider | undefined) => void>();
+  const listeners = new Set<(provider: RegisteredProvider | undefined) => void>();
   const callback = typeof callbackOrOptions === 'function' ? callbackOrOptions : callbackOrOptions?.onProvider;
   if (callback)
     listeners.add((provider) => {
       if (provider) callback(provider);
     });
 
-  const publish = (provider: SubagentProvider | undefined) => {
+  const publish = (provider: RegisteredProvider | undefined) => {
     if (closed || provider === current) return;
     current = provider;
     for (const listener of [...listeners]) listener(provider);
@@ -121,20 +124,20 @@ export function discoverProvider(
   };
 
   if (callback) return close;
-  return {
+  const discovery = {
     get provider() {
       return current;
     },
     get current() {
       return current;
     },
-    subscribe(listener) {
+    subscribe(listener: (provider: RegisteredProvider | undefined) => void) {
       if (closed) return () => undefined;
       listeners.add(listener);
       if (current) listener(current);
       return () => listeners.delete(listener);
     },
-    onProvider(listener) {
+    onProvider(listener: (provider: RegisteredProvider | undefined) => void) {
       if (closed) return () => undefined;
       listeners.add(listener);
       if (current) listener(current);
@@ -142,6 +145,7 @@ export function discoverProvider(
     },
     close,
   };
+  return discovery as unknown as SubagentProviderDiscovery;
 }
 
 /** Short alias for hosts that use the request/response verb. */

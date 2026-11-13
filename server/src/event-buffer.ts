@@ -91,12 +91,18 @@ export class EventBuffer {
     this.bufferIfReplayable(pimoteEvent);
   }
 
+  /** Append an already projected event to this surface's cursor stream. */
+  appendProjectedEvent(projectedEvent: PimoteSessionEvent, sessionId: string, sendLive: (event: PimoteSessionEvent) => void): number {
+    const cursor = ++this._cursor;
+    const event = { ...projectedEvent, sessionId, cursor, timestamp: projectedEvent.timestamp ?? new Date().toISOString() } as PimoteSessionEvent;
+    sendLive(event);
+    this.bufferIfReplayable(event);
+    return cursor;
+  }
+
   /**
-   * Append one provider semantic event to this session's replay stream.
-   *
-   * The provider cursor stays nested in `providerCursor` for diagnostics. The
-   * returned cursor belongs to this parent EventBuffer and is allocated before
-   * the event is fanned out, so observers see one atomic parent ordering.
+   * Legacy semantic append retained for old provider callers. New surfaces use
+   * appendProjectedEvent after transcript projection.
    */
   appendSemanticEvent(semanticEvent: SubagentEvent, sessionId: string, sendLive: (event: PimoteSessionEvent) => void): number {
     const cursor = ++this._cursor;
@@ -391,6 +397,7 @@ export class EventBuffer {
       case 'message_update':
       case 'tool_execution_update':
       case 'bash_execution_update':
+      case 'subagent_content_delta':
         break;
 
       default:

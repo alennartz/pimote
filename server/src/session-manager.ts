@@ -1126,6 +1126,8 @@ export class PimoteSessionManager {
     const hadHost = slot.subagentHost !== undefined;
     await this.shutdownSubagentHost(slot, 'replaced');
     if (slot.subagentClosed || this.findMapKeyForSlot(slot) === undefined) return;
+    const rootSurface = this.ensureRootSessionSurface(slot);
+    await rootSurface.setSubagentProvider?.(provider as unknown as Parameters<NonNullable<SessionSurface['setSubagentProvider']>>[0]);
     const host = this.createSubagentHostForSlot(slot, provider);
     slot.subagentProvider = provider;
     slot.subagentHost = host;

@@ -9,6 +9,13 @@ import com.pimote.android.protocol.PimoteCommand
 import com.pimote.android.protocol.PimoteEvent
 import com.pimote.android.protocol.PimoteEventSerializer
 import com.pimote.android.protocol.PimoteResponse
+import com.pimote.android.protocol.SubagentContentStartEvent
+import com.pimote.android.protocol.SubagentContentDeltaEvent
+import com.pimote.android.protocol.SubagentContentEndEvent
+import com.pimote.android.protocol.FullResyncEvent
+import com.pimote.android.protocol.SubagentViewSnapshotEvent
+import com.pimote.android.protocol.SubagentSnapshotEvent
+import com.pimote.android.protocol.SubagentViewEvent
 import com.pimote.android.protocol.UnknownPimoteEventTypeException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -375,6 +382,11 @@ class WsClientImpl(
             val ev = try {
                 json.decodeFromJsonElement(PimoteEventSerializer, element)
             } catch (_: UnknownPimoteEventTypeException) { return } catch (_: Throwable) { return }
+            if (ev is SubagentContentStartEvent || ev is SubagentContentDeltaEvent || ev is SubagentContentEndEvent || ev is FullResyncEvent || ev is SubagentViewSnapshotEvent || ev is SubagentSnapshotEvent || ev is SubagentViewEvent) {
+                // Android has no transcript renderer. Deliberately consume the
+                // projected web-only content and keep call/session events intact.
+                return
+            }
             _events.emit(ev)
         }
     }

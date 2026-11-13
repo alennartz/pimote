@@ -8,6 +8,7 @@ import type {
   SubagentLeaseEvent,
   SubagentNodeSnapshot,
   SubagentProvider,
+  SubagentProviderEvent,
   SubagentSnapshot,
   SubagentTeardownResult,
 } from '@pimote/sdk/subagents';
@@ -24,6 +25,20 @@ import {
 
 /** Semantic events enter the parent surface's replay stream at its cursor. */
 export type ParentSemanticEventSink = (event: SubagentEvent, parentCursor: number) => void;
+type ProviderFeedEvent = SubagentEvent | SubagentProviderEvent;
+
+function isPresentationEvent(event: ProviderFeedEvent): event is SubagentProviderEvent {
+  const candidate = event as unknown as { type?: unknown };
+  return typeof candidate.type === 'string' && candidate.type.startsWith('subagent_');
+}
+
+function providerEventIdentity(event: ProviderFeedEvent): string {
+  if (isPresentationEvent(event)) {
+    const candidate = event as unknown as { type: string; eventId: string; cursor: FeedCursor };
+    return `${candidate.type}:${candidate.eventId}:${candidate.cursor.epoch}:${candidate.cursor.sequence}`;
+  }
+  return semanticEventIdentity(event);
+}
 
 export interface SubagentViewReference {
   readonly path: AgentPath;
@@ -182,7 +197,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
   let started = false;
   let closed = false;
   let starting = false;
-  let stagedProviderEvents: SubagentEvent[] = [];
+  let stagedProviderEvents: ProviderFeedEvent[] = [];
   let providerUnsubscribe: (() => void) | undefined;
   let generation = 0;
   let nextParentCursor: number | undefined;
@@ -192,9 +207,9 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     const copy: SubagentNodeSnapshot = {
       ...node,
       path: clonePath(node.path),
-      channels: Object.freeze([...node.channels]),
-      waitingFor: Object.freeze(node.waitingFor.map((target) => clonePath(target))),
-      pendingCorrelations: Object.freeze([...node.pendingCorrelations]),
+      channels: Object.freeze([...(node.channels ?? [])]),
+      waitingFor: Object.freeze((node.waitingFor ?? []).map((target) => clonePath(target))),
+      ...(node.pendingCorrelations !== undefined ? { pendingCorrelations: Object.freeze([...node.pendingCorrelations]) } : {}),
     };
     nodes.set(pathKey(copy.path), copy);
   };
@@ -287,6 +302,13 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     return undefined;
   };
 
+  const surfaceForPath = (path: AgentPath): SessionSurface | undefined => {
+    if (path.length === 0) return options.parentSurface;
+    const records = recordsByPath.get(pathKey(path));
+    for (const record of records ?? []) if (!record.closed && record.surface) return record.surface;
+    return undefined;
+  };
+
   const resolveProviderEventPosition = (event: SubagentEvent): SubagentEvent => {
     const position = event.transcriptPosition;
     if (!position) return event;
@@ -326,21 +348,34 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     }
   };
 
-  const appendProviderEvent = (event: SubagentEvent): void => {
+  const appendProviderEvent = (event: ProviderFeedEvent): void => {
     if (closed) return;
-    const identity = semanticEventIdentity(event);
+    const identity = providerEventIdentity(event);
     if (seenEventIdentities.has(identity)) return;
     seenEventIdentities.add(identity);
+    if (isPresentationEvent(event)) {
+      const path = (event as SubagentProviderEvent & { target: { path: AgentPath } }).target.path;
+      const surface = path.length === 0 ? options.parentSurface : surfaceForPath(path);
+      // Presentation operations belong to the transcript surface that owns the
+      // logical path. They never enter the root hierarchy overlay stream.
+      surface?.acceptProviderEvent?.(event);
+      return;
+    }
     const boundary = lastSnapshot?.cursor;
     const snapshotCoversEvent = boundary !== undefined && event.cursor.epoch === boundary.epoch && event.cursor.sequence <= boundary.sequence;
     // Historical topology is already represented by the current snapshot.
     // Forward only its semantic history, not removed or replaced incarnations.
-    if (snapshotCoversEvent && (event.kind === 'node_added' || event.kind === 'node_updated' || event.kind === 'node_removed' || event.kind === 'runtime_replaced')) return;
+    const legacyEvent = event as SubagentEvent;
+    if (
+      snapshotCoversEvent &&
+      (legacyEvent.kind === 'node_added' || legacyEvent.kind === 'node_updated' || legacyEvent.kind === 'node_removed' || legacyEvent.kind === 'runtime_replaced')
+    )
+      return;
     updateNodesForEvent(event);
     appendParentEvent(event);
   };
 
-  const receiveProviderEvent = (event: SubagentEvent): void => {
+  const receiveProviderEvent = (event: ProviderFeedEvent): void => {
     if (closed) return;
     if (starting) stagedProviderEvents.push(event);
     else appendProviderEvent(event);
@@ -387,6 +422,8 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
       parentCursor: options.parentCursor(),
       path: record.path,
       incarnation: record.incarnation,
+      subagentProvider: options.provider as unknown as SessionSurfaceOptions['subagentProvider'],
+      subagentPath: record.path,
       stop: async (request) => {
         const expectedSessionId = request.expectedSessionId;
         if (expectedSessionId !== record.lease.session.sessionId) throw new Error('stale child runtime');
@@ -557,7 +594,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     if (starting) throw new Error('subagent host is already starting');
     starting = true;
     stagedProviderEvents = [];
-    providerUnsubscribe = options.provider.subscribe(receiveProviderEvent);
+    providerUnsubscribe = options.provider.subscribe(receiveProviderEvent as (event: SubagentEvent) => void);
     try {
       const snapshot = options.provider.snapshot();
       replaceSnapshotNodes(snapshot);

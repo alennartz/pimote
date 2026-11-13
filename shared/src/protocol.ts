@@ -124,6 +124,33 @@ export type PimoteSubagentOperationKind = 'send' | 'respond' | 'await' | 'delega
 
 export type PimoteSubagentPlacement = { toolCallId: string; contentIndex: number; entryId?: string } | { entryId: string };
 
+export type PimoteSubagentPresentationManifest = Readonly<{
+  hiddenToolNames: readonly string[];
+  hiddenCustomTypes: readonly string[];
+}>;
+
+export type PimoteSubagentInterruptTarget = Readonly<{
+  path: AgentPath;
+  output?: string;
+  error?: string;
+}>;
+
+export type PimoteSubagentInterruptResult = Readonly<{
+  interrupted: readonly PimoteSubagentInterruptTarget[];
+  pending: readonly PimoteSubagentInterruptTarget[];
+  failed: readonly PimoteSubagentInterruptTarget[];
+}>;
+
+export type PimoteSubagentResurrectedAgent = Readonly<{
+  path: AgentPath;
+  sessionId: string;
+  incarnation: string;
+  state: 'idle' | 'running';
+  usage: SubagentUsage;
+  output?: string;
+  error?: string;
+}>;
+
 export type PimoteSubagentStartData =
   | { operation: 'send'; to: AgentPath; request: string; response: string; phase: 'ready' | 'sending' | 'waiting' | 'responding' }
   | { operation: 'respond'; body: string }
@@ -133,20 +160,40 @@ export type PimoteActiveSubagentContent = {
   contentIndex: number;
   operationId: string;
   kind: PimoteSubagentOperationKind;
+  placement?: PimoteSubagentPlacement;
   data: PimoteSubagentStartData;
 };
+
+/** A provider active operation mirrored on the hierarchy snapshot. */
+export type PimoteActiveSubagentOperation = Readonly<{
+  target: Readonly<{
+    operationId: string;
+    kind: PimoteSubagentOperationKind;
+    path: AgentPath;
+    placement?: PimoteSubagentPlacement;
+  }>;
+  data: PimoteSubagentStartData;
+}>;
 export type PimoteSubagentDeltaData =
   | { operation: 'send'; field: 'request' | 'response'; delta: string }
   | { operation: 'send'; phase: 'waiting' | 'responding' }
   | { operation: 'respond'; delta: string }
   | { operation: 'await'; statuses: readonly SubagentAwaitChildStatus[] };
+export type PimotePersistedSubagentContent = Readonly<{
+  operationId: string;
+  kind: PimoteSubagentOperationKind;
+  state: 'complete' | 'error' | 'aborted';
+  data: PimoteSubagentFinalData;
+}> &
+  (Readonly<{ source: 'tool'; placement: { toolCallId: string; contentIndex: number; entryId?: string } }> | Readonly<{ source: 'custom_entry'; placement?: { entryId: string } }>);
+
 export type PimoteSubagentFinalData =
   | { operation: 'send'; to: AgentPath; request: string; response: string; error?: string }
   | { operation: 'respond'; body: string; error?: string }
   | { operation: 'await'; result: { statuses: readonly SubagentAwaitChildStatus[]; interrupted?: boolean; error?: string } }
   | { operation: 'delegation'; children: readonly { path: AgentPath; task: string; persona?: string }[] }
-  | { operation: 'completion'; result: { state: SubagentAwaitState; output?: string; error?: string; usage?: SubagentUsage } }
-  | { operation: 'interrupt'; result: { path: AgentPath; status: 'interrupted' | 'already_idle'; output?: string; error?: string } }
+  | { operation: 'completion'; result: { state: 'idle' | 'errored' | 'dead' | 'stopped'; output?: string; error?: string; usage?: SubagentUsage } }
+  | { operation: 'interrupt'; result: PimoteSubagentInterruptResult }
   | {
       operation: 'teardown';
       result: {
@@ -154,7 +201,7 @@ export type PimoteSubagentFinalData =
         affectedAgents: readonly { path: AgentPath; sessionId: string; incarnation: string; state: SubagentAwaitState; usage: SubagentUsage; output?: string; error?: string }[];
       };
     }
-  | { operation: 'resurrect'; result: { path: AgentPath; sessionId: string; incarnation: string; state: 'idle' | 'running' } }
+  | { operation: 'resurrect'; result: { affectedAgents: readonly PimoteSubagentResurrectedAgent[] } }
   | { operation: 'protocol_error'; message: string };
 
 /** Common fields for projected message content. */
@@ -384,7 +431,8 @@ export type SubagentNode = Readonly<{
   contextFill?: number;
   channels: readonly string[];
   waitingFor: readonly AgentPath[];
-  pendingCorrelations: readonly string[];
+  /** Router-private pending IDs are omitted from presentation snapshots. */
+  pendingCorrelations?: readonly string[];
   hasSubgroup: boolean;
   lastOutput?: string;
   lastError?: string;
@@ -397,6 +445,9 @@ export type SubagentUsageSnapshot = SubagentUsage;
 export type SubagentSnapshot = Readonly<{
   nodes: readonly SubagentNodeSnapshot[];
   cursor: FeedCursor;
+  /** Required on presentation-provider snapshots; omitted by legacy topology callers. */
+  manifest?: PimoteSubagentPresentationManifest;
+  activeOperations?: readonly PimoteActiveSubagentOperation[];
 }>;
 
 export type SubagentEventKind =

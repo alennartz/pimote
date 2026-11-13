@@ -1272,6 +1272,7 @@ export class WsHandler {
       viewCursor: snapshot.cursor,
       state: snapshot.state,
       messages: snapshot.messages,
+      ...(snapshot.activeSubagentContent !== undefined ? { activeSubagentContent: snapshot.activeSubagentContent } : {}),
       ...(snapshot.branchEntryIds !== undefined ? { branchEntryIds: [...snapshot.branchEntryIds] } : {}),
       ...(snapshot.streamingMessage ? { streamingMessage: snapshot.streamingMessage } : {}),
       ...(snapshot.runningToolCallIds ? { runningToolCallIds: snapshot.runningToolCallIds } : {}),
@@ -2480,27 +2481,36 @@ export class WsHandler {
       autoCompactionEnabled: session.autoCompactionEnabled,
       messageCount: session.messages.length,
     };
-    const messages = mapContextEntries(session.sessionManager.buildContextEntries(), rendererRegisteredVisibility(session));
+    let projectedSnapshot: ReturnType<NonNullable<ManagedSlot['sessionSurface']>['refreshSnapshot']> | undefined;
+    try {
+      projectedSnapshot = slot.sessionSurface?.refreshSnapshot();
+    } catch {
+      projectedSnapshot = undefined;
+    }
+    const messages = projectedSnapshot?.messages ?? mapContextEntries(session.sessionManager.buildContextEntries(), rendererRegisteredVisibility(session));
     const branch = typeof session.sessionManager.getBranch === 'function' ? session.sessionManager.getBranch() : undefined;
     const branchEntryIds = branch?.flatMap((entry) => (typeof entry.id === 'string' ? [entry.id] : []));
     // A mid-run snapshot carries the in-flight message and running tool calls.
     // The observer missed their start events, so without them it drops the
     // deltas and tool output that follow.
     const partial = session.isStreaming ? session.state.streamingMessage : undefined;
-    const streamingMessage = (() => {
-      if (partial === undefined) return undefined;
-      if ('content' in partial && Array.isArray(partial.content) && partial.content.length === 0) {
-        const usage = mapAgentMessageUsage(partial);
-        return { role: partial.role, content: [], ...(usage ? { usage } : {}) };
-      }
-      return mapAgentMessage(partial);
-    })();
+    const streamingMessage = projectedSnapshot
+      ? projectedSnapshot.streamingMessage
+      : (() => {
+          if (partial === undefined) return undefined;
+          if ('content' in partial && Array.isArray(partial.content) && partial.content.length === 0) {
+            const usage = mapAgentMessageUsage(partial);
+            return { role: partial.role, content: [], ...(usage ? { usage } : {}) };
+          }
+          return mapAgentMessage(partial);
+        })();
     const runningToolCallIds = [...session.state.pendingToolCalls];
     return {
       type: 'full_resync',
       sessionId: pimoteSessionId,
       state,
       messages,
+      ...(projectedSnapshot?.activeSubagentContent ? { activeSubagentContent: projectedSnapshot.activeSubagentContent } : {}),
       ...(branchEntryIds !== undefined ? { branchEntryIds } : {}),
       ...(streamingMessage ? { streamingMessage } : {}),
       ...(runningToolCallIds.length > 0 ? { runningToolCallIds } : {}),
