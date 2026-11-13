@@ -284,7 +284,7 @@
     <header class="flex items-center gap-2 px-2.5 py-2">
       <div class="min-w-0 flex-1">
         <h2 class="truncate text-sm font-semibold">Panels</h2>
-        <p class="text-muted-foreground text-xs">{hasHierarchy ? `${rootState?.nodes.length ?? 0} live` : 'Extensions'}</p>
+        {#if hasHierarchy}<p class="text-muted-foreground text-xs">{rootState?.nodes.length ?? 0} live</p>{/if}
       </div>
       {#if openCount > 0}<span class="text-muted-foreground text-xs">{openCount} open</span>{/if}
       {#if onClose}
@@ -305,7 +305,7 @@
       {/if}
     </header>
 
-    {#if rootSession}
+    {#if rootSession && hasHierarchy}
       <section class="border-sidebar-border/70 border-b px-2 pb-2" aria-label="Root session">
         <button
           type="button"
@@ -328,8 +328,8 @@
     {/if}
 
     {#if hasHierarchy}
-      <section class="hierarchy-section" aria-label="Subagent hierarchy">
-        <div class="text-muted-foreground px-2 py-2 text-[10px] font-semibold tracking-wider uppercase">Hierarchy</div>
+      <section class="hierarchy-section" aria-label="Subagents">
+        <div class="text-muted-foreground px-2 py-2 text-[10px] font-semibold tracking-wider uppercase">Subagents</div>
         <div class="space-y-0.5">
           {#each rows as row (pathLabel(row.path))}
             <div

@@ -114,7 +114,7 @@ describe('Panel hierarchy navigation', () => {
     target.querySelector<HTMLButtonElement>('button[aria-label="Inspect worker"]')!.click();
     await tick();
 
-    const hierarchy = target.querySelector('[aria-label="Subagent hierarchy"]')!;
+    const hierarchy = target.querySelector('[aria-label="Subagents"]')!;
     const details = target.querySelector('[aria-label="Selected subagent details"]')!;
     expect(details).not.toBeNull();
     expect(hierarchy.contains(details)).toBe(false);
@@ -132,6 +132,23 @@ describe('Panel hierarchy navigation', () => {
     expect(details.textContent).toContain('Turns');
     expect(sessionRegistry.viewedSurface?.kind).toBe('root');
     expect(sessionRegistry.getSubagentAttachment('root', ['worker'])?.messages[0].content[0]).toMatchObject({ type: 'text', text: initialTask });
+  });
+
+  it('hides the root row and section labels when the hierarchy has no children', async () => {
+    sessionRegistry.handleEvent({
+      type: 'subagent_snapshot',
+      sessionId: 'root',
+      cursor: { epoch: 'epoch-1', sequence: 2 },
+      manifest: { hiddenToolNames: [], hiddenCustomTypes: [] },
+      activeOperations: [],
+      nodes: [],
+    });
+    const target = render();
+    await tick();
+
+    expect(target.querySelector('button[aria-label="Show root session"]')).toBeNull();
+    expect(target.querySelector('[aria-label="Subagents"]')).toBeNull();
+    expect(target.textContent).not.toContain('Extensions');
   });
 
   it.each(['sidebar', 'drawer'] as const)('returns to the root from the %s without releasing the child', async (presentation) => {
