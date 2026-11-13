@@ -42,17 +42,14 @@ describe('subagent transcript projector', () => {
     expect(JSON.stringify(current.snapshot())).not.toContain('secret native argument');
   });
 
-  it('projects custom completion payloads attached to a hidden tool result into the assistant row', () => {
+  it('projects an interrupting message attached to a hidden await result into the assistant row', () => {
     const current = projector();
     current.rehydrate([
-      assistant(
-        [
-          { type: 'text', text: 'before' },
-          { type: 'tool_call', toolCallId: 'await-call', toolName: 'await_agents', args: {} },
-          { type: 'text', text: 'after' },
-        ],
-        'assistant-entry',
-      ),
+      assistant([
+        { type: 'text', text: 'before' },
+        { type: 'tool_call', toolCallId: 'await-call', toolName: 'await_agents', args: {} },
+        { type: 'text', text: 'after' },
+      ]),
       {
         role: 'toolResult',
         entryId: 'await-result-entry',
@@ -61,14 +58,56 @@ describe('subagent transcript projector', () => {
     ]);
     current.acceptProviderEvent({
       type: 'subagent_snapshot_event',
-      eventId: 'await-completion',
+      eventId: 'await-message',
       cursor: cursor(1),
-      target: { operationId: 'completion-1', kind: 'completion', path: [], placement: { entryId: 'await-result-entry' } },
+      target: { operationId: 'incoming-message', kind: 'send', path: [], placement: { entryId: 'await-result-entry' } },
       state: 'complete',
-      data: { operation: 'completion', result: { state: 'idle', output: 'done' } },
+      data: { operation: 'send', to: [], request: 'Please inspect the failure.', response: '' },
     });
-    expect(current.snapshot().messages[0]?.content.map((block) => block.type)).toEqual(['text', 'subagent', 'text']);
-    expect(current.snapshot().messages).not.toContainEqual(expect.objectContaining({ entryId: 'await-result-entry' }));
+    const messages = current.snapshot().messages;
+    expect(messages[0]?.content.map((block) => block.type)).toEqual(['text', 'subagent', 'text']);
+    expect(messages[0]?.content[1]).toMatchObject({ data: { operation: 'send', request: 'Please inspect the failure.' } });
+    expect(messages).not.toContainEqual(expect.objectContaining({ entryId: 'await-result-entry' }));
+  });
+
+  it.each([false, true])('keeps returned child results in one await block across completion and replay, interrupted=%s', (interrupted) => {
+    const current = projector();
+    const nativeMessages: PimoteAgentMessage[] = [
+      assistant([
+        { type: 'text', text: 'before' },
+        { type: 'tool_call', toolCallId: 'await-call', toolName: 'await_agents', args: { agents: ['worker'] } },
+        { type: 'text', text: 'after' },
+      ]),
+    ];
+    current.rehydrate(nativeMessages);
+    const awaitTarget = { operationId: 'await-call', kind: 'await', path: [], placement: { toolCallId: 'await-call', contentIndex: 1 } } as const;
+    current.acceptProviderEvent({
+      type: 'subagent_start',
+      eventId: 'await-start',
+      cursor: cursor(1),
+      target: awaitTarget,
+      data: { operation: 'await', requested: [['worker']], statuses: [] },
+    });
+    const statuses = interrupted
+      ? ([
+          { path: ['worker'], state: 'running' },
+          { path: ['scout'], state: 'errored', output: 'Partial findings.', error: 'Connection lost.' },
+        ] as const)
+      : ([{ path: ['worker'], state: 'idle', output: 'Work completed.' }] as const);
+    const data = { operation: 'await', result: { statuses, ...(interrupted ? { interrupted: true } : {}) } } as const;
+    current.acceptProviderEvent({ type: 'subagent_end', eventId: 'await-end', cursor: cursor(2), target: awaitTarget, state: 'complete', data });
+    const saved = { type: 'subagent_snapshot_event', eventId: 'await-saved', cursor: cursor(3), target: awaitTarget, state: 'complete', data } as const;
+    current.acceptProviderEvent(saved);
+    const restored = projector();
+    restored.rehydrate(nativeMessages);
+    restored.acceptProviderEvent(saved);
+
+    for (const snapshot of [current.snapshot(), restored.snapshot()]) {
+      const content = snapshot.messages[0]?.content ?? [];
+      expect(content.filter((block) => block.type === 'subagent')).toEqual([expect.objectContaining({ operationId: 'await-call', subagentKind: 'await', data })]);
+      expect(content[0]).toMatchObject({ text: 'before' });
+      expect(content.at(-1)).toMatchObject({ text: 'after' });
+    }
   });
 
   it('projects persisted tool payloads into the originating assistant row', () => {
