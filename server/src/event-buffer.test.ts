@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { EventBuffer, type IncomingSdkEvent } from './event-buffer.js';
 import type { PimoteSessionEvent } from '../../shared/dist/index.js';
-import type { SubagentEvent } from '@pimote/sdk/subagents';
 
 describe('EventBuffer', () => {
   const SESSION_ID = 'test-session-1';
@@ -73,73 +72,6 @@ describe('EventBuffer', () => {
       // Should contain: agent_start, turn_start, message_start, message_end,
       //                 tool_execution_start, tool_execution_end, turn_end, agent_end
       expect(bufferedTypes).toEqual(['agent_start', 'turn_start', 'message_start', 'message_end', 'tool_execution_start', 'tool_execution_end', 'turn_end', 'agent_end']);
-    });
-  });
-
-  describe('semantic transcript positions', () => {
-    const fact = (sessionId: string, afterEntryId: string | null): SubagentEvent => ({
-      eventId: 'notice',
-      cursor: { epoch: 'provider', sequence: 1 },
-      path: ['worker'],
-      relatedPiEvents: [{ sessionId, kind: 'custom_message' }],
-      transcriptPosition: { sessionId, afterEntryId },
-      kind: 'message_thread',
-      data: { phase: 'received', from: ['worker'], to: [], text: 'Review complete.', responseExpected: false },
-    });
-
-    it('preserves the insertion slot when later messages arrive and the event replays', () => {
-      const messages = ['first'];
-      const branch = ['first', 'label'];
-      const buffer = new EventBuffer(
-        16,
-        undefined,
-        0,
-        () => messages,
-        () => branch,
-      );
-      const live: PimoteSessionEvent[] = [];
-      buffer.appendSemanticEvent(fact(SESSION_ID, 'label'), SESSION_ID, (event) => live.push(event));
-      messages.push('later');
-      branch.push('later');
-
-      const event = live[0];
-      if (event.type !== 'subagent_event') throw new Error('missing semantic event');
-      expect(event.transcriptPosition).toMatchObject({ sessionId: SESSION_ID, afterEntryId: 'label', messageIndex: 1 });
-      const replay = buffer.replay(0)?.[0];
-      expect(replay?.type === 'subagent_event' && replay.transcriptPosition).toEqual(event.transcriptPosition);
-    });
-
-    it('resolves against projected message order after compaction', () => {
-      const buffer = new EventBuffer(
-        16,
-        undefined,
-        0,
-        () => ['summary', 'kept', 'later'],
-        () => ['kept', 'label', 'summary', 'later'],
-      );
-      const live: PimoteSessionEvent[] = [];
-      buffer.appendSemanticEvent(fact(SESSION_ID, 'label'), SESSION_ID, (event) => live.push(event));
-      const event = live[0];
-      expect(event.type === 'subagent_event' && event.transcriptPosition?.messageIndex).toBe(2);
-    });
-
-    it('does not invent an offset for another surface or an absent branch boundary', () => {
-      const buffer = new EventBuffer(
-        16,
-        undefined,
-        0,
-        () => ['first'],
-        () => ['first'],
-      );
-      const live: PimoteSessionEvent[] = [];
-      for (const event of [fact('child', 'first'), fact(SESSION_ID, 'abandoned'), fact(SESSION_ID, null)]) {
-        buffer.appendSemanticEvent(event, SESSION_ID, (mapped) => live.push(mapped));
-      }
-      const positions = live.map((event) => (event.type === 'subagent_event' ? event.transcriptPosition : undefined));
-      expect(positions[0]).toMatchObject({ sessionId: 'child', afterEntryId: 'first' });
-      expect(positions[0]?.messageIndex).toBeUndefined();
-      expect(positions[1]?.messageIndex).toBeUndefined();
-      expect(positions[2]?.messageIndex).toBe(0);
     });
   });
 

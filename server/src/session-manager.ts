@@ -1101,7 +1101,7 @@ export class PimoteSessionManager {
       parentSurface,
       parentCursor: () => slot.sessionState.eventBuffer.currentCursor,
       emitParentEvent: (event) => {
-        slot.sessionState.eventBuffer.appendSemanticEvent(event, slot.sessionState.id, (mapped) => sendSlotEvent(slot, mapped));
+        slot.sessionState.eventBuffer.appendTopologyEvent(event, slot.sessionState.id, (mapped) => sendSlotEvent(slot, mapped));
       },
       emitViewChange: (connectionId, change, incarnation, viewCursor) => {
         slot.subagentViewListeners?.get(connectionId)?.(change, incarnation, viewCursor);

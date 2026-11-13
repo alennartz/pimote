@@ -1,7 +1,7 @@
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type { SubagentEvent, SubagentTranscriptPosition } from '@pimote/sdk/subagents';
-import type { PimoteSessionEvent } from '../../shared/dist/index.js';
+import type { PimoteSessionEvent, SubagentTopologyEvent } from '../../shared/dist/index.js';
 import { mapAgentMessage, mapAgentMessageUsage, mapCustomEntry, type CustomEntryVisibility } from './message-mapper.js';
 
 export interface TreeNavigationStartEvent {
@@ -100,11 +100,8 @@ export class EventBuffer {
     return cursor;
   }
 
-  /**
-   * Legacy semantic append retained for old provider callers. New surfaces use
-   * appendProjectedEvent after transcript projection.
-   */
-  appendSemanticEvent(semanticEvent: SubagentEvent, sessionId: string, sendLive: (event: PimoteSessionEvent) => void): number {
+  /** Append one topology event to this surface's replay stream. */
+  appendTopologyEvent(semanticEvent: SubagentEvent, sessionId: string, sendLive: (event: PimoteSessionEvent) => void): number {
     const cursor = ++this._cursor;
     const event = {
       sessionId,
@@ -114,13 +111,10 @@ export class EventBuffer {
       eventId: semanticEvent.eventId,
       path: semanticEvent.path,
       relatedPiEvents: semanticEvent.relatedPiEvents,
-      ...(semanticEvent.transcriptPosition
-        ? { transcriptPosition: Object.freeze({ ...(this.resolveTranscriptPosition(semanticEvent.transcriptPosition, sessionId) ?? semanticEvent.transcriptPosition) }) }
-        : {}),
       kind: semanticEvent.kind,
       data: semanticEvent.data,
       providerCursor: semanticEvent.cursor,
-    } as PimoteSessionEvent;
+    } as SubagentTopologyEvent;
     this.pushToBuffer(event);
     sendLive(event);
     return cursor;

@@ -19,9 +19,6 @@
   import { collapseDuplicateTextBlocks } from '$lib/assistant-text-dedupe.js';
   import CostBreakdownPopover from './CostBreakdownPopover.svelte';
   import { observeFullyOffscreen } from '$lib/auto-collapse.js';
-  import type { SemanticBlock, SemanticBlockAction } from '$lib/subagent-semantic.js';
-  import { projectSemanticContent, projectSemanticMessage } from '$lib/subagent-semantic-rendering.js';
-  import SubagentSemanticBlock from './SubagentSemanticBlock.svelte';
   import SubagentContent from './SubagentContent.svelte';
 
   const MAX_COLLAPSED_LINES = 10;
@@ -42,8 +39,6 @@
     message,
     streaming = false,
     messageKey = '',
-    messageIndex,
-    viewerPath = [],
     assistantRowUsage = null,
     sessionId = '',
     abandonedBranchCount = 0,
@@ -52,15 +47,11 @@
     store,
     onRedo,
     onFork,
-    semanticBlocks = [],
     toolExecutions = {},
-    onSemanticAction,
   }: {
     message: PimoteAgentMessage | StreamingMessage;
     streaming?: boolean;
     messageKey?: string;
-    messageIndex?: number;
-    viewerPath?: readonly string[];
     assistantRowUsage?: AssistantRowUsage | null;
     sessionId?: string;
     abandonedBranchCount?: number;
@@ -69,11 +60,8 @@
     store?: Pick<BranchTreeStore, 'navigate' | 'openFocused'>;
     onRedo?: (entryId: string, opts?: { compactionPrompt?: string }) => void | Promise<void>;
     onFork?: (entryId: string) => void | Promise<void>;
-    /** Semantic overlays assigned to this native message. */
-    semanticBlocks?: readonly SemanticBlock[];
     /** Tool executions for the selected surface, not the root registry by default. */
     toolExecutions?: Readonly<Record<string, MessageToolExecution>>;
-    onSemanticAction?: (action: SemanticBlockAction) => void;
   } = $props();
   let userMenuOpen = $state(false);
   let customExpanded = $state(false);
@@ -87,12 +75,6 @@
   // final answer); collapse the duplicate before rendering, copying, or
   // speaking it.
   let visibleContent = $derived(message.role === 'assistant' ? collapseDuplicateTextBlocks(message.content) : message.content);
-  let nativeMessage = $derived(message as PimoteAgentMessage);
-  let semanticContent = $derived.by(() =>
-    message.role === 'assistant' || message.role === 'toolResult' ? projectSemanticContent(nativeMessage, visibleContent, semanticBlocks, sessionId) : [],
-  );
-  let semanticToolResultBlocks = $derived(semanticContent.filter((item) => item.kind === 'semantic').map((item) => item.block));
-  let semanticMessageBlocks = $derived.by(() => projectSemanticMessage(nativeMessage, semanticBlocks, sessionId, messageIndex));
 
   let hasSpeakableText = $derived(message.role === 'assistant' && !streaming && visibleContent.some((c) => c.type === 'text' && c.text));
 
@@ -109,12 +91,9 @@
   );
 
   let textContent = $derived(
-    semanticContent
-      .map((item) => {
-        if (item.kind === 'semantic') return item.block.transcriptText;
-        return item.content.type === 'text' && item.content.text ? item.content.text : '';
-      })
-      .filter((text) => text.length > 0)
+    visibleContent
+      .filter((content) => content.type === 'text' && content.text)
+      .map((content) => content.text!)
       .join('\n\n'),
   );
 
@@ -175,13 +154,7 @@
 </script>
 
 {#if message.role === 'toolResult'}
-  {#if semanticToolResultBlocks.length > 0}
-    {#each semanticToolResultBlocks as block (block.blockId)}
-      <SubagentSemanticBlock {block} {viewerPath} onAction={onSemanticAction} />
-    {/each}
-  {:else}
-    <!-- Tool results are displayed inline with their tool calls — skip standalone rendering -->
-  {/if}
+  <!-- Tool results are displayed inline with their tool calls — skip standalone rendering -->
 {:else if message.role === 'user'}
   <div class="message user-message">
     {#if entryId && showNavigationMenu}
@@ -315,33 +288,28 @@
             {/if}
           </div>
         {/if}
-        {#each semanticContent as item, i (item.kind === 'semantic' ? item.block.blockId : `native-${i}`)}
-          {#if item.kind === 'semantic'}
-            <SubagentSemanticBlock block={item.block} {viewerPath} onAction={onSemanticAction} />
-          {:else}
-            {@const block = item.content}
-            {@const blockStreaming = block.streaming ?? false}
-            {#if block.type === 'subagent'}
-              <SubagentContent content={block} />
-            {:else if block.type === 'text'}
-              <TextBlock text={block.text ?? ''} streaming={blockStreaming} />
-            {:else if block.type === 'thinking'}
-              <ThinkingBlock text={block.text ?? ''} streaming={blockStreaming} />
-            {:else if block.type === 'tool_call'}
-              {@const exec = block.toolCallId ? toolExecutions[block.toolCallId] : undefined}
-              <ToolCall
-                content={block}
-                streaming={blockStreaming}
-                inProgress={exec?.status === 'running'}
-                partialResult={exec?.partialResult ?? ''}
-                result={exec?.status === 'completed' ? exec.result : undefined}
-                data={exec?.data}
-                isError={exec?.isError}
-                durationMs={exec?.durationMs}
-              />
-            {:else if block.type === 'tool_result'}
-              <ToolCall content={block} data={block.data} />
-            {/if}
+        {#each visibleContent as block, i (`native-${i}`)}
+          {@const blockStreaming = block.streaming ?? false}
+          {#if block.type === 'subagent'}
+            <SubagentContent content={block} />
+          {:else if block.type === 'text'}
+            <TextBlock text={block.text ?? ''} streaming={blockStreaming} />
+          {:else if block.type === 'thinking'}
+            <ThinkingBlock text={block.text ?? ''} streaming={blockStreaming} />
+          {:else if block.type === 'tool_call'}
+            {@const exec = block.toolCallId ? toolExecutions[block.toolCallId] : undefined}
+            <ToolCall
+              content={block}
+              streaming={blockStreaming}
+              inProgress={exec?.status === 'running'}
+              partialResult={exec?.partialResult ?? ''}
+              result={exec?.status === 'completed' ? exec.result : undefined}
+              data={exec?.data}
+              isError={exec?.isError}
+              durationMs={exec?.durationMs}
+            />
+          {:else if block.type === 'tool_result'}
+            <ToolCall content={block} data={block.data} />
           {/if}
         {/each}
         {#if isAbortedAssistant}
@@ -364,10 +332,6 @@
         {/if}
       {/each}
     </div>
-  {:else if semanticMessageBlocks.length > 0}
-    {#each semanticMessageBlocks as block (block.blockId)}
-      <SubagentSemanticBlock {block} {viewerPath} onAction={onSemanticAction} />
-    {/each}
   {:else}
     <!-- Custom message (extension-injected, e.g. subagent results) -->
     <div class="message custom-message">

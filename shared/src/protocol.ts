@@ -1766,7 +1766,7 @@ export type PimoteSessionEvent =
   | ExtensionErrorEvent
   | TreeNavigationStartEvent
   | TreeNavigationEndEvent
-  | SubagentSemanticEvent;
+  | SubagentTopologyEvent;
 
 /** Sent to each other sender when an abort clears the shared queue. The client restores these texts as drafts. */
 export interface QueuedDraftsRestoredEvent {
@@ -1989,26 +1989,16 @@ export interface SubagentViewClosedEvent {
   reason: 'released' | 'replaced' | 'unavailable' | 'teardown';
 }
 
-/** One native custom display occurrence reconstructed from current message metadata. */
-export type SubagentNativeOccurrence = Readonly<{
-  sessionId: string;
-  entryId?: string;
-  messageIndex: number;
-}>;
-
-/** Semantic provider event projected into the parent session replay stream. */
-type WithoutProviderCursor<T> = T extends unknown ? Omit<T, 'cursor'> : never;
-export type SubagentSemanticEvent = WithoutProviderCursor<SubagentEvent> &
-  SessionEventBase & {
-    type: 'subagent_event';
-    /** Client-reconstructed native display occurrence, not a provider fact ID. */
-    nativeOccurrence?: SubagentNativeOccurrence;
-    /** Provider cursor retained for diagnostics; replay uses the parent cursor above. */
-    providerCursor?: FeedCursor;
-  };
-
-export type SubagentWireEvent = SubagentSemanticEvent;
-export type SubagentEventMessage = SubagentSemanticEvent;
+/** Topology-only provider event projected into the parent replay stream. */
+export type SubagentTopologyEvent = SessionEventBase & {
+  type: 'subagent_event';
+  eventId: string;
+  path: AgentPath;
+  kind: 'node_added' | 'node_updated' | 'node_removed' | 'runtime_replaced';
+  data: Extract<SubagentEventData, { kind: 'node_added' | 'node_updated' | 'node_removed' | 'runtime_replaced' }>['data'];
+  relatedPiEvents: readonly PiEventRef[];
+  providerCursor?: FeedCursor;
+};
 
 export interface PanelUpdateEvent {
   type: 'panel_update';

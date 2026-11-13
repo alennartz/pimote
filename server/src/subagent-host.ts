@@ -12,7 +12,7 @@ import type {
   SubagentSnapshot,
   SubagentTeardownResult,
 } from '@pimote/sdk/subagents';
-import { semanticEventIdentity, type PimoteSessionEvent } from '../../shared/dist/index.js';
+import type { PimoteSessionEvent } from '../../shared/dist/index.js';
 import {
   createSessionSurface,
   type SessionSurface,
@@ -37,7 +37,7 @@ function providerEventIdentity(event: ProviderFeedEvent): string {
     const candidate = event as unknown as { type: string; eventId: string; cursor: FeedCursor };
     return `${candidate.type}:${candidate.eventId}:${candidate.cursor.epoch}:${candidate.cursor.sequence}`;
   }
-  return semanticEventIdentity(event);
+  return `${event.kind}:${event.eventId}:${event.cursor.epoch}:${event.cursor.sequence}`;
 }
 
 export interface SubagentViewReference {

@@ -54,14 +54,13 @@ import type {
   SubagentNodeSnapshot,
   SubagentSnapshot,
   SubagentSnapshotEvent,
-  SubagentSemanticEvent as WireSubagentSemanticEvent,
+  SubagentTopologyEvent as WireSubagentTopologyEvent,
   SubagentViewSnapshot,
   SubagentViewEvent,
   SubagentViewClosedEvent,
   SubagentOpenViewResponseData,
 } from '@pimote/shared';
-import { semanticEventIdentity } from '@pimote/shared';
-import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+
 import { connection, isSessionNotFoundError } from './connection.svelte.js';
 import { commandStore } from './command-store.svelte.js';
 import { setEditorText } from './input-bar.svelte.js';
@@ -72,14 +71,6 @@ import { handleDownloadNotificationIntent, type DownloadNotificationIntent } fro
 import { getActiveSessions } from './persistence.js';
 import { summarizeAssistantRowUsage, type ToolResultUsageIndex } from '../assistant-row-usage.js';
 import { applySubagentContentEvent, hydrateSubagentContent, isSubagentContentEvent, type SubagentContentState } from '../subagent-content.js';
-import {
-  EMPTY_SEMANTIC_REDUCTION,
-  projectSubagentWireTranscript,
-  reduceSubagentWireSemanticEvents,
-  type NativeTranscriptEntry,
-  type SemanticReductionState,
-  type SemanticTranscriptItem,
-} from '../subagent-semantic.js';
 
 /** Maximum UTF-8 bytes retained from live bash deltas per execution. */
 export const MAX_BASH_LIVE_OUTPUT_BYTES = 256 * 1024;
@@ -105,7 +96,7 @@ function sameAgentPath(left: AgentPath | null | undefined, right: AgentPath | nu
   return left !== null && left !== undefined && right !== null && right !== undefined && left.length === right.length && left.every((part, index) => part === right[index]);
 }
 
-function isSubagentTopologyEvent(event: WireSubagentSemanticEvent): boolean {
+function isSubagentTopologyEvent(event: WireSubagentTopologyEvent): boolean {
   return event.kind === 'node_added' || event.kind === 'node_updated' || event.kind === 'node_removed' || event.kind === 'runtime_replaced';
 }
 
@@ -147,10 +138,6 @@ export interface SubagentAttachmentState {
   draftText: string;
   closed: boolean;
   closeReason?: SubagentAttachmentCloseReason;
-  /** Semantic overlays emitted in the child surface, if any. */
-  semanticEvents: WireSubagentSemanticEvent[];
-  semanticReduction: SemanticReductionState;
-  semanticTranscript: readonly SemanticTranscriptItem[];
   toolExecutions: Record<
     string,
     { name: string; args: unknown; partialResult: string; status: 'running' | 'completed'; result?: unknown; data?: unknown; isError?: boolean; durationMs?: number }
@@ -164,9 +151,6 @@ export interface SubagentRootState {
   /** Distinguishes an empty authoritative tree from the pre-snapshot race. */
   hierarchySnapshotReceived: boolean;
   projectedSubagentContent: SubagentContentState;
-  semanticEvents: WireSubagentSemanticEvent[];
-  semanticReduction: SemanticReductionState;
-  semanticTranscript: readonly SemanticTranscriptItem[];
   attachments: Record<string, SubagentAttachmentState>;
   /** Child events received before their open/snapshot response. */
   pendingViewEvents: Record<string, SubagentViewEvent[]>;
@@ -349,254 +333,6 @@ function rebuildToolExecutionsFromMessages(messages: readonly PimoteAgentMessage
     };
   }
   return executions;
-}
-
-function nativeEntriesForMessages(sessionId: string, messages: readonly PimoteAgentMessage[]): NativeTranscriptEntry[] {
-  const entries: NativeTranscriptEntry[] = [];
-  messages.forEach((message, messageIndex) => {
-    if (message.display === false) return;
-    const id = message.entryId ?? `message-${messageIndex}`;
-    const semanticEventIds =
-      message.role === 'custom'
-        ? semanticFactCandidates(message.details).flatMap((fact) => {
-            const eventId = fact && typeof fact === 'object' ? (fact as { eventId?: unknown }).eventId : undefined;
-            return typeof eventId === 'string' ? [eventId] : [];
-          })
-        : [];
-    const toolBlocks = message.content.filter((block) => (block.type === 'tool_call' || block.type === 'tool_result') && block.toolCallId);
-    const text = message.content
-      .map((block) => (block.type === 'text' || block.type === 'thinking' ? (block.text ?? '') : block.type === 'tool_result' ? String(block.result ?? '') : ''))
-      .filter((part) => part.length > 0)
-      .join('\\n');
-    // A Pi entry that contains a tool call/result is represented by the
-    // tool-shaped entry itself. Adding a second generic entry with the same
-    // id would let a provenance reference hide unrelated assistant text.
-    if (toolBlocks.length === 0) {
-      const kind: NativeTranscriptEntry['kind'] = message.role === 'custom' ? 'custom_message' : message.role === 'bashExecution' ? 'lifecycle' : 'message';
-      entries.push({ sessionId, id, messageIndex, kind, ...(semanticEventIds.length > 0 ? { semanticEventIds } : {}), ...(text ? { text } : {}) });
-    } else {
-      if (text) entries.push({ sessionId, id: `${id}:text`, messageIndex, kind: 'message', text });
-      for (const block of toolBlocks) {
-        entries.push({
-          sessionId,
-          id,
-          messageIndex,
-          toolCallId: block.toolCallId,
-          kind: block.type === 'tool_result' ? 'tool_result' : 'tool_call',
-          ...(block.text ? { text: block.text } : block.type === 'tool_result' && block.result !== undefined ? { text: String(block.result) } : {}),
-        });
-      }
-    }
-  });
-  return entries;
-}
-
-function semanticFactCandidates(details: unknown): readonly unknown[] {
-  if (details === null || typeof details !== 'object') return [];
-  if (Array.isArray(details)) return details.flatMap((value) => semanticFactCandidates(value));
-
-  const record = details as Record<string, unknown>;
-  const candidates: unknown[] = [];
-  const add = (value: unknown): void => {
-    if (Array.isArray(value)) candidates.push(...value);
-    else if (value !== undefined) candidates.push(value);
-  };
-  // Tool results use the result payload as `details`, with semantic facts
-  // nested under `semantic`. Older entries store the fact directly or under
-  // one of the queue's plural/singular wrappers.
-  add(record.semantic);
-  add(record.semanticEvents);
-  add(record.semanticEvent);
-  if (typeof record.eventId === 'string' && typeof record.kind === 'string') candidates.push(record);
-  return candidates;
-}
-function validPath(value: unknown): value is readonly string[] {
-  return Array.isArray(value) && value.every((part) => typeof part === 'string');
-}
-
-function mergeSemanticEvent(previous: WireSubagentSemanticEvent, event: WireSubagentSemanticEvent): WireSubagentSemanticEvent {
-  const refs = new SvelteMap<string, WireSubagentSemanticEvent['relatedPiEvents'][number]>();
-  for (const ref of [...previous.relatedPiEvents, ...event.relatedPiEvents]) {
-    refs.set(JSON.stringify([ref.sessionId, ref.kind, ref.entryId, ref.toolCallId]), ref);
-  }
-  const position = previous.transcriptPosition;
-  const nextPosition = event.transcriptPosition;
-  const transcriptPosition =
-    position === undefined || (position.messageIndex === undefined && nextPosition?.sessionId === position.sessionId && nextPosition.afterEntryId === position.afterEntryId)
-      ? (nextPosition ?? position)
-      : position;
-  return {
-    ...previous,
-    relatedPiEvents: [...refs.values()],
-    ...(transcriptPosition ? { transcriptPosition } : {}),
-    ...(!previous.providerCursor && event.providerCursor ? { providerCursor: event.providerCursor } : {}),
-  };
-}
-
-function mergeSemanticEvents(...sources: readonly (readonly WireSubagentSemanticEvent[])[]): WireSubagentSemanticEvent[] {
-  const groups = new SvelteMap<string, { unscoped?: WireSubagentSemanticEvent; occurrences: SvelteMap<string, WireSubagentSemanticEvent> }>();
-  const order: { identity: string; occurrence?: string }[] = [];
-  for (const source of sources) {
-    for (const event of source) {
-      const identity = semanticEventIdentity(event);
-      const group = groups.get(identity) ?? { occurrences: new SvelteMap<string, WireSubagentSemanticEvent>() };
-      groups.set(identity, group);
-      const native = event.nativeOccurrence;
-      if (native) {
-        const occurrence = JSON.stringify(native.entryId !== undefined ? ['entry', native.sessionId, native.entryId] : ['index', native.sessionId, native.messageIndex]);
-        const previous = group.occurrences.get(occurrence);
-        if (!previous) order.push({ identity, occurrence });
-        group.occurrences.set(occurrence, previous ? mergeSemanticEvent(previous, event) : event);
-      } else {
-        if (!group.unscoped) order.push({ identity });
-        group.unscoped = group.unscoped ? mergeSemanticEvent(group.unscoped, event) : event;
-      }
-    }
-  }
-  const events: WireSubagentSemanticEvent[] = [];
-  for (const item of order) {
-    const group = groups.get(item.identity)!;
-    if (item.occurrence !== undefined) {
-      const occurrence = group.occurrences.get(item.occurrence)!;
-      events.push(group.unscoped ? mergeSemanticEvent(occurrence, group.unscoped) : occurrence);
-    } else if (group.occurrences.size === 0 && group.unscoped) events.push(group.unscoped);
-  }
-  return events;
-}
-
-function stripNativeOccurrences(events: readonly WireSubagentSemanticEvent[]): WireSubagentSemanticEvent[] {
-  return events.map((event) => {
-    if (!event.nativeOccurrence) return event;
-    const { nativeOccurrence: _occurrence, ...fact } = event;
-    return fact as WireSubagentSemanticEvent;
-  });
-}
-
-function rebaseSemanticPositions(
-  events: readonly WireSubagentSemanticEvent[],
-  sessionId: string,
-  messages: readonly PimoteAgentMessage[],
-  branchEntryIds?: readonly string[],
-): WireSubagentSemanticEvent[] {
-  return events.map((event) => {
-    const position = event.transcriptPosition;
-    if (!position || position.sessionId !== sessionId) return event;
-    const { messageIndex: _cachedIndex, ...source } = position;
-    if (source.afterEntryId === null) return { ...event, transcriptPosition: { ...source, messageIndex: 0 } };
-    const boundary = branchEntryIds?.indexOf(source.afterEntryId);
-    if (branchEntryIds !== undefined && boundary !== undefined && boundary >= 0) {
-      const preceding = new SvelteSet(branchEntryIds.slice(0, boundary + 1));
-      let messageIndex = 0;
-      messages.forEach((message, index) => {
-        if (message.entryId && preceding.has(message.entryId)) messageIndex = index + 1;
-      });
-      return { ...event, transcriptPosition: { ...source, messageIndex } };
-    }
-    if (branchEntryIds === undefined) {
-      const messageIndex = messages.findLastIndex((message) => message.entryId === source.afterEntryId);
-      if (messageIndex >= 0) return { ...event, transcriptPosition: { ...source, messageIndex: messageIndex + 1 } };
-    }
-    return { ...event, transcriptPosition: source };
-  });
-}
-
-function persistedTranscriptPosition(
-  source: unknown,
-  sessionId: string,
-  messageIndex: number,
-  entryId: string | undefined,
-  localOwner = true,
-): NonNullable<WireSubagentSemanticEvent['transcriptPosition']> | undefined {
-  if (source !== null && typeof source === 'object') {
-    const position = source as Record<string, unknown>;
-    if (typeof position.sessionId === 'string' && (position.afterEntryId === null || typeof position.afterEntryId === 'string')) {
-      const sourceIndex = position.messageIndex;
-      return {
-        sessionId: position.sessionId,
-        afterEntryId: position.afterEntryId,
-        ...(position.sessionId === sessionId && localOwner
-          ? { messageIndex }
-          : typeof sourceIndex === 'number' && Number.isInteger(sourceIndex) && sourceIndex >= 0
-            ? { messageIndex: sourceIndex }
-            : {}),
-      };
-    }
-  }
-  return localOwner ? { sessionId, afterEntryId: entryId ?? null, messageIndex } : undefined;
-}
-
-/** Rehydrate semantic facts and positions from native message metadata. */
-function persistedSemanticEvents(sessionId: string, messages: readonly PimoteAgentMessage[], ownerPath: AgentPath = []): WireSubagentSemanticEvent[] {
-  const events: WireSubagentSemanticEvent[] = [];
-  let sequence = 0;
-  for (const [messageIndex, message] of messages.entries()) {
-    const toolResults = message.role === 'toolResult' ? message.content.filter((block) => block.type === 'tool_result') : [];
-    const messageToolCallId = toolResults.length === 1 ? toolResults[0].toolCallId : undefined;
-    const candidates = [
-      ...semanticFactCandidates(message.details).map((fact) => ({ fact, toolCallId: messageToolCallId })),
-      ...message.content.flatMap((block) =>
-        semanticFactCandidates(block.data).map((fact) => ({ fact, toolCallId: message.role === 'toolResult' && block.type === 'tool_result' ? block.toolCallId : undefined })),
-      ),
-    ];
-    for (const { fact: candidate, toolCallId } of candidates) {
-      if (!candidate || typeof candidate !== 'object') continue;
-      const fact = candidate as Record<string, unknown>;
-      if (typeof fact.eventId !== 'string' || typeof fact.kind !== 'string' || !validPath(fact.path) || !Array.isArray(fact.relatedPiEvents)) continue;
-      const kind = fact.kind as WireSubagentSemanticEvent['kind'];
-      if (
-        ![
-          'node_added',
-          'node_updated',
-          'node_removed',
-          'runtime_replaced',
-          'delegation',
-          'message_thread',
-          'await_started',
-          'child_settled',
-          'await_interrupted',
-          'await_released',
-          'completion',
-          'interrupt',
-          'teardown',
-          'resurrect',
-        ].includes(kind)
-      )
-        continue;
-      const messageData = kind === 'message_thread' && fact.data !== null && typeof fact.data === 'object' ? (fact.data as Record<string, unknown>) : undefined;
-      const ownsReceived = messageData?.phase !== 'received' || (validPath(messageData.to) && sameAgentPath(messageData.to, ownerPath));
-      const relatedPiEvents = fact.relatedPiEvents.filter(
-        (ref): ref is NonNullable<WireSubagentSemanticEvent['relatedPiEvents'][number]> =>
-          !!ref && typeof ref === 'object' && typeof (ref as { sessionId?: unknown }).sessionId === 'string',
-      ) as WireSubagentSemanticEvent['relatedPiEvents'];
-      const customRef = ownsReceived && message.role === 'custom' && message.entryId ? { sessionId, entryId: message.entryId, kind: 'custom_message' as const } : undefined;
-      const containerRefs =
-        customRef && !relatedPiEvents.some((ref) => ref.sessionId === sessionId && ref.entryId === customRef.entryId && ref.kind === 'custom_message')
-          ? [...relatedPiEvents, customRef]
-          : relatedPiEvents;
-      const toolRef = ownsReceived && toolCallId ? { sessionId, toolCallId, kind: 'tool_call' as const } : undefined;
-      const localRefs =
-        toolRef && !containerRefs.some((ref) => ref.sessionId === sessionId && ref.kind === 'tool_call' && ref.toolCallId === toolCallId)
-          ? [...containerRefs, toolRef]
-          : containerRefs;
-      const transcriptPosition = persistedTranscriptPosition(fact.transcriptPosition, sessionId, messageIndex, message.entryId, ownsReceived);
-      sequence += 1;
-      events.push({
-        type: 'subagent_event',
-        sessionId,
-        cursor: sequence,
-        eventId: fact.eventId,
-        path: copyAgentPath(fact.path),
-        kind,
-        relatedPiEvents: localRefs,
-        ...(ownsReceived && message.role === 'custom' && message.display !== false
-          ? { nativeOccurrence: { sessionId, ...(message.entryId !== undefined ? { entryId: message.entryId } : {}), messageIndex } }
-          : {}),
-        ...(transcriptPosition ? { transcriptPosition } : {}),
-        data: fact.data as WireSubagentSemanticEvent['data'],
-      } as WireSubagentSemanticEvent);
-    }
-  }
-  return events;
 }
 
 function cloneSessionState(state: SessionState): SessionState {
@@ -1015,9 +751,6 @@ export class SessionRegistry {
       providerCursor: null,
       hierarchySnapshotReceived: false,
       projectedSubagentContent: hydrateSubagentContent([]),
-      semanticEvents: [],
-      semanticReduction: EMPTY_SEMANTIC_REDUCTION,
-      semanticTranscript: [],
       attachments: {},
       pendingViewEvents: {},
     };
@@ -1064,19 +797,6 @@ export class SessionRegistry {
 
   getSubagentAttachments(rootSessionId: string): readonly SubagentAttachmentState[] {
     return Object.values(this.subagentRoots[rootSessionId]?.attachments ?? {});
-  }
-
-  getSubagentSemanticEvents(rootSessionId: string): readonly WireSubagentSemanticEvent[] {
-    return this.subagentRoots[rootSessionId]?.semanticEvents ?? [];
-  }
-
-  getSubagentTranscript(rootSessionId: string, path?: AgentPath): readonly SemanticTranscriptItem[] {
-    const root = this.subagentRoots[rootSessionId];
-    if (!root) return [];
-    if (!path || path.length === 0) return root.semanticTranscript;
-    const attachment = root.attachments[subagentPathKey(path)];
-    if (!attachment) return [];
-    return attachment.semanticTranscript;
   }
 
   getSelectedSubagentPath(rootSessionId: string): AgentPath | null {
@@ -1320,42 +1040,8 @@ export class SessionRegistry {
       observerCursor: snapshot.viewCursor,
       draftText: '',
       closed: false,
-      semanticEvents: [],
-      semanticReduction: EMPTY_SEMANTIC_REDUCTION,
-      semanticTranscript: [],
       toolExecutions: rebuildToolExecutionsFromMessages(messages, snapshot.runningToolCallIds ?? []),
     };
-  }
-
-  private rebaseSemanticCaches(rootSessionId: string, nativeSessionId: string, messages: readonly PimoteAgentMessage[], branchEntryIds?: readonly string[]): void {
-    const root = this.ensureSubagentRoot(rootSessionId);
-    root.semanticEvents = rebaseSemanticPositions(root.semanticEvents, nativeSessionId, messages, branchEntryIds);
-    for (const attachment of Object.values(root.attachments)) {
-      attachment.semanticEvents = rebaseSemanticPositions(attachment.semanticEvents, nativeSessionId, messages, branchEntryIds);
-    }
-  }
-
-  private rebuildSubagentAttachmentSemantic(root: SubagentRootState, attachment: SubagentAttachmentState): void {
-    const nativeEntries = nativeEntriesForMessages(attachment.childSessionId, attachment.messages);
-    const persisted = persistedSemanticEvents(attachment.childSessionId, attachment.messages, attachment.path);
-    const events = mergeSemanticEvents(persisted, stripNativeOccurrences(root.semanticEvents), stripNativeOccurrences(attachment.semanticEvents));
-    const surface = { sessionId: attachment.childSessionId, path: attachment.path };
-    attachment.semanticEvents = events;
-    attachment.semanticReduction = reduceSubagentWireSemanticEvents(events, surface);
-    attachment.semanticTranscript = projectSubagentWireTranscript(nativeEntries, events, surface);
-    void root;
-  }
-
-  private rebuildSubagentSemantic(rootSessionId: string, persistedBase?: readonly PimoteAgentMessage[]): void {
-    const root = this.ensureSubagentRoot(rootSessionId);
-    const sessionMessages = persistedBase ?? this.sessions[rootSessionId]?.messages ?? [];
-    const persisted = persistedSemanticEvents(rootSessionId, sessionMessages);
-    const events = mergeSemanticEvents(persisted, stripNativeOccurrences(root.semanticEvents));
-    const surface = { sessionId: rootSessionId, path: [] };
-    root.semanticEvents = events;
-    root.semanticReduction = reduceSubagentWireSemanticEvents(events, surface);
-    root.semanticTranscript = projectSubagentWireTranscript(nativeEntriesForMessages(rootSessionId, sessionMessages), events, surface);
-    for (const attachment of Object.values(root.attachments)) this.rebuildSubagentAttachmentSemantic(root, attachment);
   }
 
   private createSessionState(sessionId: string, folderPath: string, projectName: string): PerSessionState {
@@ -1507,13 +1193,6 @@ export class SessionRegistry {
     const previousCursor = root.providerCursor;
     const epochChanged = previousCursor !== null && previousCursor.epoch !== snapshot.cursor.epoch;
     const staleSameEpoch = previousCursor !== null && previousCursor.epoch === snapshot.cursor.epoch && snapshot.cursor.sequence < previousCursor.sequence;
-    if (epochChanged) {
-      // A provider epoch invalidates provider replay. Keep only facts that can
-      // be reconstructed from the native transcript until new live facts land.
-      root.semanticEvents = persistedSemanticEvents(rootSessionId, this.sessions[rootSessionId]?.messages ?? []);
-      root.semanticReduction = EMPTY_SEMANTIC_REDUCTION;
-      root.semanticTranscript = [];
-    }
     const shouldApplyNodes = !root.hierarchySnapshotReceived || !staleSameEpoch || epochChanged;
     if (shouldApplyNodes) {
       root.hierarchySnapshotReceived = true;
@@ -1526,20 +1205,6 @@ export class SessionRegistry {
       }));
       if (!staleSameEpoch || epochChanged || previousCursor === null) {
         root.providerCursor = { epoch: snapshot.cursor.epoch, sequence: snapshot.cursor.sequence };
-      }
-      // A snapshot is authoritative through its provider cursor. Only replay
-      // topology facts from the same epoch that arrived after that boundary.
-      // Replaying older events can roll a reconnect snapshot backward.
-      for (const semantic of root.semanticEvents) {
-        const providerCursor = semantic.providerCursor;
-        if (
-          providerCursor &&
-          providerCursor.epoch === snapshot.cursor.epoch &&
-          providerCursor.sequence > snapshot.cursor.sequence &&
-          (semantic.kind === 'node_added' || semantic.kind === 'node_updated' || semantic.kind === 'node_removed' || semantic.kind === 'runtime_replaced')
-        ) {
-          this.applySubagentNodeEvent(root, semantic);
-        }
       }
     }
     // A lower snapshot can race a replay. Do not let it roll an attachment
@@ -1585,10 +1250,9 @@ export class SessionRegistry {
       };
     });
     root.projectedSubagentContent = hydrateSubagentContent(rootMessages, active);
-    this.rebuildSubagentSemantic(rootSessionId);
   }
 
-  private applySubagentSemanticEvent(event: WireSubagentSemanticEvent): void {
+  private applySubagentTopologyEvent(event: WireSubagentTopologyEvent): void {
     const root = this.ensureSubagentRoot(event.sessionId);
     const providerCursor = event.providerCursor;
     const current = root.providerCursor;
@@ -1603,19 +1267,13 @@ export class SessionRegistry {
     // late topology event at or before that boundary is already represented by
     // the snapshot and must not roll the tree back or re-enter replay state.
     if (staleTopology) return;
-    if (providerCursor) {
-      const epochChanged = current !== null && current.epoch !== providerCursor.epoch;
-      if (epochChanged) root.semanticEvents = persistedSemanticEvents(event.sessionId, this.sessions[event.sessionId]?.messages ?? []);
-      if (current === null || epochChanged || current.epoch !== providerCursor.epoch || providerCursor.sequence > current.sequence) {
-        root.providerCursor = { epoch: providerCursor.epoch, sequence: providerCursor.sequence };
-      }
+    if (providerCursor && (current === null || current.epoch !== providerCursor.epoch || providerCursor.sequence > current.sequence)) {
+      root.providerCursor = { epoch: providerCursor.epoch, sequence: providerCursor.sequence };
     }
-    root.semanticEvents = [...root.semanticEvents, event];
     this.applySubagentNodeEvent(root, event);
-    this.rebuildSubagentSemantic(event.sessionId);
   }
 
-  private applySubagentNodeEvent(root: SubagentRootState, event: WireSubagentSemanticEvent): void {
+  private applySubagentNodeEvent(root: SubagentRootState, event: WireSubagentTopologyEvent): void {
     if (event.kind === 'node_added' || event.kind === 'node_updated') {
       const data = event.data;
       const node = 'path' in data ? data : undefined;
@@ -1638,22 +1296,24 @@ export class SessionRegistry {
     }
     if (event.kind === 'runtime_replaced') {
       const index = root.nodes.findIndex((candidate) => sameAgentPath(candidate.path, event.path));
-      if (index >= 0) root.nodes[index] = { ...root.nodes[index], sessionId: event.data.newSessionId };
+      const replacement = event.data as { newSessionId: string };
+      if (index >= 0) root.nodes[index] = { ...root.nodes[index], sessionId: replacement.newSessionId };
       return;
     }
     if (event.kind === 'node_removed') {
-      const removedPath = event.data.node.path;
+      const removed = event.data as { node: SubagentNodeSnapshot; reason: string };
+      const removedPath = removed.node.path;
       const notice: SubagentViewClosedNotice = {
         rootSessionId: root.rootSessionId,
         path: copyAgentPath(removedPath),
         reason: 'teardown',
-        node: event.data.node,
+        node: removed.node,
       };
       this.subagentClosedNotices = { ...this.subagentClosedNotices, [this.subagentNoticeKey(root.rootSessionId, removedPath)]: notice };
       this.subagentNoticeVersion += 1;
       root.nodes = root.nodes.filter((node) => !pathStartsWith(removedPath, node.path));
       for (const attachment of Object.values(root.attachments)) {
-        if (pathStartsWith(removedPath, attachment.path)) this.closeSubagentAttachment(root, attachment, 'teardown', event.data.node);
+        if (pathStartsWith(removedPath, attachment.path)) this.closeSubagentAttachment(root, attachment, 'teardown', removed.node);
       }
     }
   }
@@ -1708,16 +1368,11 @@ export class SessionRegistry {
     attachment.draftText = draftText;
     attachment.closed = false;
     attachment.closeReason = undefined;
-    attachment.semanticEvents = persistedSemanticEvents(snapshot.childSessionId, attachment.messages, attachment.path);
     attachment.bashExecutions = {};
     attachment.toolExecutions = rebuildToolExecutionsFromMessages(attachment.messages, attachment.runningToolCallIds);
-    attachment.semanticReduction = EMPTY_SEMANTIC_REDUCTION;
-    attachment.semanticTranscript = [];
     root.attachments[key] = attachment;
     const staged = (root.pendingViewEvents[key] ?? []).filter((pending) => pending.attachmentGeneration === snapshot.attachmentGeneration);
     delete root.pendingViewEvents[key];
-    this.rebaseSemanticCaches(snapshot.sessionId, snapshot.childSessionId, attachment.messages, attachment.branchEntryIds);
-    this.rebuildSubagentSemantic(snapshot.sessionId);
     for (const pending of staged.sort((left, right) => left.viewCursor - right.viewCursor)) this.applySubagentViewEvent(pending);
     return attachment;
   }
@@ -1739,11 +1394,6 @@ export class SessionRegistry {
     if ('timestamp' in event.event && typeof (event.event as { timestamp?: unknown }).timestamp === 'string') {
       attachment.lastBotActivityTimestamp = (event.event as { timestamp: string }).timestamp;
     }
-    if (event.event.type === 'subagent_event') {
-      const semantic = event.event as unknown as WireSubagentSemanticEvent;
-      attachment.semanticEvents = [...attachment.semanticEvents, semantic];
-    }
-    this.rebuildSubagentAttachmentSemantic(root, attachment);
   }
 
   private applySubagentViewClosed(event: SubagentViewClosedEvent): void {
@@ -1754,10 +1404,6 @@ export class SessionRegistry {
     if (!attachment || attachment.attachmentGeneration !== event.attachmentGeneration) return;
     const node = root.nodes.find((candidate) => sameAgentPath(candidate.path, event.path));
     this.closeSubagentAttachment(root, attachment, event.reason, node);
-  }
-
-  private applySubagentEvent(event: Extract<PimoteEvent, { type: 'subagent_event' }>): void {
-    this.applySubagentSemanticEvent(event as WireSubagentSemanticEvent);
   }
 
   /** Route an incoming event to the correct session's state */
@@ -1791,7 +1437,7 @@ export class SessionRegistry {
       return;
     }
     if (event.type === 'subagent_event') {
-      this.applySubagentEvent(event as Extract<PimoteEvent, { type: 'subagent_event' }>);
+      this.applySubagentTopologyEvent(event as Extract<PimoteEvent, { type: 'subagent_event' }>);
       return;
     }
     if (event.type === 'subagent_view_snapshot') {
@@ -1907,10 +1553,7 @@ export class SessionRegistry {
         session.streamingKey = null;
         session.lastPositiveStreamingUsage = null;
         // Apply entry IDs so navigation targets work on messages received via streaming.
-        if (endEvent.messageEntryIds) {
-          hydrateMessageEntryIds(session, endEvent.messageEntryIds);
-          this.rebuildSubagentSemantic(sessionId);
-        }
+        if (endEvent.messageEntryIds) hydrateMessageEntryIds(session, endEvent.messageEntryIds);
         // Refresh meta after the terminal attempt boundary.
         this.refreshSessionMeta(sessionId);
         break;
@@ -1976,7 +1619,6 @@ export class SessionRegistry {
         session.messages = [...session.projectedSubagentContent.messages];
         session.messageKeys = [...session.messageKeys, 'msg-' + this._nextMessageKey++];
         session.messageCount++;
-        this.rebuildSubagentSemantic(sessionId);
         break;
       }
 
@@ -2056,7 +1698,6 @@ export class SessionRegistry {
         }
         session.projectedSubagentContent = hydrateSubagentContent(session.messages, session.projectedSubagentContent.active);
         session.messages = [...session.projectedSubagentContent.messages];
-        this.rebuildSubagentSemantic(sessionId);
         break;
       }
 
@@ -2169,11 +1810,6 @@ export class SessionRegistry {
           rebuilt.toolExecutions[toolCallId] = { name: call?.toolName ?? '', args: call?.args, partialResult: '', status: 'running' };
         }
         this.sessions[sessionId] = rebuilt;
-        this.rebaseSemanticCaches(sessionId, rebuilt.sessionId, messages, resync.branchEntryIds);
-        // Rebuild semantic overlays from durable details plus any live facts
-        // retained across the resync. Missing metadata leaves native entries
-        // untouched as the fallback transcript.
-        this.rebuildSubagentSemantic(sessionId, messages);
         break;
       }
 
@@ -2798,9 +2434,11 @@ export class SessionRegistry {
     if (commandType === 'get_messages' && Array.isArray(data.messages)) {
       attachment.messages = [...(data.messages as PimoteAgentMessage[])];
       attachment.transcript = attachment.messages;
+      attachment.projectedSubagentContent = hydrateSubagentContent(attachment.messages, attachment.projectedSubagentContent.active);
+      attachment.messages = [...attachment.projectedSubagentContent.messages];
+      attachment.transcript = attachment.messages;
       attachment.messageKeys = attachment.messages.map((_, index) => `child-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${index}`);
       attachment.state = { ...attachment.state, messageCount: attachment.messages.length };
-      this.rebuildSubagentAttachmentSemantic(this.subagentRoots[attachment.rootSessionId] ?? this.ensureSubagentRoot(attachment.rootSessionId), attachment);
     }
   }
 }
