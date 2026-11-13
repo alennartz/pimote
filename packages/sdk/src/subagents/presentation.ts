@@ -5,7 +5,7 @@ import type {
   PiEventRef,
   SubagentNodeEventData,
   SubagentNodeSnapshot,
-  SubagentProvider,
+  SubagentProviderControls,
   SubagentRuntimeReplacedData,
   SubagentUsage,
 } from './types.js';
@@ -154,7 +154,7 @@ export type SubagentPresentationReplay =
   | Readonly<{ kind: 'events'; cursor: FeedCursor; events: readonly SubagentProviderEvent[] }>
   | Readonly<{ kind: 'snapshot_required'; reason: 'epoch_changed' | 'history_unavailable' }>;
 
-export interface SubagentPresentationProvider extends Omit<SubagentProvider, 'snapshot' | 'subscribe' | 'replay'> {
+export interface SubagentPresentationProvider extends SubagentProviderControls {
   snapshot(): SubagentProviderSnapshot;
   subscribe(listener: (event: SubagentProviderEvent) => void): () => void;
   replay(after?: FeedCursor): SubagentPresentationReplay;

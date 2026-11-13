@@ -363,11 +363,8 @@ export interface SubagentOwnerControlPort {
   resurrect(request: SubagentResurrectRequest): Promise<SubagentResurrectResult>;
 }
 
-/** Per-session provider feed and borrowed-runtime contract. */
-export interface SubagentProvider {
-  subscribe(listener: (event: SubagentEvent) => void): () => void;
-  snapshot(): SubagentSnapshot;
-  replay(after?: FeedCursor): ReplayResult;
+/** Provider-owned leases and guarded lifecycle controls shared by the presentation seam. */
+export interface SubagentProviderControls {
   acquire(path: AgentPath): Promise<SubagentLease>;
   teardown(path: AgentPath, incarnation: string): Promise<SubagentTeardownResult>;
   stop(request: SubagentStopRequest): Promise<void>;
