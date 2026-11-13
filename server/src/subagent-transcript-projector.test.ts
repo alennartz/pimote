@@ -138,6 +138,37 @@ describe('subagent transcript projector', () => {
     expect(afterNative.snapshot().messages[0]).toMatchObject({ role: 'custom', content: [expect.objectContaining({ operationId: 'custom-after-native' })] });
   });
 
+  it('stages placement-less active snapshots until their custom row arrives', () => {
+    const current = projector();
+    current.hydrateActiveOperations?.([
+      {
+        target: { operationId: 'active-custom', kind: 'send', path: [] },
+        data: { operation: 'send', to: ['worker'], request: 'check', response: '', phase: 'sending' },
+      },
+    ]);
+    expect(current.snapshot().messages).toEqual([]);
+    current.acceptNativeEvent({
+      type: 'message_end',
+      message: {
+        role: 'custom',
+        customType: 'subagents',
+        content: [],
+        details: {
+          subagentContent: [
+            {
+              operationId: 'active-custom',
+              kind: 'send',
+              state: 'complete',
+              source: 'custom_entry',
+              data: { operation: 'send', to: ['worker'], request: 'check', response: 'done' },
+            },
+          ],
+        },
+      },
+    } as unknown as IncomingSdkEvent);
+    expect(current.snapshot().messages[0]).toMatchObject({ role: 'custom', content: [expect.objectContaining({ operationId: 'active-custom', subagentState: 'active' })] });
+  });
+
   it('replaces an incoming hidden custom entry with typed send content', () => {
     const current = projector();
     current.rehydrate([{ role: 'custom', customType: 'subagents', entryId: 'incoming-entry', content: [{ type: 'text', text: '<agent_message>hidden</agent_message>' }] }]);

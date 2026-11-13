@@ -160,6 +160,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
   const customProtocolErrors = new Map<string, string>();
   const customOperationRows = new Map<string, number>();
   const pendingCustomEvents = new Map<string, PresentationProviderEvent[]>();
+  const pendingCustomActive = new Map<string, ActiveSubagentOperation>();
   let nextProjectedOrder = 0;
   let streamingAssistantSlot: MutableSlot | undefined;
   const hiddenStreamingIndexes = new Set<number>();
@@ -534,7 +535,19 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     customOperationRows.set(operationId, messageIndex);
     const pending = pendingCustomEvents.get(operationId) ?? [];
     pendingCustomEvents.delete(operationId);
-    return pending.flatMap((event) => routeProviderEvent(customTargetForRow(event, messageIndex)));
+    const active = pendingCustomActive.get(operationId);
+    pendingCustomActive.delete(operationId);
+    const activeEvents = active
+      ? createStart(
+          customTargetForRow(
+            { type: 'subagent_start', eventId: `pending:${operationId}`, cursor: { epoch: '', sequence: 0 }, target: active.target, data: active.data },
+            messageIndex,
+          ).target,
+          active.data,
+          false,
+        )
+      : [];
+    return [...activeEvents, ...pending.flatMap((event) => routeProviderEvent(customTargetForRow(event, messageIndex)))];
   };
 
   const rehydrate = (nextMessages: readonly PimoteAgentMessage[]): void => {
@@ -557,6 +570,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     hiddenCustomEntries.clear();
     customProtocolErrors.clear();
     customOperationRows.clear();
+    pendingCustomActive.clear();
     streamingAssistantSlot = undefined;
     hiddenStreamingIndexes.clear();
     for (const source of nextMessages) {
@@ -852,6 +866,19 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     for (const operation of active) {
       operations.delete(operation.target.operationId);
       completedOperations.delete(operation.target.operationId);
+      if (!operation.target.placement) {
+        const messageIndex = customOperationRows.get(operation.target.operationId);
+        if (messageIndex === undefined) {
+          pendingCustomActive.set(operation.target.operationId, operation);
+          continue;
+        }
+        const routed = customTargetForRow(
+          { type: 'subagent_start', eventId: `active:${operation.target.operationId}`, cursor: { epoch: '', sequence: 0 }, target: operation.target, data: operation.data },
+          messageIndex,
+        );
+        createStart(routed.target, operation.data, false);
+        continue;
+      }
       createStart(operation.target, operation.data, false);
     }
   };
@@ -901,11 +928,18 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
           synthetic.content = [];
           messages.push(synthetic);
           nativeBlocks.push([]);
-          const placement = target.placement && 'toolCallId' in target.placement ? target.placement : source.entryId ? { entryId: source.entryId } : target.placement;
+          const syntheticId = messageId(synthetic, messages.length - 1);
+          const placement =
+            target.placement && 'toolCallId' in target.placement
+              ? target.placement
+              : source.entryId || source.role === 'custom'
+                ? { entryId: source.entryId ?? syntheticId }
+                : target.placement;
           const syntheticTarget = placement === target.placement ? target : { ...target, placement };
           slot = placeBlock(syntheticTarget, cloneContent(block));
         }
         operationSlots.set(block.operationId, slot);
+        if (source.role === 'custom') customOperationRows.set(block.operationId, slot.messageIndex);
         completedTargets.set(block.operationId, target);
         if (active) {
           completedOperations.delete(block.operationId);
