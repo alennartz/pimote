@@ -9,7 +9,7 @@ import type {
   SessionState,
   StreamingMessage,
 } from '../../shared/dist/index.js';
-import type { BorrowedAgentSession, SubagentTranscriptPosition } from '@pimote/sdk/subagents';
+import type { AgentPath, BorrowedAgentSession, SubagentPresentationProvider, SubagentTranscriptPosition } from '@pimote/sdk/subagents';
 import { EventBuffer, type IncomingSdkEvent } from './event-buffer.js';
 import { mapAgentMessage, mapContextEntries, type SdkSessionEntry } from './message-mapper.js';
 import { completeFileRefs } from './file-references.js';
@@ -166,6 +166,10 @@ export interface SessionSurfaceOptions {
   getGitBranch?: () => string | null;
   /** Buffer capacity for this independent surface. */
   bufferCapacity?: number;
+  /** Optional semantic provider hydrated before the first client snapshot. */
+  subagentProvider?: Pick<SubagentPresentationProvider, 'rehydrate'>;
+  /** Logical path supplied to provider hydration. */
+  subagentPath?: AgentPath;
 }
 
 /** Caller-aware dispatch overload. */

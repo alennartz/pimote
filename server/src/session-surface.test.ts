@@ -174,6 +174,37 @@ function assistantEnd(text: string): AgentSessionEvent {
 }
 
 describe('SessionSurface', () => {
+  it('hydrates the optional provider before releasing the first projection snapshot', async () => {
+    const f = fixture();
+    const calls: string[] = [];
+    const provider = {
+      rehydrate: async (input: { session: BorrowedAgentSession; path: readonly string[] }) => {
+        calls.push(`rehydrate:${input.session.sessionId}:${input.path.join('/')}`);
+        f.publish(assistantEnd('Hydrated before snapshot'));
+      },
+    };
+    const surface = createSessionSurface({
+      sessionId: 'child-session',
+      session: f.native,
+      kind: 'child',
+      capabilities: f.capabilities,
+      subagentProvider: provider,
+      subagentPath: ['worker'],
+    });
+
+    const live: PimoteSessionEvent[] = [];
+    surface.subscribe((event) => live.push(event));
+    await surface.initialize();
+
+    expect(calls).toEqual(['rehydrate:child-session:worker']);
+    expect(live).toContainEqual(
+      expect.objectContaining({
+        type: 'message_end',
+        message: expect.objectContaining({ content: expect.arrayContaining([expect.objectContaining({ text: 'Hydrated before snapshot' })]) }),
+      }),
+    );
+  });
+
   it('delivers a native event injected during the initial snapshot and streams later events', async () => {
     const f = fixture();
     f.data.snapshotEvent = assistantEnd('At snapshot boundary');

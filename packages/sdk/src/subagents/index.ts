@@ -47,3 +47,31 @@ export type {
 
 export { SUBAGENT_PROVIDER_REQUEST, SUBAGENT_PROVIDER_RESPONSE, discover, discoverProvider, register, registerProvider } from './provider.js';
 export type { DiscoverProviderOptions } from './provider.js';
+
+export { createSubagentPresentationProvider } from './presentation.js';
+export type {
+  PersistedSubagentContent,
+  SubagentAwaitResult,
+  SubagentAwaitStatus,
+  SubagentCompletionResult,
+  SubagentDeltaData,
+  SubagentDeltaEvent,
+  SubagentEndData,
+  SubagentEndEvent,
+  SubagentFiniteEvent,
+  SubagentFinalData,
+  SubagentOperationKind,
+  SubagentOperationTarget,
+  SubagentPlacement,
+  SubagentPresentationManifest,
+  SubagentPresentationProvider,
+  SubagentPresentationProviderOptions,
+  SubagentPresentationReplay,
+  SubagentProtocolErrorData,
+  SubagentProviderEvent,
+  SubagentProviderSnapshot,
+  SubagentSnapshotEvent,
+  SubagentStartData,
+  SubagentStartEvent,
+  SubagentTopologyEvent,
+} from './presentation.js';

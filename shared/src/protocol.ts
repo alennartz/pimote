@@ -120,8 +120,17 @@ export interface SessionState {
   messageCount: number;
 }
 
+export type PimoteSubagentOperationKind = 'send' | 'respond' | 'await' | 'delegation' | 'completion' | 'interrupt' | 'teardown' | 'resurrect';
+
+export interface PimoteSubagentPlacement {
+  toolCallId: string;
+  contentIndex: number;
+  entryId?: string;
+}
+
+/** Typed semantic replacement rendered in an assistant content slot. */
 export interface PimoteMessageContent {
-  type: 'text' | 'thinking' | 'tool_call' | 'tool_result';
+  type: 'text' | 'thinking' | 'tool_call' | 'tool_result' | 'subagent';
   text?: string;
   toolCallId?: string;
   toolName?: string;
@@ -129,6 +138,14 @@ export interface PimoteMessageContent {
   result?: unknown;
   /** Structured result payload for tool_result blocks (the tool's details/structuredContent). */
   data?: unknown;
+  /** Stable semantic operation identity for a `subagent` block. */
+  operationId?: string;
+  /** Operation kind for a `subagent` block. */
+  subagentKind?: PimoteSubagentOperationKind;
+  /** Native assistant slot occupied by a `subagent` block. */
+  placement?: PimoteSubagentPlacement;
+  /** Lifecycle state for a `subagent` block. */
+  subagentState?: 'active' | 'complete' | 'error' | 'aborted' | 'protocol_error';
   /** Monotonic-clock execution time of the tool call in milliseconds,
    *  excluding hooks. Absent when the tool did not run and for results
    *  recorded before pi 1.1.0. */
@@ -1494,6 +1511,38 @@ export interface MessageUpdateEvent extends SessionEventBase {
   toolName?: string;
 }
 
+/** Starts one stable projected subagent block in a mixed assistant row. */
+export interface SubagentContentStartEvent extends SessionEventBase {
+  type: 'subagent_content_start';
+  parentMessageId: string;
+  contentIndex: number;
+  operationId: string;
+  kind: PimoteSubagentOperationKind;
+  placement: PimoteSubagentPlacement;
+  content: PimoteMessageContent;
+}
+
+/** Live-only body or status update for a projected subagent block. */
+export interface SubagentContentDeltaEvent extends SessionEventBase {
+  type: 'subagent_content_delta';
+  parentMessageId: string;
+  contentIndex: number;
+  operationId: string;
+  kind: PimoteSubagentOperationKind;
+  data: unknown;
+}
+
+/** Closes a projected subagent block with a complete typed payload. */
+export interface SubagentContentEndEvent extends SessionEventBase {
+  type: 'subagent_content_end';
+  parentMessageId: string;
+  contentIndex: number;
+  operationId: string;
+  kind: PimoteSubagentOperationKind;
+  state: 'complete' | 'error' | 'aborted' | 'protocol_error';
+  content: PimoteMessageContent;
+}
+
 /**
  * Shape shared by both streaming (in-progress) and finalized messages.
  * The streaming message uses this during accumulation; on message_end
@@ -1612,6 +1661,9 @@ export type PimoteSessionEvent =
   | TurnEndEvent
   | MessageStartEvent
   | MessageUpdateEvent
+  | SubagentContentStartEvent
+  | SubagentContentDeltaEvent
+  | SubagentContentEndEvent
   | MessageEndEvent
   | CustomEntryEvent
   | ToolExecutionStartEvent
