@@ -3,13 +3,13 @@ import type {
   BorrowedAgentSession,
   FeedCursor,
   SubagentCapabilities,
-  SubagentEvent,
+  SubagentTopologyEvent,
   SubagentLease,
   SubagentLeaseEvent,
   SubagentNodeSnapshot,
-  SubagentProvider,
+  SubagentPresentationProvider,
   SubagentProviderEvent,
-  SubagentSnapshot,
+  SubagentProviderSnapshot,
   SubagentTeardownResult,
 } from '@pimote/sdk/subagents';
 import type { PimoteSessionEvent } from '../../shared/dist/index.js';
@@ -24,10 +24,11 @@ import {
 } from './session-surface.js';
 
 /** Semantic events enter the parent surface's replay stream at its cursor. */
-export type ParentSemanticEventSink = (event: SubagentEvent, parentCursor: number) => void;
-type ProviderFeedEvent = SubagentEvent | SubagentProviderEvent;
+export type ParentTopologyEventSink = (event: SubagentTopologyEvent, parentCursor: number) => void;
+type ProviderOperationEvent = Exclude<SubagentProviderEvent, SubagentTopologyEvent>;
+type ProviderFeedEvent = SubagentTopologyEvent | ProviderOperationEvent;
 
-function isPresentationEvent(event: ProviderFeedEvent): event is SubagentProviderEvent {
+function isPresentationEvent(event: ProviderFeedEvent): event is ProviderOperationEvent {
   const candidate = event as unknown as { type?: unknown };
   return typeof candidate.type === 'string' && candidate.type.startsWith('subagent_');
 }
@@ -58,7 +59,7 @@ export type SubagentViewChange =
   | (SubagentViewReference & { type: 'closed'; reason: 'replaced' | 'unavailable' | 'teardown' });
 
 export interface SubagentHostStartResult {
-  readonly snapshot: SubagentSnapshot;
+  readonly snapshot: SubagentProviderSnapshot;
   readonly providerCursor: FeedCursor;
   /** Parent cursor after the hierarchy snapshot boundary. */
   readonly parentCursor: number;
@@ -66,10 +67,10 @@ export interface SubagentHostStartResult {
 
 export interface SubagentHostOptions {
   rootSessionId: string;
-  provider: SubagentProvider;
+  provider: SubagentPresentationProvider;
   parentSurface: SessionSurface;
   parentCursor: () => number;
-  emitParentEvent: ParentSemanticEventSink;
+  emitParentEvent: ParentTopologyEventSink;
   emitViewChange: (connectionId: string, change: SubagentViewChange, incarnation?: string, viewCursor?: number) => void;
   reconnectGraceMs: number;
   childCapabilities: (session: BorrowedAgentSession) => SessionSurfaceCapabilities;
@@ -94,7 +95,7 @@ export interface SubagentHost {
   closeView(connectionId: string, view: SubagentViewReference, connectionToken?: number): Promise<void>;
   dispatch(connectionId: string, view: SubagentViewReference, command: SubagentSurfaceCommand, connectionToken?: number, caller?: SessionSurfaceCallerContext): Promise<unknown>;
   /** Return the latest provider hierarchy snapshot at the host boundary. */
-  snapshot(): SubagentSnapshot;
+  snapshot(): SubagentProviderSnapshot;
   /** Delegate resurrection through the provider's owner-control seam. */
   resurrect(
     request: import('@pimote/sdk/subagents').SubagentResurrectRequest,
@@ -144,7 +145,7 @@ type ViewRecord = {
   transition: Promise<void>;
 };
 
-type ProviderWithShutdown = SubagentProvider & { shutdown?: () => void | Promise<void> };
+type ProviderWithShutdown = SubagentPresentationProvider & { shutdown?: () => void | Promise<void> };
 
 const pathKey = (path: AgentPath): string => JSON.stringify(path);
 const clonePath = (path: AgentPath): AgentPath => Object.freeze([...path]);
@@ -201,7 +202,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
   let providerUnsubscribe: (() => void) | undefined;
   let generation = 0;
   let nextParentCursor: number | undefined;
-  let lastSnapshot: SubagentSnapshot | undefined;
+  let lastSnapshot: SubagentProviderSnapshot | undefined;
 
   const observeNode = (node: SubagentNodeSnapshot): void => {
     const copy: SubagentNodeSnapshot = {
@@ -214,7 +215,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     nodes.set(pathKey(copy.path), copy);
   };
 
-  const replaceSnapshotNodes = (snapshot: SubagentSnapshot): void => {
+  const replaceSnapshotNodes = (snapshot: SubagentProviderSnapshot): void => {
     nodes.clear();
     for (const node of snapshot.nodes) observeNode(node);
     lastSnapshot = snapshot;
@@ -292,16 +293,6 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     await Promise.all(affected.map((record) => closeRecord(record, reason, true)));
   };
 
-  const surfaceForSession = (sessionId: string): SessionSurface | undefined => {
-    if (sessionId === options.rootSessionId) return options.parentSurface;
-    for (const records of recordsByPath.values()) {
-      for (const record of records) {
-        if (!record.closed && record.surface?.sessionId === sessionId) return record.surface;
-      }
-    }
-    return undefined;
-  };
-
   const surfaceForPath = (path: AgentPath): SessionSurface | undefined => {
     if (path.length === 0) return options.parentSurface;
     const records = recordsByPath.get(pathKey(path));
@@ -309,26 +300,18 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     return undefined;
   };
 
-  const resolveProviderEventPosition = (event: SubagentEvent): SubagentEvent => {
-    const position = event.transcriptPosition;
-    if (!position) return event;
-    const surface = surfaceForSession(position.sessionId);
-    const resolved = surface?.resolveTranscriptPosition?.(position) ?? position;
-    return { ...event, transcriptPosition: Object.freeze({ ...resolved }) };
-  };
-
-  const appendParentEvent = (event: SubagentEvent): number => {
+  const appendParentEvent = (event: SubagentTopologyEvent): number => {
     const observed = options.parentCursor();
     if (nextParentCursor === undefined || observed > nextParentCursor) nextParentCursor = observed;
     const parentCursor = (nextParentCursor ?? observed) + 1;
     nextParentCursor = parentCursor;
-    options.emitParentEvent(resolveProviderEventPosition(event), parentCursor);
+    options.emitParentEvent(event, parentCursor);
     const after = options.parentCursor();
     if (after > nextParentCursor) nextParentCursor = after;
     return parentCursor;
   };
 
-  const updateNodesForEvent = (event: SubagentEvent): void => {
+  const updateNodesForEvent = (event: SubagentTopologyEvent): void => {
     if (event.kind === 'node_added' || event.kind === 'node_updated') {
       if ('path' in event.data) observeNode(event.data);
       else {
@@ -365,12 +348,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     const snapshotCoversEvent = boundary !== undefined && event.cursor.epoch === boundary.epoch && event.cursor.sequence <= boundary.sequence;
     // Historical topology is already represented by the current snapshot.
     // Forward only its semantic history, not removed or replaced incarnations.
-    const legacyEvent = event as SubagentEvent;
-    if (
-      snapshotCoversEvent &&
-      (legacyEvent.kind === 'node_added' || legacyEvent.kind === 'node_updated' || legacyEvent.kind === 'node_removed' || legacyEvent.kind === 'runtime_replaced')
-    )
-      return;
+    if (snapshotCoversEvent && (event.kind === 'node_added' || event.kind === 'node_updated' || event.kind === 'node_removed' || event.kind === 'runtime_replaced')) return;
     updateNodesForEvent(event);
     appendParentEvent(event);
   };
@@ -594,7 +572,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     if (starting) throw new Error('subagent host is already starting');
     starting = true;
     stagedProviderEvents = [];
-    providerUnsubscribe = options.provider.subscribe(receiveProviderEvent as (event: SubagentEvent) => void);
+    providerUnsubscribe = options.provider.subscribe(receiveProviderEvent as (event: ProviderFeedEvent) => void);
     try {
       const snapshot = options.provider.snapshot();
       replaceSnapshotNodes(snapshot);
@@ -760,7 +738,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     return attachments;
   };
 
-  const snapshot = (): SubagentSnapshot => {
+  const snapshot = (): SubagentProviderSnapshot => {
     assertStarted();
     const current = options.provider.snapshot();
     replaceSnapshotNodes(current);

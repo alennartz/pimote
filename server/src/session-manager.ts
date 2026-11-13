@@ -30,7 +30,7 @@ import { LoginOrchestrator } from './login-orchestrator.js';
 import { createVoiceExtension } from './voice/index.js';
 import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
 import { loadManagerExtension } from './manager/attachment.js';
-import { discoverProvider, type BorrowedAgentSession, type SubagentProvider, type SubagentProviderDiscovery } from '@pimote/sdk/subagents';
+import { discoverProvider, type BorrowedAgentSession, type SubagentPresentationProvider, type SubagentProviderDiscovery } from '@pimote/sdk/subagents';
 import { createSubagentHost, type SubagentHost, type SubagentViewChange } from './subagent-host.js';
 import { createSessionSurface, type SessionSurface, type SessionSurfaceCapabilities, type SessionSurfaceCallerContext, type SessionSurfaceCommand } from './session-surface.js';
 
@@ -122,7 +122,7 @@ export interface ManagedSlot {
   sessionSurfaceUnsubscribe?: () => void;
   /** Root-scoped provider host. Children never become managed slots. */
   subagentHost?: SubagentHost;
-  subagentProvider?: SubagentProvider;
+  subagentProvider?: SubagentPresentationProvider;
   subagentDiscovery?: SubagentProviderDiscovery;
   subagentDiscoveryUnsubscribe?: () => void;
   subagentDiscoveryBus?: EventBusController | null;
@@ -1093,7 +1093,7 @@ export class PimoteSessionManager {
   }
 
   /** Create a root host without adding child runtimes to this manager's slots. */
-  private createSubagentHostForSlot(slot: ManagedSlot, provider: SubagentProvider): SubagentHost {
+  private createSubagentHostForSlot(slot: ManagedSlot, provider: SubagentPresentationProvider): SubagentHost {
     const parentSurface = this.ensureRootSessionSurface(slot);
     return createSubagentHost({
       rootSessionId: slot.sessionState.id,
@@ -1120,7 +1120,7 @@ export class PimoteSessionManager {
   }
 
   /** Replace one root's provider host while keeping the root slot stable. */
-  private async replaceSubagentProvider(slot: ManagedSlot, provider: SubagentProvider): Promise<void> {
+  private async replaceSubagentProvider(slot: ManagedSlot, provider: SubagentPresentationProvider): Promise<void> {
     if (slot.subagentClosed || this.findMapKeyForSlot(slot) === undefined) return;
     if (slot.subagentProvider === provider && slot.subagentHost) return;
     const hadHost = slot.subagentHost !== undefined;
@@ -1180,7 +1180,7 @@ export class PimoteSessionManager {
     slot.subagentDiscoveryUnsubscribe = discovery.subscribe((provider) => {
       if (!provider || slot.subagentClosed) return;
       const previous = slot.subagentTransition ?? Promise.resolve();
-      const transition = previous.catch(() => undefined).then(() => this.replaceSubagentProvider(slot, provider));
+      const transition = previous.catch(() => undefined).then(() => this.replaceSubagentProvider(slot, provider as SubagentPresentationProvider));
       slot.subagentTransition = transition;
       void transition.catch((error) => {
         console.error('[SessionManager] Subagent provider host error:', error);

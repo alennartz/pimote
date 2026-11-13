@@ -1,4 +1,14 @@
-import type { AgentPath, BorrowedAgentSession, FeedCursor, SubagentNodeSnapshot, SubagentProvider, SubagentUsage } from './types.js';
+import type {
+  AgentPath,
+  BorrowedAgentSession,
+  FeedCursor,
+  PiEventRef,
+  SubagentNodeEventData,
+  SubagentNodeSnapshot,
+  SubagentProvider,
+  SubagentRuntimeReplacedData,
+  SubagentUsage,
+} from './types.js';
 
 export type SubagentPresentationManifest = Readonly<{
   hiddenToolNames: readonly string[];
@@ -108,7 +118,18 @@ export type SubagentStartEvent = PresentationEventBase & Readonly<{ type: 'subag
 export type SubagentDeltaEvent = PresentationEventBase & Readonly<{ type: 'subagent_delta'; data: SubagentDeltaData }>;
 export type SubagentEndEvent = PresentationEventBase & Readonly<{ type: 'subagent_end'; state: 'complete' | 'error' | 'aborted'; data: SubagentEndData }>;
 export type SubagentFiniteEvent = PresentationEventBase & Readonly<{ type: 'subagent_snapshot_event'; state: 'complete' | 'error' | 'aborted'; data: SubagentFinalData }>;
-export type SubagentTopologyEvent = import('./types.js').SubagentEvent & Readonly<{ kind: 'node_added' | 'node_updated' | 'node_removed' | 'runtime_replaced' }>;
+type SubagentTopologyData =
+  | Readonly<{ kind: 'node_added' | 'node_updated'; data: SubagentNodeEventData }>
+  | Readonly<{ kind: 'node_removed'; data: Readonly<{ node: SubagentNodeSnapshot; reason: string }> }>
+  | Readonly<{ kind: 'runtime_replaced'; data: SubagentRuntimeReplacedData }>;
+
+export type SubagentTopologyEvent = Readonly<{
+  eventId: string;
+  cursor: FeedCursor;
+  path: AgentPath;
+  relatedPiEvents: readonly PiEventRef[];
+}> &
+  SubagentTopologyData;
 export type SubagentProviderEvent = SubagentTopologyEvent | SubagentStartEvent | SubagentDeltaEvent | SubagentEndEvent | SubagentFiniteEvent;
 
 export type PersistedSubagentContent = Readonly<{

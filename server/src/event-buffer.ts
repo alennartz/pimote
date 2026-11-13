@@ -1,6 +1,6 @@
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
-import type { SubagentEvent, SubagentTranscriptPosition } from '@pimote/sdk/subagents';
+import type { SubagentTopologyEvent as ProviderTopologyEvent, SubagentTranscriptPosition } from '@pimote/sdk/subagents';
 import type { PimoteSessionEvent, SubagentTopologyEvent } from '../../shared/dist/index.js';
 import { mapAgentMessage, mapAgentMessageUsage, mapCustomEntry, type CustomEntryVisibility } from './message-mapper.js';
 
@@ -101,7 +101,7 @@ export class EventBuffer {
   }
 
   /** Append one topology event to this surface's replay stream. */
-  appendTopologyEvent(semanticEvent: SubagentEvent, sessionId: string, sendLive: (event: PimoteSessionEvent) => void): number {
+  appendTopologyEvent(semanticEvent: ProviderTopologyEvent, sessionId: string, sendLive: (event: PimoteSessionEvent) => void): number {
     const cursor = ++this._cursor;
     const event = {
       sessionId,
@@ -114,7 +114,7 @@ export class EventBuffer {
       kind: semanticEvent.kind,
       data: semanticEvent.data,
       providerCursor: semanticEvent.cursor,
-    } as SubagentTopologyEvent;
+    } as unknown as SubagentTopologyEvent;
     this.pushToBuffer(event);
     sendLive(event);
     return cursor;

@@ -3,16 +3,12 @@ import type {
   FeedCursor,
   RepoInfo,
   SubagentAwaitData,
-  SubagentEvent,
-  SubagentEventData,
   SubagentLifecycleData,
   SubagentNodeEventData,
   SubagentNodeSnapshot,
   SubagentResurrectRequest,
   SubagentResurrectResult,
-  SubagentSemanticFact,
   SubagentTranscriptPosition,
-  SubagentSnapshot,
   SubagentStopRequest,
   SubagentTeardownResult,
   PimoteSubagentPresentationManifest,
@@ -27,16 +23,12 @@ import type { RepoInfo as SdkRepoInfo } from '@pimote/sdk/folders';
 import type {
   FeedCursor as SdkFeedCursor,
   SubagentAwaitData as SdkSubagentAwaitData,
-  SubagentEvent as SdkSubagentEvent,
-  SubagentEventData as SdkSubagentEventData,
   SubagentLifecycleData as SdkSubagentLifecycleData,
   SubagentNodeEventData as SdkSubagentNodeEventData,
   SubagentNodeSnapshot as SdkSubagentNodeSnapshot,
   SubagentResurrectRequest as SdkSubagentResurrectRequest,
   SubagentResurrectResult as SdkSubagentResurrectResult,
-  SubagentSemanticFact as SdkSubagentSemanticFact,
   SubagentTranscriptPosition as SdkSubagentTranscriptPosition,
-  SubagentSnapshot as SdkSubagentSnapshot,
   SubagentStopRequest as SdkSubagentStopRequest,
   SubagentTeardownResult as SdkSubagentTeardownResult,
   SubagentPresentationManifest as SdkSubagentPresentationManifest,
@@ -65,12 +57,8 @@ const _subagentNode: AssertEqual<SubagentNodeSnapshot, SdkSubagentNodeSnapshot> 
 const _subagentNodeEventData: AssertEqual<SubagentNodeEventData, SdkSubagentNodeEventData> = true;
 const _subagentAwaitData: AssertEqual<SubagentAwaitData, SdkSubagentAwaitData> = true;
 const _subagentLifecycleData: AssertEqual<SubagentLifecycleData, SdkSubagentLifecycleData> = true;
-const _subagentEventData: AssertEqual<SubagentEventData, SdkSubagentEventData> = true;
-const _subagentSemanticFact: AssertEqual<SubagentSemanticFact, SdkSubagentSemanticFact> = true;
 const _subagentTranscriptPosition: AssertEqual<SubagentTranscriptPosition, SdkSubagentTranscriptPosition> = true;
 const _subagentTranscriptPositionKeys: AssertSameKeys<SubagentTranscriptPosition, SdkSubagentTranscriptPosition> = true;
-const _subagentEvent: AssertEqual<SubagentEvent, SdkSubagentEvent> = true;
-const _subagentSnapshot: AssertEqual<SubagentSnapshot, SdkSubagentSnapshot> = true;
 const _subagentStop: AssertEqual<SubagentStopRequest, SdkSubagentStopRequest> = true;
 const _subagentTeardown: AssertEqual<SubagentTeardownResult, SdkSubagentTeardownResult> = true;
 const _subagentResurrectRequest: AssertEqual<SubagentResurrectRequest, SdkSubagentResurrectRequest> = true;
