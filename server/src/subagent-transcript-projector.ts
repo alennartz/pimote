@@ -1,10 +1,10 @@
 import type { PimoteAgentMessage, PimoteSessionEvent } from '../../shared/dist/index.js';
-import type { SubagentOperationTarget, SubagentPresentationManifest, SubagentProviderEvent } from '@pimote/sdk/subagents';
+import type { ActiveSubagentOperation, SubagentPresentationManifest, SubagentProviderEvent } from '@pimote/sdk/subagents';
 import type { IncomingSdkEvent } from './event-buffer.js';
 
 export interface SubagentProjectionSnapshot {
   readonly messages: readonly PimoteAgentMessage[];
-  readonly activeOperations: readonly SubagentOperationTarget[];
+  readonly activeOperations: readonly ActiveSubagentOperation[];
 }
 
 export interface SubagentTranscriptProjectorOptions {

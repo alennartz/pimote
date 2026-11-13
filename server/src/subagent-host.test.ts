@@ -8,6 +8,7 @@ import type {
   SubagentLeaseEvent,
   SubagentNodeSnapshot,
   SubagentProvider,
+  SubagentProviderEvent,
   SubagentTranscriptPosition,
 } from '@pimote/sdk/subagents';
 import type { PimoteSessionEvent, SessionState } from '../../shared/dist/index.js';
@@ -100,11 +101,13 @@ function fixture(retainedEvents: readonly SubagentEvent[] = [], messagePositions
     capabilities: SubagentCapabilities;
     notify: (event: SubagentLeaseEvent) => void;
   }>();
-  const listeners = new Set<(event: SubagentEvent) => void>();
+  const listeners = new Set<(event: SubagentProviderEvent) => void>();
   type ViewNotification = { connectionId: string; change: SubagentViewChange };
   const viewChanges: ViewNotification[] = [];
   const waiters = new Set<(notification: ViewNotification) => void>();
   const parentEvents: SubagentEvent[] = [];
+  const projected = new Map<string, SubagentProviderEvent[]>();
+  const accept = (id: string, event: SubagentProviderEvent) => projected.set(id, [...(projected.get(id) ?? []), event]);
   const surfaces = new Map<string, { emit: (event: PimoteSessionEvent) => void }>();
   const pending: {
     idleAnswer: string;
@@ -122,7 +125,7 @@ function fixture(retainedEvents: readonly SubagentEvent[] = [], messagePositions
     acquireCalls: 0,
     blockAcquire: false,
   };
-  const publish = (event: SubagentEvent) => {
+  const publish = (event: SubagentProviderEvent) => {
     for (const listener of listeners) listener(event);
   };
 
@@ -258,6 +261,9 @@ function fixture(retainedEvents: readonly SubagentEvent[] = [], messagePositions
         return events.length;
       },
       resolveTranscriptPosition: (position) => resolvePosition(id, position),
+      acceptProviderEvent: (event) => {
+        accept(id, event);
+      },
       initialize: async () => snapshot(),
       refreshSnapshot: () => ({ ...snapshot(), cursor: events.length + 1 }),
       subscribe: (listener) => {
@@ -292,7 +298,12 @@ function fixture(retainedEvents: readonly SubagentEvent[] = [], messagePositions
   const host = createSubagentHost({
     rootSessionId: 'root-session',
     provider,
-    parentSurface: { resolveTranscriptPosition: (position: SubagentTranscriptPosition) => resolvePosition('root-session', position) } as SessionSurface,
+    parentSurface: {
+      resolveTranscriptPosition: (position: SubagentTranscriptPosition) => resolvePosition('root-session', position),
+      acceptProviderEvent: (event: SubagentProviderEvent) => {
+        accept('root-session', event);
+      },
+    } as SessionSurface,
     parentCursor: () => pending.parentCursor,
     emitParentEvent: (event) => {
       parentEvents.push(event);
@@ -320,6 +331,7 @@ function fixture(retainedEvents: readonly SubagentEvent[] = [], messagePositions
     host,
     pending,
     parentEvents,
+    projected,
     viewChanges,
     surfaces,
     publish,
@@ -362,6 +374,32 @@ function fixture(retainedEvents: readonly SubagentEvent[] = [], messagePositions
 }
 
 describe('SubagentHost', () => {
+  it('routes presentation operations only to their root or child session surface', async () => {
+    const f = fixture();
+    await f.host.start();
+    await f.host.openView('connection-1', scout);
+    const base = {
+      type: 'subagent_start',
+      cursor: { epoch: 'epoch-1', sequence: 1 },
+      data: { operation: 'send', to: ['worker'], request: 'hello', response: '', phase: 'sending' },
+    } as const;
+    const root: SubagentProviderEvent = {
+      ...base,
+      eventId: 'root-operation',
+      target: { operationId: 'root-call', kind: 'send', path: [], placement: { toolCallId: 'root-call', contentIndex: 0 } },
+    };
+    const child: SubagentProviderEvent = {
+      ...base,
+      eventId: 'child-operation',
+      cursor: { epoch: 'epoch-1', sequence: 2 },
+      target: { operationId: 'child-call', kind: 'send', path: scout, placement: { toolCallId: 'child-call', contentIndex: 0 } },
+    };
+    f.publish(root);
+    f.publish(child);
+    expect(f.projected.get('root-session')).toEqual([root]);
+    expect(f.projected.get('scout-1')).toEqual([child]);
+  });
+
   it('replays retained semantic history once before snapshot-boundary and live events', async () => {
     const f = fixture([completionEvent(1), completionEvent(2)]);
     f.pending.snapshotEvent = completionEvent(3);

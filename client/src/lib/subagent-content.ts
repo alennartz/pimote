@@ -2,12 +2,7 @@ import type { PimoteAgentMessage, PimoteSessionEvent, SubagentContentDeltaEvent,
 
 export type SubagentContentEvent = SubagentContentStartEvent | SubagentContentDeltaEvent | SubagentContentEndEvent;
 
-export type ActiveSubagentContent = Readonly<{
-  parentMessageId: string;
-  contentIndex: number;
-  operationId: string;
-  kind: SubagentContentStartEvent['kind'];
-}>;
+export type ActiveSubagentContent = Readonly<import('../../../shared/src/protocol.js').PimoteActiveSubagentContent>;
 
 export interface SubagentContentState {
   readonly messages: readonly PimoteAgentMessage[];

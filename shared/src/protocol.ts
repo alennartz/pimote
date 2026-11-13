@@ -122,22 +122,48 @@ export interface SessionState {
 
 export type PimoteSubagentOperationKind = 'send' | 'respond' | 'await' | 'delegation' | 'completion' | 'interrupt' | 'teardown' | 'resurrect';
 
-export interface PimoteSubagentPlacement {
-  toolCallId: string;
-  contentIndex: number;
-  entryId?: string;
-}
+export type PimoteSubagentPlacement = { toolCallId: string; contentIndex: number; entryId?: string } | { entryId: string };
 
-/** Typed semantic replacement rendered in an assistant content slot. */
-export interface PimoteMessageContent {
-  type: 'text' | 'thinking' | 'tool_call' | 'tool_result' | 'subagent';
+export type PimoteSubagentStartData =
+  | { operation: 'send'; to: AgentPath; request: string; response: string; phase: 'ready' | 'sending' | 'waiting' | 'responding' }
+  | { operation: 'respond'; body: string }
+  | { operation: 'await'; requested: readonly AgentPath[]; statuses: readonly SubagentAwaitChildStatus[] };
+export type PimoteActiveSubagentContent = {
+  parentMessageId: string;
+  contentIndex: number;
+  operationId: string;
+  kind: PimoteSubagentOperationKind;
+  data: PimoteSubagentStartData;
+};
+export type PimoteSubagentDeltaData =
+  | { operation: 'send'; field: 'request' | 'response'; delta: string }
+  | { operation: 'send'; phase: 'waiting' | 'responding' }
+  | { operation: 'respond'; delta: string }
+  | { operation: 'await'; statuses: readonly SubagentAwaitChildStatus[] };
+export type PimoteSubagentFinalData =
+  | { operation: 'send'; to: AgentPath; request: string; response: string; error?: string }
+  | { operation: 'respond'; body: string; error?: string }
+  | { operation: 'await'; result: { statuses: readonly SubagentAwaitChildStatus[]; interrupted?: boolean; error?: string } }
+  | { operation: 'delegation'; children: readonly { path: AgentPath; task: string; persona?: string }[] }
+  | { operation: 'completion'; result: { state: SubagentAwaitState; output?: string; error?: string; usage?: SubagentUsage } }
+  | { operation: 'interrupt'; result: { path: AgentPath; status: 'interrupted' | 'already_idle'; output?: string; error?: string } }
+  | {
+      operation: 'teardown';
+      result: {
+        status: 'removed' | 'already_removed' | 'not_found';
+        affectedAgents: readonly { path: AgentPath; sessionId: string; incarnation: string; state: SubagentAwaitState; usage: SubagentUsage; output?: string; error?: string }[];
+      };
+    }
+  | { operation: 'resurrect'; result: { path: AgentPath; sessionId: string; incarnation: string; state: 'idle' | 'running' } }
+  | { operation: 'protocol_error'; message: string };
+
+/** Common fields for projected message content. */
+interface PimoteMessageContentBase {
   text?: string;
   toolCallId?: string;
   toolName?: string;
   args?: unknown;
   result?: unknown;
-  /** Structured result payload for tool_result blocks (the tool's details/structuredContent). */
-  data?: unknown;
   /** Stable semantic operation identity for a `subagent` block. */
   operationId?: string;
   /** Operation kind for a `subagent` block. */
@@ -154,6 +180,18 @@ export interface PimoteMessageContent {
   /** True while this content block is still receiving streaming deltas. Only set on StreamingMessage blocks. */
   streaming?: boolean;
 }
+
+export type PimoteMessageContent = PimoteMessageContentBase &
+  (
+    | { type: 'text' | 'thinking' | 'tool_call' | 'tool_result'; data?: unknown }
+    | {
+        type: 'subagent';
+        operationId: string;
+        subagentKind: PimoteSubagentOperationKind;
+        subagentState: 'active' | 'complete' | 'error' | 'aborted' | 'protocol_error';
+        data: PimoteSubagentStartData | PimoteSubagentFinalData;
+      }
+  );
 
 /** Provider usage reported by Pi for one assistant response or nested tool call. */
 export interface PimoteUsage {
@@ -1529,7 +1567,7 @@ export interface SubagentContentDeltaEvent extends SessionEventBase {
   contentIndex: number;
   operationId: string;
   kind: PimoteSubagentOperationKind;
-  data: unknown;
+  data: PimoteSubagentDeltaData;
 }
 
 /** Closes a projected subagent block with a complete typed payload. */
@@ -1830,6 +1868,7 @@ export interface FullResyncEvent {
   sessionId: string;
   state: SessionState;
   messages: PimoteAgentMessage[];
+  activeSubagentContent?: readonly PimoteActiveSubagentContent[];
   /** Current native branch, including hidden and metadata-only entries. */
   branchEntryIds?: readonly string[];
   /** The message pi is streaming at snapshot time, as far as it has streamed.
@@ -1870,6 +1909,7 @@ export interface SubagentViewSnapshot {
   viewCursor: SubagentViewCursor;
   state: SessionState;
   messages: PimoteAgentMessage[];
+  activeSubagentContent?: readonly PimoteActiveSubagentContent[];
   /** Current child branch, independent of its rendered message projection. */
   branchEntryIds?: readonly string[];
   streamingMessage?: StreamingMessage;

@@ -174,14 +174,102 @@ function assistantEnd(text: string): AgentSessionEvent {
 }
 
 describe('SessionSurface', () => {
-  it('hydrates the optional provider before releasing the first projection snapshot', async () => {
+  it.each(['root', 'child'] as const)('holds the %s first snapshot until provider hydration and stages its events', async (kind) => {
     const f = fixture();
-    const calls: string[] = [];
-    const provider = {
-      rehydrate: async (input: { session: BorrowedAgentSession; path: readonly string[] }) => {
-        calls.push(`rehydrate:${input.session.sessionId}:${input.path.join('/')}`);
-        f.publish(assistantEnd('Hydrated before snapshot'));
+    f.data.branch = [
+      {
+        type: 'message',
+        id: 'assistant-entry',
+        parentId: null,
+        timestamp: '2026-01-01T00:00:00.000Z',
+        message: { role: 'assistant', content: [{ type: 'toolCall', id: 'send-call', name: 'send', arguments: { message: 'native hidden' } }], timestamp: 1 },
       },
+    ] as unknown as typeof f.data.branch;
+    let release!: () => void;
+    let hydrationStarted!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      hydrationStarted = resolve;
+    });
+    const cursor = { epoch: 'epoch-1', sequence: 1 };
+    const event = {
+      type: 'subagent_snapshot_event',
+      eventId: 'saved',
+      cursor,
+      target: {
+        operationId: 'send-call',
+        kind: 'send',
+        path: kind === 'root' ? [] : ['worker'],
+        placement: { toolCallId: 'send-call', contentIndex: 0, entryId: 'assistant-entry' },
+      },
+      state: 'complete',
+      data: { operation: 'send', to: ['worker'], request: 'Check', response: 'Done' },
+    } as const;
+    const listeners = new Set<(event: import('@pimote/sdk/subagents').SubagentProviderEvent) => void>();
+    const provider = {
+      snapshot: () => ({ manifest: { hiddenToolNames: ['send'], hiddenCustomTypes: [] }, nodes: [], cursor, activeOperations: [] }),
+      subscribe: (listener: (event: import('@pimote/sdk/subagents').SubagentProviderEvent) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      replay: () => ({ kind: 'events' as const, cursor, events: [event] }),
+      rehydrate: async (input: { session: BorrowedAgentSession; path: readonly string[] }) => {
+        expect(input.session).toBe(f.native);
+        expect(input.path).toEqual(kind === 'root' ? [] : ['worker']);
+        listeners.forEach((listener) => listener(event));
+        hydrationStarted();
+        await gate;
+      },
+    };
+    const surface = createSessionSurface({
+      sessionId: 'child-session',
+      session: f.native,
+      kind,
+      capabilities: f.capabilities,
+      subagentProvider: provider,
+      subagentPath: kind === 'root' ? [] : ['worker'],
+    });
+    const live: PimoteSessionEvent[] = [];
+    surface.subscribe((item) => live.push(item));
+    let released = false;
+    const first = surface.initialize().then((snapshot) => {
+      released = true;
+      return snapshot;
+    });
+    const didStart = await Promise.race([started.then(() => true), first.then(() => false)]);
+    expect(didStart).toBe(true);
+    expect(released).toBe(false);
+    expect(live).toEqual([]);
+    release();
+    const snapshot = await first;
+    expect(snapshot.messages).toContainEqual(
+      expect.objectContaining({
+        content: expect.arrayContaining([expect.objectContaining({ type: 'subagent', data: { operation: 'send', to: ['worker'], request: 'Check', response: 'Done' } })]),
+      }),
+    );
+    expect(JSON.stringify(snapshot)).not.toContain('native hidden');
+    surface.close();
+  });
+
+  it('sends deltas live but restores accumulated active state instead of replaying deltas', async () => {
+    const f = fixture();
+    f.data.branch = [
+      {
+        type: 'message',
+        id: 'assistant-entry',
+        parentId: null,
+        timestamp: '2026-01-01T00:00:00.000Z',
+        message: { role: 'assistant', content: [{ type: 'toolCall', id: 'send-call', name: 'send', arguments: { message: 'hidden' } }], timestamp: 1 },
+      },
+    ] as unknown as typeof f.data.branch;
+    const cursor = { epoch: 'epoch-1', sequence: 0 };
+    const provider = {
+      snapshot: () => ({ manifest: { hiddenToolNames: ['send'], hiddenCustomTypes: [] }, nodes: [], cursor, activeOperations: [] }),
+      subscribe: () => () => {},
+      replay: () => ({ kind: 'events' as const, cursor, events: [] }),
+      rehydrate: async () => {},
     };
     const surface = createSessionSurface({
       sessionId: 'child-session',
@@ -191,18 +279,30 @@ describe('SessionSurface', () => {
       subagentProvider: provider,
       subagentPath: ['worker'],
     });
-
     const live: PimoteSessionEvent[] = [];
     surface.subscribe((event) => live.push(event));
-    await surface.initialize();
-
-    expect(calls).toEqual(['rehydrate:child-session:worker']);
-    expect(live).toContainEqual(
-      expect.objectContaining({
-        type: 'message_end',
-        message: expect.objectContaining({ content: expect.arrayContaining([expect.objectContaining({ text: 'Hydrated before snapshot' })]) }),
-      }),
-    );
+    const first = await surface.initialize();
+    const target = { operationId: 'send-call', kind: 'send', path: ['worker'], placement: { toolCallId: 'send-call', contentIndex: 0, entryId: 'assistant-entry' } } as const;
+    surface.acceptProviderEvent!({
+      type: 'subagent_start',
+      eventId: 'start',
+      cursor: { ...cursor, sequence: 1 },
+      target,
+      data: { operation: 'send', to: ['worker'], request: 'Check', response: '', phase: 'sending' },
+    });
+    surface.acceptProviderEvent!({
+      type: 'subagent_delta',
+      eventId: 'delta',
+      cursor: { ...cursor, sequence: 2 },
+      target,
+      data: { operation: 'send', field: 'request', delta: ' config' },
+    });
+    expect(live).toContainEqual(expect.objectContaining({ type: 'subagent_content_delta', operationId: 'send-call' }));
+    const replay = surface.replay(first.cursor);
+    if (replay.kind === 'events') expect(replay.events).not.toContainEqual(expect.objectContaining({ type: 'subagent_content_delta' }));
+    const snapshot = surface.refreshSnapshot();
+    expect(snapshot.activeSubagentContent).toContainEqual(expect.objectContaining({ operationId: 'send-call', data: expect.objectContaining({ request: 'Check config' }) }));
+    surface.close();
   });
 
   it('delivers a native event injected during the initial snapshot and streams later events', async () => {

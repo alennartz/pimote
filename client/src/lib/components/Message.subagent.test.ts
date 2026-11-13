@@ -4,61 +4,51 @@ import { mount, tick, unmount } from 'svelte';
 import type { PimoteAgentMessage } from '@pimote/shared';
 import Message from './Message.svelte';
 
-let destroy: (() => void) | undefined;
-
+let component: ReturnType<typeof mount> | undefined;
 afterEach(() => {
-  destroy?.();
-  destroy = undefined;
+  if (component) unmount(component);
+  component = undefined;
   document.body.replaceChildren();
 });
 
-function projectedMessage(state: 'active' | 'complete' = 'active'): PimoteAgentMessage {
+function message(phase: 'ready' | 'sending' | 'waiting' | 'responding' | 'complete'): PimoteAgentMessage {
+  const request = phase === 'ready' ? '' : phase === 'sending' ? 'Please verify' : 'Please verify the configuration.';
+  const response = phase === 'responding' ? 'Everything required' : phase === 'complete' ? 'Everything required is present.' : '';
   return {
     role: 'assistant',
     entryId: 'assistant-entry',
     content: [
-      { type: 'text', text: 'I will ask the worker. ' },
+      { type: 'text', text: 'I will ask the worker.' },
       {
         type: 'subagent',
         operationId: 'send-call',
         subagentKind: 'send',
-        subagentState: state,
-        placement: { toolCallId: 'send-call', contentIndex: 1, entryId: 'assistant-entry' },
-        data: {
-          operation: 'send',
-          body: state === 'active' ? 'Please verify the configuration.' : 'Please verify the configuration. Response: complete.',
-        },
-        streaming: state === 'active',
+        subagentState: phase === 'complete' ? 'complete' : 'active',
+        placement: { toolCallId: 'send-call', contentIndex: 1 },
+        data: phase === 'complete' ? { operation: 'send', to: ['worker'], request, response } : { operation: 'send', to: ['worker'], request, response, phase },
       },
-      { type: 'text', text: ' I will inspect the local file too.' },
+      { type: 'text', text: 'I will inspect the local file too.' },
       { type: 'tool_call', toolCallId: 'read-call', toolName: 'read', args: { path: 'config.json' } },
     ],
   };
 }
 
-describe('projected subagent message content', () => {
-  it('renders a semantic block inline with surrounding assistant text and unrelated native tools', async () => {
+describe('inline subagent send rendering', () => {
+  it.each(['ready', 'sending', 'waiting', 'responding', 'complete'] as const)('renders the %s state in the mixed assistant row', async (phase) => {
     const target = document.createElement('div');
-    const component = mount(Message, { target, props: { message: projectedMessage() } });
-    destroy = () => unmount(component);
+    component = mount(Message, { target, props: { message: message(phase) } });
     await tick();
-
-    expect(target.textContent).toContain('I will ask the worker.');
-    expect(target.textContent).toContain('Please verify the configuration.');
-    expect(target.textContent).toContain('I will inspect the local file too.');
-    expect(target.textContent).toContain('read');
-    expect(target.querySelector('[aria-label="Subagent send operation"]')).not.toBeNull();
-    expect(target.textContent).not.toContain('send-call');
-  });
-
-  it('shows the complete response payload after replay without rendering a native replacement card', async () => {
-    const target = document.createElement('div');
-    const component = mount(Message, { target, props: { message: projectedMessage('complete') } });
-    destroy = () => unmount(component);
-    await tick();
-
-    expect(target.textContent).toContain('Response: complete.');
-    expect(target.querySelectorAll('[aria-label="Subagent send operation"]').length).toBe(1);
-    expect(Array.from(target.querySelectorAll('.tool-name')).map((item) => item.textContent)).not.toContain('send');
+    const text = target.textContent ?? '';
+    const card = target.querySelector('[aria-label="Subagent send operation"]');
+    expect(card).not.toBeNull();
+    expect(card!.textContent?.toLowerCase()).toContain(phase);
+    expect(card!.textContent).toContain('worker');
+    const body = phase === 'ready' ? 'Ready to send.' : 'Please verify';
+    expect(card!.textContent).toContain(body);
+    expect(text.indexOf('I will ask the worker.')).toBeLessThan(text.indexOf(body));
+    expect(text.indexOf(body)).toBeLessThan(text.indexOf('I will inspect the local file too.'));
+    expect(text).toContain('read');
+    if (phase === 'responding' || phase === 'complete') expect(card!.textContent).toContain('Everything required');
+    else expect(card!.textContent).not.toContain('Everything required');
   });
 });

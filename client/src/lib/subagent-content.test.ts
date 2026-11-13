@@ -1,150 +1,96 @@
 import { describe, expect, it } from 'vitest';
 import type { PimoteAgentMessage, SubagentContentDeltaEvent, SubagentContentEndEvent, SubagentContentStartEvent } from '../../../shared/src/protocol.js';
-import { applySubagentContentEvent, hydrateSubagentContent, type SubagentContentState } from './subagent-content.js';
+import { applySubagentContentEvent, hydrateSubagentContent } from './subagent-content.js';
 
-function assistant(): PimoteAgentMessage {
-  return {
-    role: 'assistant',
-    entryId: 'assistant-entry',
-    content: [
-      { type: 'text', text: 'before' },
-      { type: 'tool_call', toolCallId: 'read-call', toolName: 'read', args: { path: 'config.json' } },
-      { type: 'text', text: 'after' },
-    ],
-  };
-}
-
-function start(): SubagentContentStartEvent {
-  return {
-    type: 'subagent_content_start',
-    sessionId: 'root-session',
-    cursor: 1,
-    parentMessageId: 'assistant-entry',
-    contentIndex: 1,
+const assistant: PimoteAgentMessage = {
+  role: 'assistant',
+  entryId: 'assistant-entry',
+  content: [
+    { type: 'text', text: 'before' },
+    { type: 'text', text: 'after' },
+    { type: 'tool_call', toolCallId: 'read-call', toolName: 'read', args: { path: 'config.json' } },
+  ],
+};
+const target = { sessionId: 'root-session', parentMessageId: 'assistant-entry', contentIndex: 1, operationId: 'send-call', kind: 'send' } as const;
+const start: SubagentContentStartEvent = {
+  ...target,
+  type: 'subagent_content_start',
+  cursor: 1,
+  placement: { toolCallId: 'send-call', contentIndex: 1 },
+  content: {
+    type: 'subagent',
     operationId: 'send-call',
-    kind: 'send',
-    placement: { toolCallId: 'send-call', contentIndex: 1 },
-    content: {
-      type: 'subagent',
-      operationId: 'send-call',
-      subagentKind: 'send',
-      subagentState: 'active',
-      placement: { toolCallId: 'send-call', contentIndex: 1 },
-      data: { operation: 'send', body: '' },
-      streaming: true,
-    },
-  };
-}
-
-function delta(): SubagentContentDeltaEvent {
-  return {
-    type: 'subagent_content_delta',
-    sessionId: 'root-session',
-    cursor: 2,
-    parentMessageId: 'assistant-entry',
-    contentIndex: 1,
+    subagentKind: 'send',
+    subagentState: 'active',
+    data: { operation: 'send', to: ['worker'], request: 'Check', response: '', phase: 'sending' },
+    streaming: true,
+  },
+};
+const request: SubagentContentDeltaEvent = { ...target, type: 'subagent_content_delta', cursor: 2, data: { operation: 'send', field: 'request', delta: ' config' } };
+const response: SubagentContentDeltaEvent = { ...target, type: 'subagent_content_delta', cursor: 3, data: { operation: 'send', field: 'response', delta: 'All present' } };
+const end: SubagentContentEndEvent = {
+  ...target,
+  type: 'subagent_content_end',
+  cursor: 4,
+  state: 'complete',
+  content: {
+    type: 'subagent',
     operationId: 'send-call',
-    kind: 'send',
-    data: { operation: 'send', delta: 'Inspect the configuration.' },
-  };
-}
-
-function end(state: SubagentContentEndEvent['state'] = 'complete'): SubagentContentEndEvent {
-  return {
-    type: 'subagent_content_end',
-    sessionId: 'root-session',
-    cursor: 3,
-    parentMessageId: 'assistant-entry',
-    contentIndex: 1,
-    operationId: 'send-call',
-    kind: 'send',
-    state,
-    content: {
-      type: 'subagent',
-      operationId: 'send-call',
-      subagentKind: 'send',
-      subagentState: state,
-      placement: { toolCallId: 'send-call', contentIndex: 1, entryId: 'assistant-entry' },
-      data: { operation: 'completion', result: { state: 'idle', output: 'done' } },
-    },
-  };
-}
+    subagentKind: 'send',
+    subagentState: 'complete',
+    data: { operation: 'send', to: ['worker'], request: 'Check config', response: 'All present' },
+  },
+};
 
 describe('projected subagent content', () => {
-  it('inserts one stable block at its native content index without dropping surrounding content', () => {
-    const state = hydrateSubagentContent([assistant()]);
-    const next = applySubagentContentEvent(state, start());
-
-    expect(next.messages[0]?.content.map((block) => block.type)).toEqual(['text', 'subagent', 'text']);
-    expect(next.messages[0]?.content[1]).toMatchObject({ type: 'subagent', operationId: 'send-call', streaming: true });
-    expect(next.active).toEqual([{ parentMessageId: 'assistant-entry', contentIndex: 1, operationId: 'send-call', kind: 'send' }]);
+  it('keeps one block and surrounding content through request, response, and completion', () => {
+    let state = hydrateSubagentContent([assistant]);
+    for (const event of [start, request, response]) state = applySubagentContentEvent(state, event);
+    expect(state.messages[0]?.content.map((block) => block.type)).toEqual(['text', 'subagent', 'text', 'tool_call']);
+    expect(state.messages[0]?.content[1]).toMatchObject({ operationId: 'send-call', data: { operation: 'send', request: 'Check config', response: 'All present' } });
+    expect(state.messages[0]?.content[2]).toMatchObject({ text: 'after' });
+    expect(state.messages[0]?.content[3]).toMatchObject({ toolName: 'read' });
+    state = applySubagentContentEvent(state, end);
+    expect(state.messages[0]?.content[1]).toMatchObject({ subagentState: 'complete', data: { operation: 'send', request: 'Check config', response: 'All present' } });
+    expect(state.active).toEqual([]);
   });
 
-  it('applies body deltas in place and keeps the same operation target', () => {
-    const started = applySubagentContentEvent(hydrateSubagentContent([assistant()]), start());
-    const updated = applySubagentContentEvent(started, delta());
-
-    expect(updated.messages[0]?.content[1]).toMatchObject({
-      type: 'subagent',
+  it('restores an active operation from a reconnect snapshot and continues its response', () => {
+    const active = {
+      parentMessageId: 'assistant-entry',
+      contentIndex: 1,
       operationId: 'send-call',
-      data: { operation: 'send', body: 'Inspect the configuration.' },
-    });
-    expect(updated.active).toEqual(started.active);
-  });
-
-  it('replaces the active block with one complete final payload and clears only that active operation', () => {
-    const started = applySubagentContentEvent(hydrateSubagentContent([assistant()]), start());
-    const completed = applySubagentContentEvent(started, end());
-
-    expect(completed.messages[0]?.content.map((block) => block.type)).toEqual(['text', 'subagent', 'text']);
-    expect(completed.messages[0]?.content[1]).toMatchObject({ type: 'subagent', subagentState: 'complete', streaming: false });
-    expect(completed.active).toEqual([]);
-  });
-
-  it('restores complete final blocks and active operation state from one reconnect snapshot', () => {
+      kind: 'send',
+      data: { operation: 'send', to: ['worker'], request: 'Check config', response: '', phase: 'waiting' },
+    } as const;
     const snapshot: PimoteAgentMessage = {
-      role: 'assistant',
-      entryId: 'assistant-entry',
+      ...assistant,
       content: [
-        { type: 'text', text: 'before' },
-        {
-          type: 'subagent',
-          operationId: 'send-call',
-          subagentKind: 'send',
-          subagentState: 'complete',
-          placement: { toolCallId: 'send-call', contentIndex: 1, entryId: 'assistant-entry' },
-          data: { operation: 'completion', result: { state: 'idle', output: 'done' } },
-        },
+        assistant.content[0],
+        { type: 'subagent', operationId: 'send-call', subagentKind: 'send', subagentState: 'active', data: active.data },
+        ...assistant.content.slice(1),
       ],
     };
-    const active = [{ parentMessageId: 'another-message', contentIndex: 0, operationId: 'await-call', kind: 'await' }] as const;
-
-    const state = hydrateSubagentContent([snapshot], active);
-    expect(state.messages[0]?.content[1]).toMatchObject({ type: 'subagent', subagentState: 'complete' });
-    expect(state.active).toEqual(active);
+    const state = applySubagentContentEvent(hydrateSubagentContent([snapshot], [active]), response);
+    expect(state.messages[0]?.content[1]).toMatchObject({ data: { operation: 'send', request: 'Check config', response: 'All present' } });
+    expect(state.active).toHaveLength(1);
   });
 
-  it('renders an explicit protocol-error payload instead of a blank replacement', () => {
-    const errored = applySubagentContentEvent(hydrateSubagentContent([assistant()]), start());
-    const result = applySubagentContentEvent(errored, end('protocol_error'));
-
-    expect(result.messages[0]?.content[1]).toMatchObject({
-      type: 'subagent',
-      subagentState: 'protocol_error',
-      data: expect.any(Object),
-    });
-    expect(result.active).toEqual([]);
-  });
-
-  it('does not replay historical delta events during hydration', () => {
-    const state: SubagentContentState = hydrateSubagentContent([
-      {
-        role: 'assistant',
-        content: [{ type: 'subagent', operationId: 'send-call', subagentKind: 'send', subagentState: 'complete', data: { operation: 'completion', result: { state: 'idle' } } }],
+  it('keeps a visible protocol error in the replacement slot', () => {
+    const state = applySubagentContentEvent(hydrateSubagentContent([assistant]), start);
+    const error: SubagentContentEndEvent = {
+      ...end,
+      state: 'protocol_error',
+      content: {
+        type: 'subagent',
+        operationId: 'send-call',
+        subagentKind: 'send',
+        subagentState: 'protocol_error',
+        data: { operation: 'protocol_error', message: 'Missing subagent lifecycle' },
       },
-    ]);
-
-    expect(state.messages[0]?.content).toHaveLength(1);
-    expect(state.active).toEqual([]);
+    };
+    const completed = applySubagentContentEvent(state, error);
+    expect(completed.messages[0]?.content[1]).toMatchObject({ type: 'subagent', subagentState: 'protocol_error', data: { message: 'Missing subagent lifecycle' } });
+    expect(completed.active).toEqual([]);
   });
 });

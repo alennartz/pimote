@@ -1,6 +1,5 @@
-import type { AgentPath, BorrowedAgentSession, FeedCursor, SubagentEvent, SubagentNodeSnapshot, SubagentUsage } from './types.js';
+import type { AgentPath, BorrowedAgentSession, FeedCursor, SubagentNodeSnapshot, SubagentProvider, SubagentUsage } from './types.js';
 
-/** Native renderers declared by a provider for one immutable provider epoch. */
 export type SubagentPresentationManifest = Readonly<{
   hiddenToolNames: readonly string[];
   hiddenCustomTypes: readonly string[];
@@ -8,12 +7,7 @@ export type SubagentPresentationManifest = Readonly<{
 
 export type SubagentOperationKind = 'send' | 'respond' | 'await' | 'delegation' | 'completion' | 'interrupt' | 'teardown' | 'resurrect';
 
-/** Native assistant content slot occupied by one projected operation. */
-export type SubagentPlacement = Readonly<{
-  toolCallId: string;
-  contentIndex: number;
-  entryId?: string;
-}>;
+export type SubagentPlacement = Readonly<{ toolCallId: string; contentIndex: number; entryId?: string }> | Readonly<{ entryId: string }>;
 
 export type SubagentOperationTarget = Readonly<{
   operationId: string;
@@ -21,21 +15,6 @@ export type SubagentOperationTarget = Readonly<{
   path: AgentPath;
   placement?: SubagentPlacement;
 }>;
-
-export type SubagentStartData =
-  | Readonly<{ operation: 'send'; body: string }>
-  | Readonly<{ operation: 'respond'; body: string }>
-  | Readonly<{ operation: 'await'; requested: readonly AgentPath[] }>;
-
-export type SubagentDeltaData =
-  | Readonly<{ operation: 'send'; delta: string }>
-  | Readonly<{ operation: 'respond'; delta: string }>
-  | Readonly<{ operation: 'await'; statuses: readonly SubagentAwaitStatus[] }>;
-
-export type SubagentEndData =
-  | Readonly<{ operation: 'send'; result: SubagentCompletionResult }>
-  | Readonly<{ operation: 'respond'; result: SubagentCompletionResult }>
-  | Readonly<{ operation: 'await'; result: SubagentAwaitResult }>;
 
 export type SubagentAwaitStatus = Readonly<{
   path: AgentPath;
@@ -58,7 +37,23 @@ export type SubagentAwaitResult = Readonly<{
   error?: string;
 }>;
 
-export type SubagentFinalData =
+export type SubagentStartData =
+  | Readonly<{ operation: 'send'; to: AgentPath; request: string; response: string; phase: 'ready' | 'sending' | 'waiting' | 'responding' }>
+  | Readonly<{ operation: 'respond'; body: string }>
+  | Readonly<{ operation: 'await'; requested: readonly AgentPath[]; statuses: readonly SubagentAwaitStatus[] }>;
+
+export type SubagentDeltaData =
+  | Readonly<{ operation: 'send'; field: 'request' | 'response'; delta: string }>
+  | Readonly<{ operation: 'send'; phase: 'waiting' | 'responding' }>
+  | Readonly<{ operation: 'respond'; delta: string }>
+  | Readonly<{ operation: 'await'; statuses: readonly SubagentAwaitStatus[] }>;
+
+export type SubagentEndData =
+  | Readonly<{ operation: 'send'; to: AgentPath; request: string; response: string; error?: string }>
+  | Readonly<{ operation: 'respond'; body: string; error?: string }>
+  | Readonly<{ operation: 'await'; result: SubagentAwaitResult }>;
+
+export type SubagentFiniteData =
   | Readonly<{ operation: 'delegation'; children: readonly Readonly<{ path: AgentPath; task: string; persona?: string }>[] }>
   | Readonly<{ operation: 'completion'; result: SubagentCompletionResult }>
   | Readonly<{ operation: 'interrupt'; result: Readonly<{ path: AgentPath; status: 'interrupted' | 'already_idle'; output?: string; error?: string }> }>
@@ -69,7 +64,7 @@ export type SubagentFinalData =
           path: AgentPath;
           sessionId: string;
           incarnation: string;
-          state: 'running' | 'waiting' | 'idle' | 'errored' | 'dead' | 'stopped';
+          state: SubagentAwaitStatus['state'];
           usage: SubagentUsage;
           output?: string;
           error?: string;
@@ -79,58 +74,17 @@ export type SubagentFinalData =
     }>
   | Readonly<{ operation: 'resurrect'; result: Readonly<{ path: AgentPath; sessionId: string; incarnation: string; state: 'idle' | 'running' }> }>;
 
-export type SubagentProtocolErrorData = Readonly<{
-  operationId: string;
-  operation: SubagentOperationKind;
-  message: string;
-}>;
+export type SubagentFinalData = SubagentEndData | SubagentFiniteData;
+export type SubagentProtocolErrorData = Readonly<{ operationId: string; operation: SubagentOperationKind; message: string }>;
+export type ActiveSubagentOperation = Readonly<{ target: SubagentOperationTarget; data: SubagentStartData }>;
 
-export type SubagentSnapshotEvent = Readonly<{
-  type: 'subagent_snapshot';
-  eventId: string;
-  cursor: FeedCursor;
-  manifest: SubagentPresentationManifest;
-  nodes: readonly SubagentNodeSnapshot[];
-  activeOperations: readonly SubagentOperationTarget[];
-}>;
-
-export type SubagentStartEvent = Readonly<{
-  type: 'subagent_start';
-  eventId: string;
-  cursor: FeedCursor;
-  target: SubagentOperationTarget;
-  data: SubagentStartData;
-}>;
-
-export type SubagentDeltaEvent = Readonly<{
-  type: 'subagent_delta';
-  eventId: string;
-  cursor: FeedCursor;
-  target: SubagentOperationTarget;
-  data: SubagentDeltaData;
-}>;
-
-export type SubagentEndEvent = Readonly<{
-  type: 'subagent_end';
-  eventId: string;
-  cursor: FeedCursor;
-  target: SubagentOperationTarget;
-  state: 'complete' | 'error' | 'aborted';
-  data: SubagentEndData;
-}>;
-
-export type SubagentFiniteEvent = Readonly<{
-  type: 'subagent_snapshot_event';
-  eventId: string;
-  cursor: FeedCursor;
-  target: SubagentOperationTarget;
-  state: 'complete' | 'error' | 'aborted';
-  data: SubagentFinalData;
-}>;
-
-export type SubagentTopologyEvent = SubagentEvent;
-
-export type SubagentProviderEvent = SubagentTopologyEvent | SubagentSnapshotEvent | SubagentStartEvent | SubagentDeltaEvent | SubagentEndEvent | SubagentFiniteEvent;
+type PresentationEventBase = Readonly<{ eventId: string; cursor: FeedCursor; target: SubagentOperationTarget }>;
+export type SubagentStartEvent = PresentationEventBase & Readonly<{ type: 'subagent_start'; data: SubagentStartData }>;
+export type SubagentDeltaEvent = PresentationEventBase & Readonly<{ type: 'subagent_delta'; data: SubagentDeltaData }>;
+export type SubagentEndEvent = PresentationEventBase & Readonly<{ type: 'subagent_end'; state: 'complete' | 'error' | 'aborted'; data: SubagentEndData }>;
+export type SubagentFiniteEvent = PresentationEventBase & Readonly<{ type: 'subagent_snapshot_event'; state: 'complete' | 'error' | 'aborted'; data: SubagentFinalData }>;
+export type SubagentTopologyEvent = import('./types.js').SubagentEvent & Readonly<{ kind: 'node_added' | 'node_updated' | 'node_removed' | 'runtime_replaced' }>;
+export type SubagentProviderEvent = SubagentTopologyEvent | SubagentStartEvent | SubagentDeltaEvent | SubagentEndEvent | SubagentFiniteEvent;
 
 export type PersistedSubagentContent = Readonly<{
   operationId: string;
@@ -144,25 +98,16 @@ export type SubagentProviderSnapshot = Readonly<{
   manifest: SubagentPresentationManifest;
   nodes: readonly SubagentNodeSnapshot[];
   cursor: FeedCursor;
-  activeOperations: readonly SubagentOperationTarget[];
+  activeOperations: readonly ActiveSubagentOperation[];
 }>;
 
 export type SubagentPresentationReplay =
   | Readonly<{ kind: 'events'; cursor: FeedCursor; events: readonly SubagentProviderEvent[] }>
   | Readonly<{ kind: 'snapshot_required'; reason: 'epoch_changed' | 'history_unavailable' }>;
 
-export interface SubagentPresentationProvider {
+export interface SubagentPresentationProvider extends Omit<SubagentProvider, 'snapshot' | 'subscribe' | 'replay'> {
   snapshot(): SubagentProviderSnapshot;
   subscribe(listener: (event: SubagentProviderEvent) => void): () => void;
   replay(after?: FeedCursor): SubagentPresentationReplay;
   rehydrate(input: { session: BorrowedAgentSession; path: AgentPath }): Promise<void>;
-}
-
-export interface SubagentPresentationProviderOptions {
-  manifest: SubagentPresentationManifest;
-}
-
-/** Interface-only factory. The provider implementation belongs to a later phase. */
-export function createSubagentPresentationProvider(_options: SubagentPresentationProviderOptions): SubagentPresentationProvider {
-  throw new Error('not implemented');
 }

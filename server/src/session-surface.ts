@@ -57,6 +57,7 @@ export interface SessionSurfaceSnapshot {
   cursor: number;
   state: SessionState;
   messages: PimoteAgentMessage[];
+  activeSubagentContent?: readonly import('../../shared/dist/index.js').PimoteActiveSubagentContent[];
   branchEntryIds?: readonly string[];
   streamingMessage?: StreamingMessage;
   runningToolCallIds?: string[];
@@ -167,7 +168,7 @@ export interface SessionSurfaceOptions {
   /** Buffer capacity for this independent surface. */
   bufferCapacity?: number;
   /** Optional semantic provider hydrated before the first client snapshot. */
-  subagentProvider?: Pick<SubagentPresentationProvider, 'rehydrate'>;
+  subagentProvider?: Pick<SubagentPresentationProvider, 'rehydrate' | 'snapshot' | 'subscribe' | 'replay'>;
   /** Logical path supplied to provider hydration. */
   subagentPath?: AgentPath;
 }
@@ -183,6 +184,8 @@ export interface SessionSurface {
   initialize(): Promise<SessionSurfaceSnapshot>;
   /** Accept one native Pi event when the owning slot supplies the subscription. */
   acceptNativeEvent(event: IncomingSdkEvent): void;
+  /** Accept a provider operation routed to this session surface. */
+  acceptProviderEvent?(event: import('@pimote/sdk/subagents').SubagentProviderEvent): void;
   /** Rebuild the transcript/state snapshot and invalidate prior replay positions. */
   refreshSnapshot(): SessionSurfaceSnapshot;
   subscribe(listener: (event: PimoteSessionEvent) => void): () => void;
