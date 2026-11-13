@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
 import Panel from './Panel.svelte';
 import { panelStore } from '$lib/stores/panel-store.svelte.js';
@@ -86,6 +86,7 @@ beforeEach(() => {
 afterEach(async () => {
   await destroy?.();
   destroy = undefined;
+  vi.useRealTimers();
   sessionRegistry.clearSubagentRoot('root');
   sessionRegistry.sessions = {};
   sessionRegistry.viewedSessionId = null;
@@ -158,5 +159,75 @@ describe('Panel hierarchy navigation', () => {
     expect(sessionRegistry.viewedSurface?.kind).toBe('child');
     expect(sessionRegistry.getSubagentDraftText('root', ['worker'])).toBe('Child draft');
     expect(sessionRegistry.getSubagentAttachment('root', ['worker'])?.messages[0].content[0]).toMatchObject({ type: 'text', text: initialTask });
+  });
+});
+
+describe('Panel removal notices', () => {
+  function removeWorkerNode(): void {
+    sessionRegistry.handleEvent({
+      type: 'subagent_event',
+      sessionId: 'root',
+      cursor: 2,
+      eventId: 'remove-worker',
+      path: ['worker'],
+      kind: 'node_removed',
+      data: { node: node(['worker']), reason: 'manual' },
+      relatedPiEvents: [],
+    });
+  }
+
+  it('auto-dismisses a removal notice after ten seconds and clears the persisted entry', async () => {
+    vi.useFakeTimers();
+    const target = render();
+    await tick();
+
+    removeWorkerNode();
+    await tick();
+    expect(target.querySelector('[role="status"]')?.textContent).toContain('was removed.');
+
+    vi.advanceTimersByTime(5_000);
+    await tick();
+    expect(target.querySelector('[role="status"]')?.textContent).toContain('was removed.');
+
+    vi.advanceTimersByTime(5_000);
+    await tick();
+    expect(target.querySelector('[role="status"]')).toBeNull();
+    expect(sessionRegistry.getLatestSubagentClosedNotice('root')).toBeNull();
+  });
+
+  it('auto-dismisses an unavailable notice after ten seconds', async () => {
+    vi.useFakeTimers();
+    const target = render();
+    await tick();
+
+    sessionRegistry.handleEvent({
+      type: 'subagent_view_closed',
+      sessionId: 'root',
+      path: ['worker'],
+      incarnation: 'inc-worker',
+      attachmentGeneration: 'gen-worker',
+      reason: 'unavailable',
+    });
+    await tick();
+    expect(target.querySelector('[role="status"]')?.textContent).toContain('is no longer available.');
+
+    vi.advanceTimersByTime(10_000);
+    await tick();
+    expect(target.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it('keeps a resurrection request past ten seconds until dismissed', async () => {
+    vi.useFakeTimers();
+    const target = render();
+    await tick();
+
+    sessionRegistry.requestSubagentResurrection('root', ['worker']);
+    await tick();
+    expect(target.querySelector('[role="status"]')?.textContent).toContain('was removed.');
+
+    vi.advanceTimersByTime(10_000);
+    await tick();
+    expect(target.querySelector('[role="status"]')).not.toBeNull();
+    expect(sessionRegistry.getPendingSubagentResurrection('root')).not.toBeNull();
   });
 });

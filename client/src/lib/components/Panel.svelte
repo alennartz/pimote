@@ -25,7 +25,27 @@
   let resurrectTask = $state('');
   let resurrectChannels = $state('');
   let resurrectModel = $state('');
+  let resurrectParentPath = $state<AgentPath>([]);
   let busy = $state(false);
+  let noticeExpiryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const noticeExpiryMs = 10_000;
+
+  function clearNoticeExpiry(): void {
+    if (noticeExpiryTimer === null) return;
+    clearTimeout(noticeExpiryTimer);
+    noticeExpiryTimer = null;
+  }
+
+  function setNotice(value: SubagentViewClosedNotice, autoDismiss: boolean): void {
+    clearNoticeExpiry();
+    notice = value;
+    if (!autoDismiss) return;
+    noticeExpiryTimer = setTimeout(() => {
+      noticeExpiryTimer = null;
+      dismissNotice();
+    }, noticeExpiryMs);
+  }
 
   const rootSessionId = $derived(sessionRegistry.viewedSessionId);
   const rootSession = $derived(rootSessionId ? sessionRegistry.sessions[rootSessionId] : null);
@@ -83,6 +103,7 @@
 
   function inspect(path: AgentPath): void {
     inspectedPath = [...path];
+    clearNoticeExpiry();
     notice = null;
   }
 
@@ -146,7 +167,7 @@
     busy = true;
     try {
       const response = await sessionRegistry.teardownSubagentView(rootId, confirmation.path, confirmation.incarnation, confirmation.attachmentGeneration);
-      if (!response.success) notice = { rootSessionId: rootId, path: confirmation.path, reason: 'unavailable' };
+      if (!response.success) setNotice({ rootSessionId: rootId, path: confirmation.path, reason: 'unavailable' }, true);
       teardownConfirmation = null;
     } finally {
       busy = false;
@@ -162,6 +183,7 @@
     const path = closed.path;
     resurrectSavedSessionId = node?.sessionId ?? selectedAttachment?.childSessionId ?? '';
     resurrectLocalId = path[path.length - 1] ?? '';
+    resurrectParentPath = path.slice(0, -1);
     resurrectTask = node?.task ?? '';
     resurrectChannels = (node?.channels ?? []).join(', ');
     resurrectModel = node?.model ?? '';
@@ -176,7 +198,7 @@
       const response = await sessionRegistry.resurrectSubagent({
         rootSessionId: rootId,
         savedSessionId: resurrectSavedSessionId.trim(),
-        parentPath: (notice?.path ?? []).slice(0, -1),
+        parentPath: resurrectParentPath,
         localId: resurrectLocalId.trim(),
         task: resurrectTask.trim(),
         channels: resurrectChannels
@@ -187,6 +209,7 @@
       });
       if (response.success) {
         if (notice) sessionRegistry.clearPendingSubagentResurrection(notice.rootSessionId, notice.path);
+        clearNoticeExpiry();
         resurrectOpen = false;
         notice = null;
       }
@@ -196,6 +219,7 @@
   }
 
   function dismissNotice(): void {
+    clearNoticeExpiry();
     if (notice?.reason === 'teardown') sessionRegistry.clearPendingSubagentResurrection(notice.rootSessionId, notice.path);
     notice = null;
   }
@@ -209,25 +233,26 @@
     const pending = rootSessionId ? sessionRegistry.getPendingSubagentResurrection(rootSessionId) : null;
     const closed = rootSessionId ? sessionRegistry.getLatestSubagentClosedNotice(rootSessionId) : null;
     if (pending) {
-      notice = pending;
+      setNotice(pending, false);
       prepareResurrection(pending);
     } else if (closed) {
-      notice = closed;
+      setNotice(closed, true);
       prepareResurrection(closed, false);
     }
     const unsubscribe = sessionRegistry.onSubagentViewClosed((closed) => {
       if (closed.rootSessionId !== sessionRegistry.viewedSessionId) return;
-      notice = closed;
+      setNotice(closed, true);
       teardownConfirmation = null;
       if (closed.reason === 'teardown') prepareResurrection(closed, false);
     });
     const unsubscribeResurrection = sessionRegistry.onSubagentResurrectionRequested((requested) => {
       if (requested.rootSessionId !== sessionRegistry.viewedSessionId) return;
-      notice = requested;
+      setNotice(requested, false);
       teardownConfirmation = null;
       prepareResurrection(requested);
     });
     return () => {
+      clearNoticeExpiry();
       unsubscribe();
       unsubscribeResurrection();
     };
@@ -236,7 +261,7 @@
   $effect(() => {
     const persisted = rootSessionId ? sessionRegistry.getLatestSubagentClosedNotice(rootSessionId) : null;
     if (persisted && !notice) {
-      notice = persisted;
+      setNotice(persisted, true);
       prepareResurrection(persisted, false);
     }
   });
