@@ -150,6 +150,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
   let nativeBlocks: NativeBlock[][] = [];
   const hiddenToolCalls = new Set<string>();
   const hiddenToolSlots = new Map<string, MutableSlot>();
+  const hiddenEntrySlots = new Map<string, MutableSlot>();
   const hiddenCustomEntries = new Set<string>();
   const operations = new Map<string, OperationRecord>();
   const completedOperations = new Set<string>();
@@ -230,6 +231,8 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     if (placement && 'entryId' in placement && !('toolCallId' in placement)) {
       const byEntry = findMessageByEntry(placement.entryId);
       if (byEntry >= 0) return { messageIndex: byEntry, contentIndex: 0, parentMessageId: messageId(messages[byEntry], byEntry) };
+      const hiddenEntry = hiddenEntrySlots.get(placement.entryId);
+      if (hiddenEntry) return { ...hiddenEntry };
       const messageIndex = messages.push({ role: 'custom', entryId: placement.entryId, content: [] }) - 1;
       nativeBlocks.push([]);
       hiddenCustomEntries.add(placement.entryId);
@@ -567,6 +570,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     nativeBlocks = [];
     hiddenToolCalls.clear();
     hiddenToolSlots.clear();
+    hiddenEntrySlots.clear();
     hiddenCustomEntries.clear();
     customProtocolErrors.clear();
     customOperationRows.clear();
@@ -596,6 +600,10 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
       const mapped = cloneMessage(source);
       const index = messages.length;
       const visible = visibleContentFor(mapped, index);
+      if (mapped.role === 'toolResult' && mapped.entryId && mapped.content[0]?.toolCallId) {
+        const hiddenSlot = hiddenToolSlots.get(mapped.content[0].toolCallId);
+        if (hiddenSlot) hiddenEntrySlots.set(mapped.entryId, hiddenSlot);
+      }
       if (mapped.role === 'toolResult' && visible.content.length === 0) continue;
       const filtered =
         visible.content.length === mapped.content.length
@@ -671,6 +679,11 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
       }
     }
     if (event.type === 'entry_appended') {
+      if (event.entry.type === 'message' && event.entry.message.role === 'toolResult' && typeof event.entry.id === 'string') {
+        const slot = hiddenToolSlots.get(event.entry.message.toolCallId);
+        if (slot) hiddenEntrySlots.set(event.entry.id, slot);
+        return [];
+      }
       if (event.entry.type === 'custom' && hiddenCustomTypes.has(event.entry.customType)) {
         const entryId = typeof event.entry.id === 'string' ? event.entry.id : undefined;
         if (entryId !== undefined) {

@@ -4,7 +4,7 @@ import type { PimoteAgentMessage } from '../../shared/dist/index.js';
 import { createSubagentTranscriptProjector } from './subagent-transcript-projector.js';
 import type { IncomingSdkEvent } from './event-buffer.js';
 
-const manifest = { hiddenToolNames: ['send', 'teardown'], hiddenCustomTypes: ['subagents'] };
+const manifest = { hiddenToolNames: ['send', 'teardown', 'await_agents'], hiddenCustomTypes: ['subagents'] };
 const target = { operationId: 'send-call', kind: 'send', path: [], placement: { toolCallId: 'send-call', contentIndex: 1 } } as const;
 const cursor = (sequence: number) => ({ epoch: 'epoch-1', sequence });
 const assistant = (content: PimoteAgentMessage['content']): PimoteAgentMessage => ({ role: 'assistant', entryId: 'assistant-entry', content });
@@ -40,6 +40,35 @@ describe('subagent transcript projector', () => {
     expect(content[2]).toMatchObject({ text: 'after' });
     expect(content[3]).toMatchObject({ toolName: 'read', toolCallId: 'read-call' });
     expect(JSON.stringify(current.snapshot())).not.toContain('secret native argument');
+  });
+
+  it('projects custom completion payloads attached to a hidden tool result into the assistant row', () => {
+    const current = projector();
+    current.rehydrate([
+      assistant(
+        [
+          { type: 'text', text: 'before' },
+          { type: 'tool_call', toolCallId: 'await-call', toolName: 'await_agents', args: {} },
+          { type: 'text', text: 'after' },
+        ],
+        'assistant-entry',
+      ),
+      {
+        role: 'toolResult',
+        entryId: 'await-result-entry',
+        content: [{ type: 'tool_result', toolCallId: 'await-call', toolName: 'await_agents', result: 'hidden' }],
+      },
+    ]);
+    current.acceptProviderEvent({
+      type: 'subagent_snapshot_event',
+      eventId: 'await-completion',
+      cursor: cursor(1),
+      target: { operationId: 'completion-1', kind: 'completion', path: [], placement: { entryId: 'await-result-entry' } },
+      state: 'complete',
+      data: { operation: 'completion', result: { state: 'idle', output: 'done' } },
+    });
+    expect(current.snapshot().messages[0]?.content.map((block) => block.type)).toEqual(['text', 'subagent', 'text']);
+    expect(current.snapshot().messages).not.toContainEqual(expect.objectContaining({ entryId: 'await-result-entry' }));
   });
 
   it('projects persisted tool payloads into the originating assistant row', () => {
