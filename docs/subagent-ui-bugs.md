@@ -36,19 +36,19 @@ All free-form semantic parameter and result text uses the existing Markdown rend
 
 ## BUG-005: Removal notice never expires
 
-**Status:** Open.
+**Status:** Fixed in source. Deployment pending.
 
 The panel's **sleeper was removed** notice remained indefinitely.
 
-Removal notices must disappear automatically after 10 seconds.
+Removal notices now disappear automatically after 10 seconds. Auto-dismissal clears the persisted removal entry, and resurrection request prompts stay on screen until dismissed. Commit: `2bbb3d6` in Pimote.
 
 ## BUG-006: Panel labels and root visibility
 
-**Status:** Open.
+**Status:** Fixed in source. Deployment pending.
 
 The panel displayed an **Extensions** label and a root session row without live children. Subagent visuals appeared under **Hierarchy** rather than **Subagents**.
 
-Remove the Extensions label. Show the root row only when children exist. Group subagent visuals under a Subagents header.
+The header now shows the live count only when children exist. The root row appears only when children exist. Subagent rows appear under a Subagents header. Commit: `81f2613` in Pimote.
 
 ## BUG-007: Manual teardown is difficult to find
 
@@ -60,11 +60,11 @@ Make manual teardown discoverable for live children. The placement remains to be
 
 ## BUG-008: Empty hidden custom message reaches the transcript
 
-**Status:** Open.
+**Status:** Fixed in source. Deployment pending.
 
 An empty generic `subagents` custom-message block became visible.
 
-The server must filter declared hidden custom messages completely, including while their semantic replacements are pending. The generic renderer must never receive an empty native substitute.
+The projector now emits the projected row for a hidden custom entry only when the row carries subagent content. Malformed payloads still produce protocol errors. Commit: `b49189b` in Pimote.
 
 ## BUG-009: Await lifecycle and sidepane disagree
 
