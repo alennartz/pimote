@@ -41,7 +41,6 @@ function node(path: AgentPath, sessionId: string, state: SubagentNodeSnapshot['s
     usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
     channels: ['parent'],
     waitingFor: [],
-    pendingCorrelations: [],
     hasSubgroup: path.length === 1,
   };
 }

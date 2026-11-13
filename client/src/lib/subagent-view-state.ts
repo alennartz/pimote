@@ -43,8 +43,6 @@ export interface SubagentHierarchyNode extends SubagentNodeMetadata {
   readonly hasSubgroup?: boolean;
   /** The provider identity is useful when a teardown confirmation is open. */
   readonly incarnation?: string;
-  /** Deprecated private metadata. */
-  readonly pendingCorrelations?: readonly string[];
 }
 
 export interface SubagentPanelSnapshot {

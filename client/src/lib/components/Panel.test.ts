@@ -25,7 +25,6 @@ function node(path: readonly string[]): SubagentNodeSnapshot {
     contextFill: 31,
     channels: ['parent', 'worker/scout'],
     waitingFor: [['worker', 'scout']],
-    pendingCorrelations: ['corr-1'],
     hasSubgroup: path.length === 1,
   };
 }

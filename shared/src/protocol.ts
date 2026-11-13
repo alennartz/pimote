@@ -434,8 +434,6 @@ export type SubagentNode = Readonly<{
   hasSubgroup: boolean;
   lastOutput?: string;
   lastError?: string;
-  /** Preserve forward-compatible wire fields without naming router-private data. */
-  readonly [key: string]: unknown;
 }>;
 
 export type SubagentNodeSnapshot = SubagentNode;

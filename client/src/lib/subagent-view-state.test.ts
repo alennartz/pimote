@@ -29,7 +29,6 @@ const snapshot: SubagentPanelSnapshot = {
       contextPercent: 31,
       channels: ['parent', 'scout'],
       waitingTargets: [scoutPath],
-      pendingCorrelations: ['corr-17'],
       lastOutput: 'Checking the redirect path.',
       hasChildren: true,
     },
@@ -47,7 +46,6 @@ const snapshot: SubagentPanelSnapshot = {
       contextPercent: 24,
       channels: ['worker', 'parent'],
       waitingTargets: [workerPath],
-      pendingCorrelations: ['corr-17'],
       lastOutput: 'Awaiting worker response.',
     },
     {

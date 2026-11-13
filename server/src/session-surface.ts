@@ -935,7 +935,7 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     if (after !== undefined) {
       const replay = eventBuffer.replay(after);
       if (replay === null) {
-        snapshot = snapshotFor(options, capabilities, eventBuffer.currentCursor);
+        snapshot = snapshotFor(options, capabilities, eventBuffer.currentCursor, projector);
         observer.cursor = eventBuffer.currentCursor;
       } else {
         events = replay;

@@ -126,11 +126,129 @@ describe('subagent transcript projector', () => {
     expect(current.snapshot().messages[0]?.content[0]).toMatchObject({ type: 'subagent', subagentState: 'complete', data });
   });
 
+  it('anchors a live replacement to its streaming assistant occurrence', () => {
+    const current = projector();
+    current.rehydrate([assistant([{ type: 'text', text: 'earlier turn' }], 'earlier-entry')]);
+    current.acceptNativeEvent({ type: 'message_start', message: { role: 'assistant', content: [] } } as unknown as IncomingSdkEvent);
+    current.acceptNativeEvent({
+      type: 'message_update',
+      assistantMessageEvent: {
+        type: 'toolcall_start',
+        contentIndex: 0,
+        partial: { role: 'assistant', content: [{ type: 'toolCall', id: 'live-call', name: 'send', arguments: {} }] },
+      },
+    } as unknown as IncomingSdkEvent);
+    current.acceptProviderEvent({
+      type: 'subagent_start',
+      eventId: 'live-start',
+      cursor: cursor(1),
+      target: { operationId: 'live-call', kind: 'send', path: [], placement: { toolCallId: 'live-call', contentIndex: 0 } },
+      data: { operation: 'send', to: ['worker'], request: 'live', response: '', phase: 'sending' },
+    });
+    expect(current.snapshot().messages).toHaveLength(2);
+    expect(current.snapshot().messages[1]?.content[0]).toMatchObject({ type: 'subagent', operationId: 'live-call' });
+  });
+
+  it('keeps multiple replacements in the original assistant content order', () => {
+    const current = projector();
+    current.rehydrate([
+      assistant([
+        { type: 'text', text: 'a' },
+        { type: 'tool_call', toolCallId: 'first-call', toolName: 'send', args: {} },
+        { type: 'text', text: 'b' },
+        { type: 'tool_call', toolCallId: 'second-call', toolName: 'send', args: {} },
+        { type: 'text', text: 'c' },
+      ]),
+    ]);
+    for (const [operationId, toolCallId, sequence] of [
+      ['first', 'first-call', 1],
+      ['second', 'second-call', 2],
+    ] as const) {
+      current.acceptProviderEvent({
+        type: 'subagent_snapshot_event',
+        eventId: operationId,
+        cursor: cursor(sequence),
+        target: { operationId, kind: 'send', path: [], placement: { toolCallId, contentIndex: toolCallId === 'first-call' ? 1 : 3 } },
+        state: 'complete',
+        data: { operation: 'send', to: ['worker'], request: operationId, response: '' },
+      });
+    }
+    expect(current.snapshot().messages[0]?.content.map((block) => (block.type === 'subagent' ? block.operationId : block.type === 'text' ? block.text : block.type))).toEqual([
+      'a',
+      'first',
+      'b',
+      'second',
+      'c',
+    ]);
+  });
+
+  it('retains completed and active projected blocks across native rehydration', () => {
+    const current = projector();
+    const native = [assistant([{ type: 'tool_call', toolCallId: 'send-call', toolName: 'send', args: {} }])];
+    current.rehydrate(native);
+    current.acceptProviderEvent({
+      type: 'subagent_snapshot_event',
+      eventId: 'complete-send',
+      cursor: cursor(1),
+      target,
+      state: 'complete',
+      data: { operation: 'send', to: ['worker'], request: 'check', response: 'done' },
+    });
+    current.rehydrate(native);
+    expect(current.snapshot().messages[0]?.content[0]).toMatchObject({ type: 'subagent', operationId: 'send-call', subagentState: 'complete' });
+
+    const active = projector();
+    active.rehydrate(native);
+    active.hydrateActiveOperations?.([{ target, data: start.data }]);
+    active.rehydrate(native);
+    expect(active.snapshot().activeOperations).toContainEqual(expect.objectContaining({ target: expect.objectContaining({ operationId: 'send-call' }) }));
+  });
+
   it('suppresses the native tool stream before transmission', () => {
     const current = projector();
     const events = current.acceptNativeEvent({ type: 'tool_execution_start', toolCallId: 'send-call', toolName: 'send', args: { message: 'hidden request' } } as IncomingSdkEvent);
     expect(JSON.stringify(events)).not.toContain('hidden request');
     expect(events).not.toContainEqual(expect.objectContaining({ type: 'tool_execution_start', toolCallId: 'send-call' }));
+  });
+
+  it('sanitizes message_end replacements instead of forwarding hidden native details', () => {
+    const current = projector();
+    current.rehydrate([assistant([{ type: 'text', text: 'saved' }], 'assistant-end')]);
+    current.acceptNativeEvent({ type: 'message_start', message: { role: 'assistant', content: [] } } as unknown as IncomingSdkEvent);
+    current.acceptProviderEvent({
+      type: 'subagent_start',
+      eventId: 'hidden-start',
+      cursor: cursor(1),
+      target: { operationId: 'send-call', kind: 'send', path: [], placement: { toolCallId: 'send-call', contentIndex: 1 } },
+      data: { operation: 'send', to: ['worker'], request: 'hidden', response: '', phase: 'sending' },
+    });
+    const events = current.acceptNativeEvent({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        entryId: 'assistant-end',
+        content: [
+          { type: 'text', text: 'before' },
+          { type: 'toolCall', id: 'send-call', name: 'send', arguments: { message: 'hidden message' } },
+          { type: 'text', text: 'after' },
+        ],
+        details: { secret: 'hidden details' },
+      },
+    } as unknown as IncomingSdkEvent);
+    expect(JSON.stringify(events)).not.toContain('hidden message');
+    expect(JSON.stringify(events)).not.toContain('hidden details');
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'message_end',
+        message: expect.objectContaining({
+          content: expect.arrayContaining([
+            { type: 'text', text: 'before' },
+            expect.objectContaining({ type: 'subagent', operationId: 'send-call' }),
+            { type: 'text', text: 'after' },
+          ]),
+        }),
+      }),
+    );
   });
 
   it('renders a protocol error when a hidden tool terminates without a lifecycle', () => {
