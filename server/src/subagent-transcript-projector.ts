@@ -181,9 +181,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
       if (hidden) hiddenStreamingIndexes.add(contentIndex);
       if (block.type === 'tool_call' && block.toolCallId && ((block.toolName !== undefined && hiddenTools.has(block.toolName)) || hiddenToolCalls.has(block.toolCallId))) {
         hiddenToolCalls.add(block.toolCallId);
-        if (!hiddenToolSlots.has(block.toolCallId)) {
-          hiddenToolSlots.set(block.toolCallId, { messageIndex, contentIndex, parentMessageId });
-        }
+        hiddenToolSlots.set(block.toolCallId, { messageIndex, contentIndex, parentMessageId });
       }
     }
   };
@@ -777,7 +775,14 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
         return true;
       })
       .map(cloneContent);
-    if (content.length === message.content.length) return { ...message, content };
+    const projected = streamingAssistantSlot ? (messages[streamingAssistantSlot.messageIndex]?.content.filter(isSubagentContent).map(cloneContent) ?? []) : [];
+    for (const block of projected) {
+      const existing = content.findIndex((candidate) => isSubagentContent(candidate) && candidate.operationId === block.operationId);
+      const sourceIndex = block.placement && 'toolCallId' in block.placement ? block.placement.contentIndex : content.length;
+      if (existing >= 0) content[existing] = block;
+      else content.splice(Math.min(sourceIndex, content.length), 0, block);
+    }
+    if (content.length === message.content.length && projected.length === 0) return { ...message, content };
     const { details: _details, ...withoutDetails } = message;
     void _details;
     return { ...withoutDetails, content };

@@ -292,6 +292,10 @@ function messageEndForProjection(event: IncomingSdkEvent, session: BorrowedAgent
   return { ...event, message: fallback };
 }
 
+function isSubagentContentBlock(block: import('../../shared/dist/index.js').PimoteMessageContent): boolean {
+  return block.type === 'subagent';
+}
+
 /** A persisted final message already present in a snapshot needs no second
  * delivery from the listener that observed it at the snapshot boundary. */
 function messageIsInSnapshot(event: PimoteSessionEvent, snapshot: SessionSurfaceSnapshot): boolean {
@@ -477,14 +481,21 @@ function snapshotFor(options: SessionSurfaceOptions, capabilities: SessionSurfac
   const pending = session.state?.pendingToolCalls;
   const pendingToolCallIds = pending && typeof (pending as Set<string>).values === 'function' ? [...(pending as Set<string>)] : [];
   const partial = mapStreamingMessage(session.state?.streamingMessage);
-  const projected = projector?.snapshot();
+  const nativeMessages = fullMessagesFor(options, capabilities);
   const projectedPartial = partial ? (projector?.projectStreamingMessage?.(partial) ?? partial) : undefined;
-  const messages = [...(projected?.messages ?? fullMessagesFor(options, capabilities))];
+  const projected = projector?.snapshot();
+  const projectedMessages = [...(projected?.messages ?? nativeMessages)];
+  const messages = projected
+    ? projectedMessages.filter(
+        (message, index) =>
+          !(projectedPartial && index === nativeMessages.length && message.role === 'assistant' && message.content.length > 0 && message.content.every(isSubagentContentBlock)),
+      )
+    : projectedMessages;
   return {
     cursor,
     state: stateFor(session, capabilities),
     messages,
-    ...(projected ? { activeSubagentContent: projected.activeOperations.map((operation) => activeContentForOperation(operation, messages, options.sessionId)) } : {}),
+    ...(projected ? { activeSubagentContent: projected.activeOperations.map((operation) => activeContentForOperation(operation, projectedMessages, options.sessionId)) } : {}),
     ...(branchEntryIds !== undefined ? { branchEntryIds } : {}),
     ...(projectedPartial ? { streamingMessage: projectedPartial } : {}),
     ...(pendingToolCallIds.length > 0 ? { runningToolCallIds: pendingToolCallIds } : {}),
@@ -905,6 +916,8 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     eventBuffer.invalidateReplay();
     const native = fullMessagesFor(options, capabilities);
     projector?.rehydrate(native);
+    const partial = mapStreamingMessage(options.session.state?.streamingMessage);
+    if (projector && partial) projector.projectStreamingMessage?.(partial);
     providerSnapshot = subagentProvider?.snapshot?.() ?? providerSnapshot;
     const active = activeOperationsForSurface(providerSnapshot?.activeOperations);
     if (projector && active.length > 0) projector.hydrateActiveOperations?.(active);
@@ -921,6 +934,8 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
       // Native reload is the persistence authority. Project the saved branch
       // before provider hydration so provider events have a stable placement.
       projector?.rehydrate(fullMessagesFor(options, capabilities));
+      const partial = mapStreamingMessage(options.session.state?.streamingMessage);
+      if (projector && partial) projector.projectStreamingMessage?.(partial);
       if (projector && options.initialProjection) {
         // A rebuilt child view can retain completed projected blocks while its
         // provider's idempotent hydration remains silent. Restore after the
@@ -999,6 +1014,8 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
       manifest: providerSnapshot.manifest ?? { hiddenToolNames: [], hiddenCustomTypes: [] },
     });
     projector.rehydrate(fullMessagesFor(options, capabilities));
+    const partial = mapStreamingMessage(options.session.state?.streamingMessage);
+    if (partial) projector.projectStreamingMessage?.(partial);
     if (previousProjection) {
       projector.restoreProjection?.(previousProjection);
       if (!projector.restoreProjection) projector.rehydrate(previousProjection.messages);

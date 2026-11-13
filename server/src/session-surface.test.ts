@@ -294,6 +294,45 @@ describe('SessionSurface', () => {
     expect(live.find((event) => event.type === 'message_end')).toBeUndefined();
   });
 
+  it('keeps projected active content in the streaming snapshot row', async () => {
+    const f = fixture();
+    const hidden = { type: 'toolCall', id: 'send-call', name: 'send', arguments: { message: 'secret' } };
+    f.data.branch = [
+      {
+        type: 'message',
+        id: 'assistant-entry',
+        parentId: null,
+        timestamp: '2026-01-01T00:00:00.000Z',
+        message: { role: 'assistant', content: [hidden] },
+      },
+    ] as unknown as typeof f.data.branch;
+    f.data.streaming = true;
+    f.data.messages = [{ role: 'assistant', content: [hidden] }];
+    f.native.state.streamingMessage = { role: 'assistant', content: [{ type: 'toolCall', id: 'send-call', name: 'send', arguments: {} }] } as never;
+    const cursor = { epoch: 'epoch-1', sequence: 0 };
+    const active = {
+      target: { operationId: 'send-call', kind: 'send', path: ['worker'], placement: { toolCallId: 'send-call', contentIndex: 0 } },
+      data: { operation: 'send', to: ['worker'], request: 'check', response: '', phase: 'sending' },
+    } as const;
+    const provider = {
+      snapshot: () => ({ manifest: { hiddenToolNames: ['send'], hiddenCustomTypes: [] }, nodes: [], cursor, activeOperations: [active] }),
+      subscribe: () => () => {},
+      replay: () => ({ kind: 'events' as const, cursor, events: [] }),
+      rehydrate: async () => {},
+    };
+    const surface = createSessionSurface({
+      sessionId: 'child-session',
+      session: f.native,
+      kind: 'child',
+      capabilities: f.capabilities,
+      subagentProvider: provider,
+      subagentPath: ['worker'],
+    });
+    const snapshot = await surface.initialize();
+    expect(snapshot.messages.some((message) => message.content.some((block) => block.type === 'subagent'))).toBe(false);
+    expect(snapshot.streamingMessage?.content).toContainEqual(expect.objectContaining({ type: 'subagent', operationId: 'send-call' }));
+  });
+
   it('sends deltas live but restores accumulated active state instead of replaying deltas', async () => {
     const f = fixture();
     f.data.branch = [
