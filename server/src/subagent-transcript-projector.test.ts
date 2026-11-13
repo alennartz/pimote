@@ -42,6 +42,58 @@ describe('subagent transcript projector', () => {
     expect(JSON.stringify(current.snapshot())).not.toContain('secret native argument');
   });
 
+  it('projects persisted tool payloads into the originating assistant row', () => {
+    const current = projector();
+    current.rehydrate([
+      assistant(
+        [
+          { type: 'text', text: 'before' },
+          { type: 'tool_call', toolCallId: 'send-call', toolName: 'send', args: { message: 'hidden request' } },
+          { type: 'text', text: 'after' },
+        ],
+        'assistant-entry',
+      ),
+      {
+        role: 'toolResult',
+        entryId: 'result-entry',
+        content: [{ type: 'tool_result', toolCallId: 'send-call', toolName: 'send', result: 'hidden result' }],
+      },
+    ]);
+    current.acceptProviderEvent({
+      type: 'subagent_snapshot_event',
+      eventId: 'persisted-send',
+      cursor: cursor(1),
+      target: { operationId: 'send-call', kind: 'send', path: [], placement: { toolCallId: 'send-call', contentIndex: 1, entryId: 'result-entry' } },
+      state: 'complete',
+      data: { operation: 'send', to: ['worker'], request: 'Check', response: 'Done' },
+    });
+
+    const snapshot = current.snapshot();
+    expect(snapshot.messages).toHaveLength(1);
+    expect(snapshot.messages[0]).toMatchObject({ role: 'assistant', entryId: 'assistant-entry' });
+    expect(snapshot.messages[0]?.content.map((block) => block.type)).toEqual(['text', 'subagent', 'text']);
+    expect(snapshot.messages[0]?.content[1]).toMatchObject({ operationId: 'send-call', subagentState: 'complete' });
+  });
+
+  it('replaces an incoming hidden custom entry with typed send content', () => {
+    const current = projector();
+    current.rehydrate([{ role: 'custom', customType: 'subagents', entryId: 'incoming-entry', content: [{ type: 'text', text: '<agent_message>hidden</agent_message>' }] }]);
+    current.acceptProviderEvent({
+      type: 'subagent_snapshot_event',
+      eventId: 'incoming-send',
+      cursor: cursor(1),
+      target: { operationId: 'incoming-send', kind: 'send', path: ['worker'], placement: { entryId: 'incoming-entry' } },
+      state: 'complete',
+      data: { operation: 'send', to: ['worker'], request: 'Incoming task', response: '' },
+    });
+
+    const messages = current.snapshot().messages;
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ role: 'custom', customType: 'subagents', entryId: 'incoming-entry' });
+    expect(messages[0]?.content).toEqual([expect.objectContaining({ type: 'subagent', operationId: 'incoming-send', subagentKind: 'send' })]);
+    expect(JSON.stringify(messages)).not.toContain('hidden');
+  });
+
   it('suppresses only declared custom entries and restores a replacement at the original entry position', () => {
     const current = projector();
     current.rehydrate([

@@ -152,7 +152,8 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
       if (hiddenTool) {
         if (block.toolCallId) {
           hiddenToolCalls.add(block.toolCallId);
-          hiddenToolSlots.set(block.toolCallId, { messageIndex, contentIndex: sourceIndex, parentMessageId: messageId(message, messageIndex) });
+          if (!hiddenToolSlots.has(block.toolCallId))
+            hiddenToolSlots.set(block.toolCallId, { messageIndex, contentIndex: sourceIndex, parentMessageId: messageId(message, messageIndex) });
         }
         return;
       }
