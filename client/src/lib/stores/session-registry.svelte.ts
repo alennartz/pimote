@@ -77,6 +77,13 @@ export const MAX_BASH_LIVE_OUTPUT_BYTES = 256 * 1024;
 
 const bashTextEncoder = new TextEncoder();
 
+type LegacySubagentSnapshotEvent = {
+  type: 'subagent_snapshot';
+  sessionId: string;
+  cursor: FeedCursor;
+  nodes: readonly SubagentNodeSnapshot[];
+};
+
 export type SubagentPath = AgentPath;
 
 /** Stable key used for attachment state. JSON preserves path segment identity. */
@@ -148,6 +155,8 @@ export interface SubagentRootState {
   readonly rootSessionId: string;
   nodes: SubagentNodeSnapshot[];
   providerCursor: FeedCursor | null;
+  manifest: SubagentSnapshot['manifest'];
+  activeOperations: SubagentSnapshot['activeOperations'];
   /** Distinguishes an empty authoritative tree from the pre-snapshot race. */
   hierarchySnapshotReceived: boolean;
   projectedSubagentContent: SubagentContentState;
@@ -749,6 +758,8 @@ export class SessionRegistry {
       rootSessionId,
       nodes: [],
       providerCursor: null,
+      manifest: { hiddenToolNames: [], hiddenCustomTypes: [] },
+      activeOperations: [],
       hierarchySnapshotReceived: false,
       projectedSubagentContent: hydrateSubagentContent([]),
       attachments: {},
@@ -771,7 +782,7 @@ export class SessionRegistry {
   getSubagentSnapshot(rootSessionId: string): SubagentSnapshot | null {
     const root = this.subagentRoots[rootSessionId];
     if (!root || !root.providerCursor) return null;
-    return { nodes: root.nodes, cursor: root.providerCursor };
+    return { nodes: root.nodes, cursor: root.providerCursor, manifest: root.manifest, activeOperations: root.activeOperations };
   }
 
   clearSubagentRoot(rootSessionId: string): void {
@@ -1195,13 +1206,15 @@ export class SessionRegistry {
     const staleSameEpoch = previousCursor !== null && previousCursor.epoch === snapshot.cursor.epoch && snapshot.cursor.sequence < previousCursor.sequence;
     const shouldApplyNodes = !root.hierarchySnapshotReceived || !staleSameEpoch || epochChanged;
     if (shouldApplyNodes) {
+      const manifest = snapshot.manifest ?? { hiddenToolNames: [], hiddenCustomTypes: [] };
+      root.manifest = { hiddenToolNames: [...manifest.hiddenToolNames], hiddenCustomTypes: [...manifest.hiddenCustomTypes] };
+      root.activeOperations = [...(snapshot.activeOperations ?? [])];
       root.hierarchySnapshotReceived = true;
       root.nodes = [...(snapshot.nodes ?? [])].map((node) => ({
         ...node,
         path: copyAgentPath(node.path),
         channels: [...(node.channels ?? [])],
         waitingFor: (node.waitingFor ?? []).map(copyAgentPath),
-        pendingCorrelations: [...(node.pendingCorrelations ?? [])],
       }));
       if (!staleSameEpoch || epochChanged || previousCursor === null) {
         root.providerCursor = { epoch: snapshot.cursor.epoch, sequence: snapshot.cursor.sequence };
@@ -1285,7 +1298,6 @@ export class SessionRegistry {
           path: copyAgentPath(node.path),
           channels: [...(node.channels ?? [])],
           waitingFor: (node.waitingFor ?? []).map(copyAgentPath),
-          pendingCorrelations: [...(node.pendingCorrelations ?? [])],
         };
         if (index >= 0) root.nodes[index] = copy;
         else root.nodes = [...root.nodes, copy];
@@ -1418,7 +1430,11 @@ export class SessionRegistry {
     this.setDraftText(sessionId, text);
   }
 
-  handleEvent(event: PimoteEvent): void {
+  handleEvent(input: PimoteEvent | LegacySubagentSnapshotEvent): void {
+    const event =
+      input.type === 'subagent_snapshot' && !('manifest' in input)
+        ? ({ ...input, manifest: { hiddenToolNames: [], hiddenCustomTypes: [] }, activeOperations: [] } as SubagentSnapshotEvent)
+        : input;
     const sessionId = 'sessionId' in event ? event.sessionId : undefined;
 
     // buffered_events: iterate root sub-events. Child-view events never enter

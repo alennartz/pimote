@@ -15,6 +15,9 @@ export function collapseDuplicateTextBlocks(content: PimoteMessageContent[]): Pi
   let lastKeptText: string | undefined;
   const out: PimoteMessageContent[] = [];
   for (const block of content) {
+    // A suppressed native streaming slot can leave a sparse array on older
+    // servers. Ignore holes instead of dereferencing an absent block.
+    if (!block) continue;
     if (block.type !== 'text') {
       out.push(block);
       continue;

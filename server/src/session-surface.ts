@@ -9,14 +9,14 @@ import type {
   SessionState,
   StreamingMessage,
 } from '../../shared/dist/index.js';
-import type { AgentPath, BorrowedAgentSession, SubagentPresentationProvider, SubagentTranscriptPosition } from '@pimote/sdk/subagents';
+import type { AgentPath, BorrowedAgentSession, SubagentPresentationProvider, SubagentProviderEvent } from '@pimote/sdk/subagents';
 import { EventBuffer, type IncomingSdkEvent } from './event-buffer.js';
 import { mapAgentMessage, mapContextEntries, type SdkSessionEntry } from './message-mapper.js';
 import { completeFileRefs } from './file-references.js';
 import { projectSessionUsage } from './session-usage.js';
 import { attributeDrained, type QueueOwnership } from './queue-ownership.js';
 import { mapTreeNodes, type SessionTreeNode } from './session-tree.js';
-import { createSubagentTranscriptProjector, type SubagentTranscriptProjector } from './subagent-transcript-projector.js';
+import { createSubagentTranscriptProjector, type SubagentProjectionSnapshot, type SubagentTranscriptProjector } from './subagent-transcript-projector.js';
 
 /** Commands allowed through both root and child session surfaces. */
 export type SessionSurfaceCommand =
@@ -172,6 +172,8 @@ export interface SessionSurfaceOptions {
   subagentProvider?: Pick<SubagentPresentationProvider, 'rehydrate' | 'snapshot' | 'subscribe' | 'replay'>;
   /** Logical path supplied to provider hydration. */
   subagentPath?: AgentPath;
+  /** Prior projected state retained when a child view is rebuilt. */
+  initialProjection?: SubagentProjectionSnapshot;
 }
 
 /** Caller-aware dispatch overload. */
@@ -179,14 +181,14 @@ export interface SessionSurface {
   readonly sessionId: string;
   readonly kind: SessionSurfaceKind;
   readonly currentCursor: number;
-  /** Resolve insertion placement against this surface's current native branch. */
-  resolveTranscriptPosition?(position: SubagentTranscriptPosition): SubagentTranscriptPosition | undefined;
   /** Subscribe to native Pi events before taking the first transcript snapshot. */
   initialize(): Promise<SessionSurfaceSnapshot>;
   /** Accept one native Pi event when the owning slot supplies the subscription. */
   acceptNativeEvent(event: IncomingSdkEvent): void;
   /** Accept a provider operation routed to this session surface. */
-  acceptProviderEvent?(event: import('@pimote/sdk/subagents').SubagentProviderEvent): void;
+  acceptProviderEvent?(event: SubagentProviderEvent): void;
+  /** Read the current projected state without invalidating replay. */
+  snapshot(): SessionSurfaceSnapshot;
   /** Attach or replace the provider after root discovery. */
   setSubagentProvider?(provider: Pick<SubagentPresentationProvider, 'rehydrate' | 'snapshot' | 'subscribe' | 'replay'>): Promise<void>;
   /** Rebuild the transcript/state snapshot and invalidate prior replay positions. */
@@ -506,9 +508,16 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     const runner = (options.session as unknown as { extensionRunner?: { getEntryRenderer?: (name: string) => unknown } }).extensionRunner;
     return runner?.getEntryRenderer ? Boolean(runner.getEntryRenderer(customType)) : true;
   };
-  const branchEntryIds = (): string[] => nativeBranchEntryIds(options.session) ?? [];
   let subagentProvider = options.subagentProvider;
   let providerSnapshot = subagentProvider?.snapshot?.();
+  const surfacePath = options.subagentPath ?? [];
+  const samePath = (left: readonly string[], right: readonly string[]): boolean => left.length === right.length && left.every((part, index) => part === right[index]);
+  const providerEventBelongsToSurface = (event: SubagentProviderEvent): boolean => {
+    if (!('target' in event)) return false;
+    return samePath(event.target.path, surfacePath);
+  };
+  const activeOperationsForSurface = (operations: readonly import('@pimote/sdk/subagents').ActiveSubagentOperation[] | undefined) =>
+    (operations ?? []).filter((operation) => samePath(operation.target.path, surfacePath));
   let projector: SubagentTranscriptProjector | undefined = subagentProvider
     ? createSubagentTranscriptProjector({
         sessionId: options.sessionId,
@@ -517,12 +526,8 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     : undefined;
   const eventBuffer =
     options.eventBuffer ??
-    new EventBuffer(
-      options.bufferCapacity ?? SURFACE_BUFFER_CAPACITY,
-      customEntryVisible,
-      0,
-      () => fullMessagesFor(options, capabilities).flatMap((message) => (message.entryId ? [message.entryId] : [])),
-      branchEntryIds,
+    new EventBuffer(options.bufferCapacity ?? SURFACE_BUFFER_CAPACITY, customEntryVisible, 0, () =>
+      fullMessagesFor(options, capabilities).flatMap((message) => (message.entryId ? [message.entryId] : [])),
     );
   const listensToNative = options.subscribeNative !== false;
   const listeners = new Set<(event: PimoteSessionEvent) => void>();
@@ -556,15 +561,17 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     const projected = projector?.acceptNativeEvent(sdkEvent) ?? [];
     for (const event of projected) appendProjected(event);
     if (projector?.isNativeEventSuppressed?.(sdkEvent)) return;
-    eventBuffer.onEvent(sdkEvent, options.sessionId, receive, () => {
+    const projectedNativeEvent = projector?.projectNativeEvent?.(sdkEvent) ?? sdkEvent;
+    if (!projectedNativeEvent) return;
+    eventBuffer.onEvent(projectedNativeEvent, options.sessionId, receive, () => {
       const messages = options.session.messages;
       const last = messages[messages.length - 1];
       return last as AgentMessage | undefined;
     });
   };
 
-  const receiveProviderEvent = (event: import('@pimote/sdk/subagents').SubagentProviderEvent): void => {
-    if (closed) return;
+  const receiveProviderEvent = (event: SubagentProviderEvent): void => {
+    if (closed || !providerEventBelongsToSurface(event)) return;
     const projected = projector?.acceptProviderEvent(event) ?? [];
     for (const item of projected) {
       if (initializing || !initialized) staged.push(item);
@@ -871,7 +878,8 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     const native = fullMessagesFor(options, capabilities);
     projector?.rehydrate(native);
     providerSnapshot = subagentProvider?.snapshot?.() ?? providerSnapshot;
-    if (projector && providerSnapshot?.activeOperations) projector.hydrateActiveOperations?.(providerSnapshot.activeOperations);
+    const active = activeOperationsForSurface(providerSnapshot?.activeOperations);
+    if (projector && active.length > 0) projector.hydrateActiveOperations?.(active);
     return snapshotFor(options, capabilities, eventBuffer.currentCursor, projector);
   };
 
@@ -884,11 +892,25 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     try {
       // Native reload is the persistence authority. Project the saved branch
       // before provider hydration so provider events have a stable placement.
+      if (projector && options.initialProjection) {
+        // A rebuilt child view can retain completed projected blocks while its
+        // provider's idempotent hydration remains silent.
+        projector.rehydrate(options.initialProjection.messages);
+        projector.hydrateActiveOperations?.(options.initialProjection.activeOperations);
+      }
       projector?.rehydrate(fullMessagesFor(options, capabilities));
       const provider = subagentProvider;
       const providerState = provider?.snapshot?.();
-      if (projector && providerState?.activeOperations) projector.hydrateActiveOperations?.(providerState.activeOperations);
-      if (provider && typeof provider.rehydrate === 'function') await provider.rehydrate({ session: options.session, path: options.subagentPath ?? [] });
+      const initialActive = activeOperationsForSurface(providerState?.activeOperations);
+      if (projector && initialActive.length > 0) projector.hydrateActiveOperations?.(initialActive);
+      if (provider && typeof provider.rehydrate === 'function') await provider.rehydrate({ session: options.session, path: surfacePath });
+      const replay = provider?.replay?.();
+      if (replay?.kind === 'events') {
+        for (const event of replay.events) receiveProviderEvent(event);
+      }
+      providerSnapshot = provider?.snapshot?.() ?? providerState;
+      const hydratedActive = activeOperationsForSurface(providerSnapshot?.activeOperations);
+      if (projector && hydratedActive.length > 0) projector.hydrateActiveOperations?.(hydratedActive);
       const snapshot = snapshotFor(options, capabilities, eventBuffer.currentCursor, projector);
       initialized = true;
       const pending = staged;
@@ -946,11 +968,17 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
       manifest: providerSnapshot.manifest ?? { hiddenToolNames: [], hiddenCustomTypes: [] },
     });
     projector.rehydrate(fullMessagesFor(options, capabilities));
-    if (providerSnapshot.activeOperations) projector.hydrateActiveOperations?.(providerSnapshot.activeOperations);
+    const initialActive = activeOperationsForSurface(providerSnapshot.activeOperations);
+    if (initialActive.length > 0) projector.hydrateActiveOperations?.(initialActive);
     providerUnsubscribe = provider.subscribe(receiveProviderEvent);
-    if (typeof provider.rehydrate === 'function') await provider.rehydrate({ session: options.session, path: options.subagentPath ?? [] });
+    if (typeof provider.rehydrate === 'function') await provider.rehydrate({ session: options.session, path: surfacePath });
+    const replay = provider.replay?.();
+    if (replay?.kind === 'events') {
+      for (const event of replay.events) receiveProviderEvent(event);
+    }
     providerSnapshot = provider.snapshot();
-    if (providerSnapshot.activeOperations) projector.hydrateActiveOperations?.(providerSnapshot.activeOperations);
+    const hydrated = activeOperationsForSurface(providerSnapshot.activeOperations);
+    if (hydrated.length > 0) projector.hydrateActiveOperations?.(hydrated);
   };
 
   return {
@@ -959,12 +987,13 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     get currentCursor() {
       return eventBuffer.currentCursor;
     },
-    resolveTranscriptPosition(position) {
-      return eventBuffer.resolveTranscriptPosition(position, options.sessionId);
+    snapshot() {
+      return snapshotFor(options, capabilities, eventBuffer.currentCursor, projector);
     },
     initialize,
     acceptNativeEvent,
     acceptProviderEvent(event) {
+      if (!providerEventBelongsToSurface(event)) return;
       const projected = projector?.acceptProviderEvent(event) ?? [];
       for (const item of projected) appendProjected(item);
     },

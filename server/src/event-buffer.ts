@@ -1,6 +1,6 @@
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
-import type { SubagentTopologyEvent as ProviderTopologyEvent, SubagentTranscriptPosition } from '@pimote/sdk/subagents';
+import type { SubagentTopologyEvent as ProviderTopologyEvent } from '@pimote/sdk/subagents';
 import type { PimoteSessionEvent, SubagentTopologyEvent } from '../../shared/dist/index.js';
 import { mapAgentMessage, mapAgentMessageUsage, mapCustomEntry, type CustomEntryVisibility } from './message-mapper.js';
 
@@ -46,8 +46,6 @@ export class EventBuffer {
     /** Entry ids of the session's context messages, attached to each final
      *  agent_end so clients can target messages that arrived by streaming. */
     private readonly getMessageEntryIds?: () => string[],
-    /** Raw branch order used to resolve placement-only native boundaries. */
-    private readonly getBranchEntryIds?: () => string[],
   ) {
     this.buffer = new Array(capacity);
     this._cursor = baseCursor;
@@ -118,22 +116,6 @@ export class EventBuffer {
     this.pushToBuffer(event);
     sendLive(event);
     return cursor;
-  }
-
-  /** Resolve a source boundary without changing its replacement provenance. */
-  resolveTranscriptPosition(position: SubagentTranscriptPosition, sessionId: string): SubagentTranscriptPosition | undefined {
-    if (position.sessionId !== sessionId) return undefined;
-    if (position.afterEntryId === null) return { ...position, messageIndex: 0 };
-    if (!this.getBranchEntryIds || !this.getMessageEntryIds) return undefined;
-    const branch = this.getBranchEntryIds();
-    const boundary = branch.indexOf(position.afterEntryId);
-    if (boundary < 0) return undefined;
-    const precedingEntries = new Set(branch.slice(0, boundary + 1));
-    let messageIndex = 0;
-    this.getMessageEntryIds().forEach((entryId, index) => {
-      if (precedingEntries.has(entryId)) messageIndex = index + 1;
-    });
-    return { ...position, messageIndex };
   }
 
   /**

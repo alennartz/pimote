@@ -28,7 +28,6 @@ export interface SubagentNodeMetadata {
   readonly contextPercent?: number;
   readonly channels?: readonly string[];
   readonly waitingTargets?: readonly AgentPath[];
-  readonly pendingCorrelations?: readonly string[];
   readonly lastOutput?: string;
   readonly lastError?: string;
 }
@@ -44,6 +43,8 @@ export interface SubagentHierarchyNode extends SubagentNodeMetadata {
   readonly hasSubgroup?: boolean;
   /** The provider identity is useful when a teardown confirmation is open. */
   readonly incarnation?: string;
+  /** Deprecated private metadata. */
+  readonly pendingCorrelations?: readonly string[];
 }
 
 export interface SubagentPanelSnapshot {
@@ -290,7 +291,6 @@ interface WireNodeProjection {
   readonly channels?: readonly string[];
   readonly waitingTargets?: readonly AgentPath[];
   readonly waitingFor?: readonly AgentPath[];
-  readonly pendingCorrelations?: readonly string[];
   readonly hasChildren?: boolean;
   readonly hasSubgroup?: boolean;
   readonly lastOutput?: string;
@@ -341,7 +341,6 @@ function projectNode(node: SubagentHierarchyNode | WireSubagentNodeSnapshot): Pr
     ...(contextPercent !== undefined ? { contextPercent } : {}),
     ...(candidate.channels !== undefined ? { channels: Object.freeze([...candidate.channels]) } : {}),
     ...(waitingTargets !== undefined ? { waitingTargets: Object.freeze(waitingTargets.map(copyPath)) } : {}),
-    ...(candidate.pendingCorrelations !== undefined ? { pendingCorrelations: Object.freeze([...candidate.pendingCorrelations]) } : {}),
     ...(hasChildren !== undefined ? { hasChildren } : {}),
     ...(candidate.lastOutput !== undefined ? { lastOutput: candidate.lastOutput } : {}),
     ...(candidate.lastError !== undefined ? { lastError: candidate.lastError } : {}),
@@ -373,7 +372,6 @@ export function projectSubagentPanelRows(snapshot: PanelSnapshotInput, state: Su
           ...(node.contextPercent !== undefined ? { contextPercent: node.contextPercent } : {}),
           ...(node.channels !== undefined ? { channels: node.channels } : {}),
           ...(node.waitingTargets !== undefined ? { waitingTargets: node.waitingTargets } : {}),
-          ...(node.pendingCorrelations !== undefined ? { pendingCorrelations: node.pendingCorrelations } : {}),
           ...(node.lastOutput !== undefined ? { lastOutput: node.lastOutput } : {}),
           ...(node.lastError !== undefined ? { lastError: node.lastError } : {}),
         },

@@ -577,13 +577,7 @@ export function createSessionState(
   // predecessor handed out (at most 1000 events per millisecond of lifetime),
   // so a client's stale cursor replays as stale instead of as caught up.
   const visibility = rendererRegisteredVisibility(session);
-  const eventBuffer = new EventBuffer(
-    config.bufferSize,
-    visibility,
-    Date.now() * 1000,
-    () => extractMessageEntryIds(session.sessionManager.getBranch(), visibility),
-    () => session.sessionManager.getBranch().map((entry) => entry.id),
-  );
+  const eventBuffer = new EventBuffer(config.bufferSize, visibility, Date.now() * 1000, () => extractMessageEntryIds(session.sessionManager.getBranch(), visibility));
 
   const state: SessionState = {
     id: sessionId,

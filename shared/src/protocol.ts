@@ -431,40 +431,23 @@ export type SubagentNode = Readonly<{
   contextFill?: number;
   channels: readonly string[];
   waitingFor: readonly AgentPath[];
-  /** Router-private pending IDs are omitted from presentation snapshots. */
-  pendingCorrelations?: readonly string[];
   hasSubgroup: boolean;
   lastOutput?: string;
   lastError?: string;
+  /** Preserve forward-compatible wire fields without naming router-private data. */
+  readonly [key: string]: unknown;
 }>;
 
 export type SubagentNodeSnapshot = SubagentNode;
 export type SubagentUsageSnapshot = SubagentUsage;
 
-/** Hierarchy snapshot and provider cursor at one feed boundary. */
+/** Hierarchy snapshot, presentation manifest, and provider cursor at one feed boundary. */
 export type SubagentSnapshot = Readonly<{
   nodes: readonly SubagentNodeSnapshot[];
   cursor: FeedCursor;
-  /** Required on presentation-provider snapshots; omitted by legacy topology callers. */
-  manifest?: PimoteSubagentPresentationManifest;
-  activeOperations?: readonly PimoteActiveSubagentOperation[];
+  manifest: PimoteSubagentPresentationManifest;
+  activeOperations: readonly PimoteActiveSubagentOperation[];
 }>;
-
-export type SubagentEventKind =
-  | 'node_added'
-  | 'node_updated'
-  | 'node_removed'
-  | 'runtime_replaced'
-  | 'delegation'
-  | 'message_thread'
-  | 'await_started'
-  | 'child_settled'
-  | 'await_interrupted'
-  | 'await_released'
-  | 'completion'
-  | 'interrupt'
-  | 'teardown'
-  | 'resurrect';
 
 /** Native Pi provenance attached to a semantic provider event. */
 export type PiEventRef = Readonly<{
@@ -473,38 +456,6 @@ export type PiEventRef = Readonly<{
   toolCallId?: string;
   kind: 'message' | 'tool_call' | 'custom_message' | 'lifecycle';
 }>;
-
-export type SubagentDelegationData = Readonly<{
-  invocationId: string;
-  awaitsResult: boolean;
-  children: readonly Readonly<{ path: AgentPath; task: string; persona?: string }>[];
-}>;
-
-/** Provider naming aliases retained for extension implementations. */
-export type DelegationData = SubagentDelegationData;
-
-export type SubagentCompletionData = Readonly<{
-  status: 'idle' | 'errored' | 'dead' | 'stopped';
-  output?: string;
-  error?: string;
-  usage?: SubagentUsage;
-}> &
-  (Readonly<{ delivery: 'awaited'; invocationId: string }> | Readonly<{ delivery: 'asynchronous'; invocationId?: string }>);
-
-/** Provider naming alias retained for extension implementations. */
-export type CompletionData = SubagentCompletionData;
-
-export type SubagentMessageData = Readonly<{
-  from: AgentPath;
-  to: AgentPath;
-  text: string;
-  correlationId?: string;
-  responseExpected: boolean;
-}> &
-  (Readonly<{ phase: 'sent' | 'received' | 'response' }> | Readonly<{ phase: 'failure'; error: string }>);
-
-/** Provider naming alias retained for extension implementations. */
-export type CommunicationData = SubagentMessageData;
 
 /** One child state included in await progress and settlement facts. */
 export type SubagentAwaitChildStatus = Readonly<{
@@ -515,33 +466,6 @@ export type SubagentAwaitChildStatus = Readonly<{
   sessionId?: string;
 }>;
 
-/** Progress and settlement data for an await_agents invocation. */
-export type SubagentAwaitData = Readonly<{
-  invocationId?: string;
-  requested?: readonly AgentPath[];
-  statuses?: readonly SubagentAwaitChildStatus[];
-  path?: AgentPath;
-  output?: string;
-  error?: string;
-  reason?: 'settled' | 'detach' | 'stop' | 'message';
-  message?: SubagentMessageData;
-  /** Provider implementations can carry additional typed await facts. */
-  readonly [key: string]: unknown;
-}>;
-
-/** Lifecycle operation details carried by interrupt, teardown, and resurrection facts. */
-export type SubagentLifecycleData = Readonly<{
-  operation?: 'interrupt' | 'teardown' | 'resurrect';
-  outcome?: string;
-  path?: AgentPath;
-  output?: string;
-  error?: string;
-  sessionId?: string;
-  recovery?: Readonly<Record<string, unknown>>;
-  /** Provider implementations can carry operation-specific recovery data. */
-  readonly [key: string]: unknown;
-}>;
-
 export type SubagentRuntimeReplacedData = Readonly<{
   oldSessionId: string;
   newSessionId: string;
@@ -549,39 +473,6 @@ export type SubagentRuntimeReplacedData = Readonly<{
 
 /** A public node projection carried by topology events and snapshots. */
 export type SubagentNodeEventData = SubagentNodeSnapshot | Readonly<{ sessionId: string }>;
-
-export type SubagentEventData =
-  | Readonly<{ kind: 'node_added' | 'node_updated'; data: SubagentNodeEventData }>
-  | Readonly<{ kind: 'node_removed'; data: Readonly<{ node: SubagentNodeSnapshot; reason: string }> }>
-  | Readonly<{ kind: 'runtime_replaced'; data: SubagentRuntimeReplacedData }>
-  | Readonly<{ kind: 'delegation'; data: SubagentDelegationData }>
-  | Readonly<{ kind: 'message_thread'; data: SubagentMessageData }>
-  | Readonly<{
-      kind: 'await_started' | 'child_settled' | 'await_interrupted' | 'await_released';
-      data: SubagentAwaitData;
-    }>
-  | Readonly<{ kind: 'completion'; data: SubagentCompletionData }>
-  | Readonly<{ kind: 'interrupt' | 'teardown' | 'resurrect'; data: SubagentLifecycleData }>;
-
-/** An insertion boundary in the owning native transcript, not replacement provenance. */
-export type SubagentTranscriptPosition = Readonly<{
-  sessionId: string;
-  afterEntryId: string | null;
-  /** Insertion slot in the current surface's native message projection. */
-  messageIndex?: number;
-}>;
-
-/** A semantic overlay. Native Pi entries remain the transcript source. */
-export type SubagentSemanticFact = Readonly<{
-  eventId: string;
-  path: AgentPath;
-  relatedPiEvents: readonly PiEventRef[];
-  transcriptPosition?: SubagentTranscriptPosition;
-}> &
-  SubagentEventData;
-
-/** Typed semantic overlay emitted by the provider. */
-export type SubagentEvent = SubagentSemanticFact & Readonly<{ cursor: FeedCursor }>;
 
 export type SubagentTeardownReason = 'not_found' | 'already_removed' | 'removed';
 
@@ -1995,7 +1886,7 @@ export type SubagentTopologyEvent = SessionEventBase & {
   eventId: string;
   path: AgentPath;
   kind: 'node_added' | 'node_updated' | 'node_removed' | 'runtime_replaced';
-  data: Extract<SubagentEventData, { kind: 'node_added' | 'node_updated' | 'node_removed' | 'runtime_replaced' }>['data'];
+  data: SubagentNodeEventData | Readonly<{ node: SubagentNodeSnapshot; reason: string }> | SubagentRuntimeReplacedData;
   relatedPiEvents: readonly PiEventRef[];
   providerCursor?: FeedCursor;
 };

@@ -210,7 +210,6 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
       path: clonePath(node.path),
       channels: Object.freeze([...(node.channels ?? [])]),
       waitingFor: Object.freeze((node.waitingFor ?? []).map((target) => clonePath(target))),
-      ...(node.pendingCorrelations !== undefined ? { pendingCorrelations: Object.freeze([...node.pendingCorrelations]) } : {}),
     };
     nodes.set(pathKey(copy.path), copy);
   };
@@ -389,7 +388,12 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     if (!current || current.incarnation !== record.incarnation) throw new Error('stale child incarnation');
   };
 
-  const surfaceOptions = (record: ViewRecord, session: BorrowedAgentSession, leaseCapabilities: SubagentCapabilities): SessionSurfaceOptions => {
+  const surfaceOptions = (
+    record: ViewRecord,
+    session: BorrowedAgentSession,
+    leaseCapabilities: SubagentCapabilities,
+    initialProjection?: import('./subagent-transcript-projector.js').SubagentProjectionSnapshot,
+  ): SessionSurfaceOptions => {
     const localCapabilities = options.childCapabilities(session);
     const capabilities = providerCapabilities(session, leaseCapabilities, localCapabilities);
     return {
@@ -402,6 +406,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
       incarnation: record.incarnation,
       subagentProvider: options.provider as unknown as SessionSurfaceOptions['subagentProvider'],
       subagentPath: record.path,
+      ...(initialProjection ? { initialProjection } : {}),
       stop: async (request) => {
         const expectedSessionId = request.expectedSessionId;
         if (expectedSessionId !== record.lease.session.sessionId) throw new Error('stale child runtime');
@@ -414,10 +419,30 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     };
   };
 
-  const refreshSurface = async (record: ViewRecord, notifySnapshot: boolean): Promise<void> => {
+  const refreshSurface = async (record: ViewRecord, notifySnapshot: boolean, inheritedSnapshot?: SessionSurfaceSnapshot): Promise<void> => {
     if (record.closed) return;
     const session = record.lease.session;
-    const nextSurface = createSurface(surfaceOptions(record, session, record.lease.capabilities));
+    let previousProjection: import('./subagent-transcript-projector.js').SubagentProjectionSnapshot | undefined;
+    try {
+      const previousSnapshot = inheritedSnapshot ?? record.surface?.snapshot?.();
+      if (previousSnapshot) {
+        previousProjection = {
+          messages: previousSnapshot.messages,
+          activeOperations: (previousSnapshot.activeSubagentContent ?? []).map((operation) => ({
+            target: {
+              operationId: operation.operationId,
+              kind: operation.kind,
+              path: clonePath(record.path),
+              ...(operation.placement ? { placement: operation.placement } : {}),
+            },
+            data: operation.data,
+          })) as import('@pimote/sdk/subagents').ActiveSubagentOperation[],
+        };
+      }
+    } catch {
+      previousProjection = undefined;
+    }
+    const nextSurface = createSurface(surfaceOptions(record, session, record.lease.capabilities, previousProjection));
     const staged: PimoteSessionEvent[] = [];
     record.stagedEvents = staged;
     record.ready = false;
@@ -531,6 +556,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
   };
 
   const createViewRecord = async (connection: ConnectionRecord, path: AgentPath, node: SubagentNodeSnapshot, lease: SubagentLease): Promise<ViewRecord> => {
+    const inheritedSnapshot = [...(recordsByPath.get(pathKey(path)) ?? [])].find((candidate) => !candidate.closed && candidate.snapshot)?.snapshot;
     const record: ViewRecord = {
       connection,
       key: pathKey(path),
@@ -551,7 +577,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     recordsByPath.set(record.key, pathRecords);
     record.leaseUnsubscribe = lease.subscribe((event) => handleLeaseEvent(record, event));
     try {
-      await refreshSurface(record, false);
+      await refreshSurface(record, false, inheritedSnapshot);
       return record;
     } catch (error) {
       await closeRecord(record, 'unavailable', false);

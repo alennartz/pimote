@@ -2279,6 +2279,13 @@ export class WsHandler {
 
     if (lastCursor !== undefined) {
       replayResult = slot.sessionState.eventBuffer.replay(lastCursor);
+      const reconnectActiveOperations = (() => {
+        try {
+          return (slot.sessionSurface?.snapshot?.().activeSubagentContent?.length ?? 0) > 0;
+        } catch {
+          return false;
+        }
+      })();
       if (replayResult !== null) {
         restoreMode = 'incremental_replay';
         this.sendEvent({ type: 'session_restore', sessionId, mode: restoreMode, status: 'started' } as SessionRestoreEvent);
@@ -2291,6 +2298,12 @@ export class WsHandler {
           type: 'connection_restored',
           sessionId,
         } as ConnectionRestoredEvent);
+        if (reconnectActiveOperations) {
+          // Delta events are live-only. Replay the durable boundaries first,
+          // then replace the card with the accumulated projected snapshot so
+          // a missed response delta cannot leave an active card incomplete.
+          this.sendFullResyncForSession(sessionId, slot);
+        }
         cursorBeforeClaim = slot.sessionState.eventBuffer.currentCursor;
       } else {
         restoreMode = 'full_resync_cursor_stale';
@@ -2483,7 +2496,7 @@ export class WsHandler {
     };
     let projectedSnapshot: ReturnType<NonNullable<ManagedSlot['sessionSurface']>['refreshSnapshot']> | undefined;
     try {
-      projectedSnapshot = slot.sessionSurface?.refreshSnapshot();
+      projectedSnapshot = slot.sessionSurface?.snapshot?.() ?? slot.sessionSurface?.refreshSnapshot();
     } catch {
       projectedSnapshot = undefined;
     }
