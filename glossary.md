@@ -224,6 +224,22 @@ _Avoid_: session file command
 A configured tag name offered as a one-tap wrapper in Markdown editors; configured with `tagSnippets` in Pimote's native config.
 _Avoid_: tag template
 
+**Subagent content**:
+A typed Pimote transcript content block that renders a subagent operation in place of a suppressed native tool call or custom message. It belongs inside the assistant message row and preserves the surrounding content order.
+_Avoid_: semantic block (too broad), replacement message (does not describe its placement).
+
+**Subagent operation**:
+One typed subagent action represented in a transcript, such as `send`, `respond`, `await`, `delegation`, `completion`, `interrupt`, `teardown`, or `resurrect`. An operation can be finite or progressive.
+_Avoid_: stream (ambiguous with transport), semantic operation (too broad).
+
+**Subagent transcript projector**:
+The server module that combines native Pi content with provider-owned subagent content, suppresses declared native replacements, preserves content order, and produces the client transcript projection.
+_Avoid_: overlay renderer (the client no longer performs native matching).
+
+**Provider hydration**:
+The explicit provider operation Pimote calls after Pi loads a session. The provider reads its own persisted native entries and publishes typed final subagent operations for the projector.
+_Avoid_: session restore (Pi owns general session reload), semantic replay (provider hydration reconstructs durable state).
+
 ## Relationships
 
 - A **scan root** anchors discovery: folders are **skipped** until **included** as a **code folder** or **persona folder**
