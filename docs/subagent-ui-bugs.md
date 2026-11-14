@@ -78,11 +78,13 @@ Commits: ae309534dc799d3939c747ef68423e3d8debca02 in my-pi, pushed to origin/mai
 
 ## BUG-010: Apparent child send operations in the parent transcript
 
-**Status:** Open. Root cause unconfirmed.
+**Status:** Fixed in source. Deployment pending.
 
 The user saw send operations attributed to child agents in the parent transcript.
 
-A child's own tool operations belong in its child transcript. Messages delivered to the parent must be identifiable as incoming messages, not presented as the child's outgoing tool call.
+Incoming messages and deferred replies now identify the sender and display the message body. Outgoing sends remain separate. Historical entries with a sender and no parameters render as received messages.
+
+Commits: 0a7f4275348de1bd138719f9a2869c2dc4f059bf in my-pi, pushed to origin/main, and 9d30f3cbb36d29f8ce9a19f53d0827ac279f9316 in Pimote.
 
 ## BUG-011: Live children without parent spawn entries
 
