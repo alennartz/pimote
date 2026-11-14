@@ -66,6 +66,7 @@
   let userMenuOpen = $state(false);
   let customExpanded = $state(false);
   let customCollapsed = $state(false);
+  let summaryExpanded = $state(false);
   let customRootEl: HTMLDivElement | undefined = $state();
   let systemExpanded = $state(false);
   let skillExpanded = $state(false);
@@ -395,8 +396,24 @@
       </div>
     {/if}
   </div>
+{:else if message.role === 'branchSummary' || message.role === 'compactionSummary'}
+  <!-- Compaction and branch summaries: collapsed chip over the summary text. -->
+  <div class="message system-chip">
+    <button class="system-chip-header" onclick={() => (summaryExpanded = !summaryExpanded)}>
+      {#if summaryExpanded}
+        <ChevronDown size={12} />
+      {:else}
+        <ChevronRight size={12} />
+      {/if}
+      <span>{message.role === 'branchSummary' ? 'branch summary' : 'context compacted'}</span>
+    </button>
+    {#if summaryExpanded}
+      <div class="system-chip-body">
+        <TextBlock text={getUserText(message)} />
+      </div>
+    {/if}
+  </div>
 {:else}
-  <!-- Other roles (fallback) -->
   <div class="message system-message">
     <div class="message-body">
       <div class="system-text">{getUserText(message)}</div>
