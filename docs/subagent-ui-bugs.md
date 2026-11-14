@@ -68,11 +68,13 @@ The projector now emits the projected row for a hidden custom entry only when th
 
 ## BUG-009: Await lifecycle and sidepane disagree
 
-**Status:** Open.
+**Status:** Fixed in source. Deployment pending.
 
 An await terminal visual reported idle while the sidepane disagreed. Later await invocations were not apparent in the UI.
 
 Represent each await invocation and its terminal outcome correctly. Distinguish an interrupted or completed wait from a child's current state. Topology must converge to the actual child state.
+
+Commits: ae309534dc799d3939c747ef68423e3d8debca02 in my-pi, pushed to origin/main.
 
 ## BUG-010: Apparent child send operations in the parent transcript
 
