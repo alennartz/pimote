@@ -471,6 +471,35 @@ describe('subagent transcript projector', () => {
     expect(current.snapshot().messages[0]?.content[0]).toMatchObject({ type: 'subagent', subagentState: 'complete', data });
   });
 
+  it('places a streamed spawn after preceding thinking content', () => {
+    const current = createSubagentTranscriptProjector({ sessionId: 'root-session', manifest: { hiddenToolNames: ['subagent'], hiddenCustomTypes: [] } });
+    current.acceptNativeEvent({ type: 'message_start', message: { role: 'assistant', content: [] } } as unknown as IncomingSdkEvent);
+    current.acceptNativeEvent({
+      type: 'message_update',
+      assistantMessageEvent: {
+        type: 'toolcall_delta',
+        contentIndex: 1,
+        delta: '{"agents":[{"id":"worker","task":"inspect"}]}',
+        partial: {
+          role: 'assistant',
+          content: [
+            { type: 'thinking', thinking: 'Reasoning first.' },
+            { type: 'toolCall', id: 'spawn-call', name: 'subagent', arguments: { agents: [{ id: 'worker', task: 'inspect' }] } },
+          ],
+        },
+      },
+    } as unknown as IncomingSdkEvent);
+    const [start] = current.acceptProviderEvent({
+      type: 'subagent_start',
+      eventId: 'streamed-spawn',
+      cursor: cursor(1),
+      target: { operationId: 'spawn-call', kind: 'delegation', path: [], placement: { toolCallId: 'spawn-call', contentIndex: 1 } },
+      data: { operation: 'delegation', parameters: {}, result: { children: [{ path: ['worker'], task: 'inspect' }] } },
+    });
+
+    expect(start).toMatchObject({ type: 'subagent_content_start', contentIndex: 1 });
+  });
+
   it('anchors a live replacement to its streaming assistant occurrence', () => {
     const current = projector();
     current.rehydrate([assistant([{ type: 'text', text: 'earlier turn' }], 'earlier-entry')]);

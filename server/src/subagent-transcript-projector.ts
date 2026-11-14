@@ -176,6 +176,8 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
   const pendingCustomActive = new Map<string, ActiveSubagentOperation>();
   let nextProjectedOrder = 0;
   let streamingAssistantSlot: MutableSlot | undefined;
+  // Keep streamed positions separate until message_end supplies the authoritative row.
+  let streamingNativeBlocks: NativeBlock[] = [];
   const hiddenStreamingIndexes = new Set<number>();
 
   const messageId = (message: PimoteAgentMessage, index: number): string => message.entryId ?? `message-${index}`;
@@ -201,6 +203,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
         hiddenToolSlots.set(block.toolCallId, { messageIndex, contentIndex, parentMessageId });
       }
     }
+    streamingNativeBlocks = visibleContentFor({ role: 'assistant', content: message.content }, messageIndex).slots;
   };
 
   const visibleContentFor = (message: PimoteAgentMessage, messageIndex: number): { content: PimoteMessageContent[]; slots: NativeBlock[] } => {
@@ -282,7 +285,8 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
   };
 
   const outputIndexForSource = (messageIndex: number, sourceIndex: number, order: number): number => {
-    const nativeBefore = (nativeBlocks[messageIndex] ?? []).filter((slot) => slot.sourceIndex < sourceIndex).length;
+    const sourceBlocks = streamingAssistantSlot?.messageIndex === messageIndex ? streamingNativeBlocks : (nativeBlocks[messageIndex] ?? []);
+    const nativeBefore = sourceBlocks.filter((slot) => slot.sourceIndex < sourceIndex).length;
     const projectedBefore = [...projectedSources.values()]
       .filter((slot) => slot.messageIndex === messageIndex)
       .filter((slot) => slot.sourceIndex < sourceIndex || (slot.sourceIndex === sourceIndex && slot.order < order)).length;
@@ -632,6 +636,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     legacyReceivedMessages.clear();
     pendingCustomActive.clear();
     streamingAssistantSlot = undefined;
+    streamingNativeBlocks = [];
     hiddenStreamingIndexes.clear();
     for (const source of nextMessages) {
       for (const item of customPayloadForMessage(source) ?? []) {
@@ -731,6 +736,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     if (event.type === 'message_start') {
       hiddenStreamingIndexes.clear();
       streamingAssistantSlot = event.message.role === 'assistant' ? { messageIndex: messages.length, contentIndex: 0, parentMessageId: `message-${messages.length}` } : undefined;
+      streamingNativeBlocks = [];
       return [];
     }
     if (event.type === 'message_update' && event.assistantMessageEvent.type.startsWith('toolcall_') && 'contentIndex' in event.assistantMessageEvent) {
@@ -740,6 +746,10 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
         const slot = streamingAssistantSlot;
         if (slot) hiddenToolSlots.set(toolCallId, { ...slot, contentIndex: index });
       }
+    }
+    if (event.type === 'message_update' && streamingAssistantSlot && 'partial' in event.assistantMessageEvent && Array.isArray(event.assistantMessageEvent.partial.content)) {
+      const partial = mapAgentMessage(event.assistantMessageEvent.partial);
+      streamingNativeBlocks = visibleContentFor(partial, streamingAssistantSlot.messageIndex).slots;
     }
     if (event.type === 'entry_appended') {
       if (event.entry.type === 'message' && event.entry.message.role === 'toolResult' && typeof event.entry.id === 'string') {
@@ -857,6 +867,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
       }
       const hidden = visible.content.length !== mapped.content.length || (mapped.role === 'custom' && mapped.customType !== undefined && hiddenCustomTypes.has(mapped.customType));
       streamingAssistantSlot = undefined;
+      streamingNativeBlocks = [];
       hiddenStreamingIndexes.clear();
       if (hidden) {
         const projected = existing >= 0 ? messages[existing] : mapped.role === 'toolResult' && visible.content.length === 0 ? undefined : messages[messages.length - 1];
