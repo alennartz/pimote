@@ -70,7 +70,7 @@ export type SubagentEndData =
   | Readonly<{ operation: 'respond'; parameters?: SubagentToolParameters; result: Readonly<Record<string, unknown>> }>
   | Readonly<{ operation: 'await'; parameters: SubagentToolParameters; result: SubagentAwaitResult }>;
 
-export type SubagentDelegatedChild = Readonly<{ path: AgentPath; task: string; persona?: string }>;
+export type SubagentDelegatedChild = Readonly<{ path: AgentPath; task: string; persona?: string; status?: SubagentAwaitStatus['state'] }>;
 
 export type SubagentInterruptTarget = Readonly<{
   path: AgentPath;
