@@ -1,6 +1,6 @@
 {
   "name": "@pimote/server",
-  "version": "0.16.0-rc.5",
+  "version": "0.16.0-rc.6",
   "private": true,
   "type": "module",
   "scripts": {
