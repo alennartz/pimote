@@ -3193,6 +3193,95 @@ describe('WsHandler', () => {
       });
     });
 
+    it('reports navigation as finished in the surface-path reset resync', async () => {
+      const refs: { slot: ManagedSlot | null } = { slot: null };
+      const navigateTree = vi.fn().mockImplementation(async () => {
+        expect(refs.slot?.sessionState.treeNavigationInProgress).toBe(true);
+        return { cancelled: false };
+      });
+
+      const slot = createMockSlot({
+        id: 'session-tree-surface',
+        connectedClientId: 'client-1',
+        eventBuffer: new EventBuffer(100),
+        session: {
+          subscribe: () => () => {},
+          dispose: () => {},
+          messages: [],
+          model: null,
+          thinkingLevel: 'default',
+          getAvailableThinkingLevels: () => [],
+          isStreaming: false,
+          state: { streamingMessage: undefined, pendingToolCalls: new Set<string>() },
+          isCompacting: false,
+          sessionFile: undefined,
+          sessionId: 'session-tree-surface',
+          sessionName: undefined,
+          autoCompactionEnabled: false,
+          bindExtensions: async () => {},
+          modelRuntime: { getAvailable: async () => [] },
+          clearQueue: () => ({ steering: [], followUp: [] }),
+          navigateTree,
+          sessionManager: {
+            appendLabelChange: vi.fn(),
+            getTree: () => [],
+            getLeafId: () => null,
+            getBranch: () => [],
+            buildContextEntries: () => [],
+          },
+        } as any,
+      });
+
+      refs.slot = slot;
+
+      const sessions = new Map([['session-tree-surface', slot]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'open_session',
+          folderPath: '/home/user/project',
+          sessionId: 'session-tree-surface',
+          id: 'req-open-tree-surface',
+        }),
+      );
+      sent.length = 0;
+
+      // Mirror session-surface.ts: emit start, run the navigation, emit end
+      // in a finally — all through the production buffered forward.
+      slot.sessionSurface = {
+        dispatch: async (command: { type: string; targetId?: string; summarize?: boolean }) => {
+          const emit = (event: TreeNavigationStartEvent | TreeNavigationEndEvent) => (handler as any).emitBufferedSessionEvent(slot, 'session-tree-surface', event);
+          emit({ type: 'tree_navigation_start', targetId: command.targetId!, summarizing: command.summarize === true });
+          try {
+            return await slot.session.navigateTree(command.targetId, { summarize: command.summarize });
+          } finally {
+            emit({ type: 'tree_navigation_end' });
+          }
+        },
+      } as any;
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'navigate_tree',
+          sessionId: 'session-tree-surface',
+          targetId: 'entry-target',
+          id: 'req-navigate-tree-surface',
+        }),
+      );
+
+      expect(navigateTree).toHaveBeenCalledWith('entry-target', expect.any(Object));
+      expect(slot.sessionState.treeNavigationInProgress).toBe(false);
+
+      const endIndex = sent.findIndex((event) => (event as { type?: string }).type === 'tree_navigation_end');
+      const resyncs = findEvents(sent, 'full_resync');
+      expect(resyncs).toHaveLength(1);
+      expect(endIndex).toBeLessThan(sent.findIndex((event) => event === resyncs[0]));
+      expect((resyncs[0] as any).state.isNavigatingTree).toBe(false);
+
+      expect(findResponse(sent, 'req-navigate-tree-surface')).toMatchObject({ success: true, data: { cancelled: false } });
+    });
+
     it('rejects overlapping tree navigation requests for the same session', async () => {
       let resolveNavigation: ((value: { cancelled: boolean; editorText?: string }) => void) | undefined;
       const navigateTree = vi.fn().mockImplementation(

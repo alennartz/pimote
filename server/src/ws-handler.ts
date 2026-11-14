@@ -1468,6 +1468,11 @@ export class WsHandler {
       try {
         const result = await runSlotLifecycle(slot, 'reset', async () => {
           const navigation = await surface.dispatch(surfaceCommand, caller);
+          // Navigation is over: drop the flag before the reset notification so
+          // the reset's full_resync does not report a navigation still in
+          // progress and re-show the client indicator after tree_navigation_end.
+          slot.sessionState.treeNavigationInProgress = false;
+          slot.sessionState.treeNavigationSummarizing = false;
           if (!navigation || typeof navigation !== 'object' || (navigation as { cancelled?: unknown }).cancelled !== true) await this.sessionManager.applySessionReset(slot);
           return navigation;
         });
