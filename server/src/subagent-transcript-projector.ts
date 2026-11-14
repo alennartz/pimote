@@ -48,7 +48,7 @@ type ProtocolErrorData = Readonly<{ operation: 'protocol_error'; result: Readonl
 type PresentationProviderEvent = Extract<SubagentProviderEvent, { target: SubagentOperationTarget }>;
 
 const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object';
-const PRESENTATION_KINDS = new Set<SubagentOperationKindLike>(['send', 'respond', 'await', 'delegation', 'completion', 'interrupt', 'teardown', 'resurrect']);
+const PRESENTATION_KINDS = new Set<SubagentOperationKindLike>(['send', 'message_received', 'respond', 'await', 'delegation', 'completion', 'interrupt', 'teardown', 'resurrect']);
 const FINAL_STATES = new Set(['complete', 'error', 'aborted']);
 
 function isPersistedSubagentContent(value: unknown): boolean {
@@ -57,8 +57,9 @@ function isPersistedSubagentContent(value: unknown): boolean {
   if (typeof value.state !== 'string' || !FINAL_STATES.has(value.state)) return false;
   if (!isObject(value.data)) return false;
   const operation = value.data.operation;
-  if (operation !== value.kind && operation !== 'protocol_error') return false;
+  if (operation !== value.kind && operation !== 'protocol_error' && !(value.kind === 'message_received' && operation === 'send')) return false;
   if (value.source !== 'tool' && value.source !== 'custom_entry') return false;
+  if (value.kind === 'message_received' && value.source !== 'custom_entry') return false;
   if (value.source === 'tool') {
     if (!isObject(value.placement) || typeof value.placement.toolCallId !== 'string' || !Number.isInteger(value.placement.contentIndex)) return false;
     if (value.placement.entryId !== undefined && typeof value.placement.entryId !== 'string') return false;
@@ -66,6 +67,13 @@ function isPersistedSubagentContent(value: unknown): boolean {
     return false;
   }
   return true;
+}
+
+function isLegacyReceivedMessage(value: unknown): value is { operationId: string } {
+  if (!isObject(value) || value.kind !== 'send' || value.source !== 'custom_entry' || typeof value.operationId !== 'string') return false;
+  if (!isObject(value.data) || value.data.operation !== 'send' || 'parameters' in value.data || !isObject(value.data.result)) return false;
+  const from = value.data.result.from;
+  return Array.isArray(from) && from.every((part) => typeof part === 'string' && part.length > 0);
 }
 
 const cloneContent = (content: PimoteMessageContent): PimoteMessageContent => ({ ...content });
@@ -160,6 +168,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
   const projectedSources = new Map<string, ProjectedSource>();
   const customProtocolErrors = new Map<string, string>();
   const customOperationRows = new Map<string, number>();
+  const legacyReceivedMessages = new Set<string>();
   const pendingCustomEvents = new Map<string, PresentationProviderEvent[]>();
   const pendingCustomActive = new Map<string, ActiveSubagentOperation>();
   let nextProjectedOrder = 0;
@@ -580,10 +589,14 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     hiddenCustomEntries.clear();
     customProtocolErrors.clear();
     customOperationRows.clear();
+    legacyReceivedMessages.clear();
     pendingCustomActive.clear();
     streamingAssistantSlot = undefined;
     hiddenStreamingIndexes.clear();
     for (const source of nextMessages) {
+      for (const item of customPayloadForMessage(source) ?? []) {
+        if (isLegacyReceivedMessage(item)) legacyReceivedMessages.add(item.operationId);
+      }
       if (source.role === 'custom' && source.customType && hiddenCustomTypes.has(source.customType)) {
         const { details: _details, ...withoutDetails } = cloneMessage(source);
         void _details;
@@ -977,7 +990,11 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
   const routeProviderEvent = (event: SubagentProviderEvent): readonly PimoteSessionEvent[] => {
     const wireEvent = event as unknown as Record<string, unknown>;
     if (typeof wireEvent.type !== 'string' || !('target' in event)) return [];
-    const presentation = event as PresentationProviderEvent;
+    const original = event as PresentationProviderEvent;
+    const presentation: PresentationProviderEvent =
+      original.target.kind === 'send' && legacyReceivedMessages.has(original.target.operationId)
+        ? { ...original, target: { ...original.target, kind: 'message_received' } }
+        : original;
     let routed: PresentationProviderEvent = presentation;
     if (!presentation.target.placement) {
       const messageIndex = customOperationRows.get(presentation.target.operationId);

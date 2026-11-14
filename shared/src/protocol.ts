@@ -120,7 +120,7 @@ export interface SessionState {
   messageCount: number;
 }
 
-export type PimoteSubagentOperationKind = 'send' | 'respond' | 'await' | 'delegation' | 'completion' | 'interrupt' | 'teardown' | 'resurrect';
+export type PimoteSubagentOperationKind = 'send' | 'message_received' | 'respond' | 'await' | 'delegation' | 'completion' | 'interrupt' | 'teardown' | 'resurrect';
 
 export type PimoteSubagentPlacement = { toolCallId: string; contentIndex: number; entryId?: string } | { entryId: string };
 

@@ -110,6 +110,31 @@ describe('semantic subagent transcript rendering', () => {
     if (phase === 'responding' || phase === 'complete') expect(field(operationCard, 'Response').querySelector('code')?.textContent).toBe('required');
   });
 
+  it('identifies a received message and renders its body as Markdown with labeled metadata', async () => {
+    const incoming: SubagentContent = {
+      type: 'subagent',
+      operationId: 'incoming',
+      subagentKind: 'message_received',
+      subagentState: 'complete',
+      data: { operation: 'send', result: { from: ['team', 'worker'], to: [], message: 'Please **check** the `config`.', responseExpected: true } },
+    };
+    const { target } = await render(incoming, true);
+    const received = target.querySelector<HTMLElement>('[aria-label="Message received from team/worker"]');
+    expect(received).not.toBeNull();
+    expect(target.textContent).not.toContain('Subagent send operation');
+    expect(received?.querySelector('[aria-label="Parameters"]')).toBeNull();
+    expect(field(received!, 'Message').querySelector('strong')?.textContent).toBe('check');
+    expect(field(received!, 'Message').querySelector('code')?.textContent).toBe('config');
+    expect(field(received!, 'From').textContent).toBe('team/worker');
+    expect(field(received!, 'To').textContent).toBe('root');
+    expectBoolean(received!, 'Response expected', true);
+  });
+
+  it('omits an empty parameters section', async () => {
+    const { target } = await render(operation({ operation: 'send', parameters: {}, result: { response: 'Done' } }));
+    expect(card(target, 'send').querySelector('[aria-label="Parameters"]')).toBeNull();
+  });
+
   it('renders tool parameters and results as labeled metadata and Markdown prose', async () => {
     const longDirectory = `/workspace/${'deep-directory/'.repeat(15)}config`;
     const { target } = await render(

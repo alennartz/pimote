@@ -20,7 +20,14 @@
     return parameters;
   }
 
-  let label = $derived(`Subagent ${content.subagentKind} operation`);
+  function contentLabel(content: SubagentContent): string {
+    if (content.subagentKind !== 'message_received') return `Subagent ${content.subagentKind} operation`;
+    const from = 'from' in content.data.result ? content.data.result.from : undefined;
+    if (Array.isArray(from) && from.every((part) => typeof part === 'string')) return `Message received from ${from.length ? from.join('/') : 'root'}`;
+    return 'Message received';
+  }
+
+  let label = $derived(contentLabel(content));
   let status = $derived(stateLabel(content));
   let parameters = $derived(parameterValues(content));
   let proseStreaming = $derived(content.subagentState === 'active' && (content.data.operation === 'send' || content.data.operation === 'respond'));
@@ -33,7 +40,7 @@
   </header>
   <div class="subagent-content-body">
     {#key content.operationId}
-      {#if parameters !== undefined}
+      {#if parameters !== undefined && Object.keys(parameters).length > 0}
         <section aria-label="Parameters">
           <h3>Parameters</h3>
           <SubagentData value={parameters} streaming={proseStreaming} />

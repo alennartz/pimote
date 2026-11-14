@@ -237,7 +237,115 @@ describe('subagent transcript projector', () => {
     expect(current.snapshot().messages[0]).toMatchObject({ role: 'custom', content: [expect.objectContaining({ operationId: 'active-custom', subagentState: 'active' })] });
   });
 
-  it('replaces an incoming hidden custom entry with typed send content', () => {
+  it.each(['message_received', 'send'] as const)('projects %s incoming entries after rehydration', (persistedKind) => {
+    const current = projector();
+    const data = { operation: 'send', result: { from: ['worker'], to: [], message: 'Report', responseExpected: false } } as const;
+    current.rehydrate([
+      {
+        role: 'custom',
+        customType: 'subagents',
+        entryId: 'incoming-entry',
+        content: [],
+        details: {
+          subagentContent: [{ operationId: 'received', kind: persistedKind, source: 'custom_entry', state: 'complete', data }],
+        },
+      },
+    ]);
+    current.acceptProviderEvent({
+      type: 'subagent_snapshot_event',
+      eventId: 'received',
+      cursor: cursor(1),
+      target: { operationId: 'received', kind: persistedKind, path: [], placement: { entryId: 'incoming-entry' } },
+      state: 'complete',
+      data,
+    });
+    expect(current.snapshot().messages).toEqual([
+      expect.objectContaining({
+        entryId: 'incoming-entry',
+        content: [expect.objectContaining({ subagentKind: 'message_received', data })],
+      }),
+    ]);
+  });
+
+  it.each([
+    { operation: 'send', result: { to: ['worker'], message: 'Task' } },
+    { operation: 'send', parameters: { to: ['worker'] }, result: { from: ['worker'], message: 'Task' } },
+  ] as const)('keeps ambiguous historical custom sends as outgoing sends', (data) => {
+    const current = projector();
+    current.rehydrate([
+      {
+        role: 'custom',
+        customType: 'subagents',
+        entryId: 'send-entry',
+        content: [],
+        details: {
+          subagentContent: [{ operationId: 'send', kind: 'send', source: 'custom_entry', state: 'complete', data }],
+        },
+      },
+    ]);
+    current.acceptProviderEvent({
+      type: 'subagent_snapshot_event',
+      eventId: 'send',
+      cursor: cursor(1),
+      target: { operationId: 'send', kind: 'send', path: [], placement: { entryId: 'send-entry' } },
+      state: 'complete',
+      data,
+    });
+    expect(current.snapshot().messages[0]?.content[0]).toMatchObject({ subagentKind: 'send' });
+  });
+
+  it('rehydrates a received message saved with a hidden await result', () => {
+    const current = projector();
+    const data = { operation: 'send', result: { from: [], to: ['worker'], message: 'Continue', responseExpected: false } } as const;
+    current.rehydrate([
+      assistant([{ type: 'tool_call', toolCallId: 'await-call', toolName: 'await_agents' }]),
+      {
+        role: 'toolResult',
+        entryId: 'await-result',
+        content: [{ type: 'tool_result', toolCallId: 'await-call', toolName: 'await_agents' }],
+        details: {
+          subagentContent: [{ operationId: 'received', kind: 'send', source: 'custom_entry', state: 'complete', data }],
+        },
+      },
+    ]);
+    current.acceptProviderEvent({
+      type: 'subagent_snapshot_event',
+      eventId: 'received',
+      cursor: cursor(1),
+      target: { operationId: 'received', kind: 'send', path: ['worker'], placement: { entryId: 'await-result' } },
+      state: 'complete',
+      data,
+    });
+    expect(current.snapshot().messages[0]?.content[0]).toMatchObject({ subagentKind: 'message_received', data });
+  });
+
+  it('accepts live incoming custom entries without a protocol error', () => {
+    const current = projector();
+    const data = { operation: 'send', result: { from: ['worker'], to: [], message: 'Done', responseExpected: false } } as const;
+    const nativeEvents = current.acceptNativeEvent({
+      type: 'entry_appended',
+      entry: {
+        type: 'custom',
+        id: 'incoming',
+        customType: 'subagents',
+        data: {
+          subagentContent: [{ operationId: 'incoming', kind: 'message_received', source: 'custom_entry', state: 'complete', data }],
+        },
+      },
+    } as unknown as IncomingSdkEvent);
+    expect(nativeEvents).toEqual([]);
+    current.acceptProviderEvent({
+      type: 'subagent_snapshot_event',
+      eventId: 'incoming',
+      cursor: cursor(1),
+      target: { operationId: 'incoming', kind: 'message_received', path: [], placement: { entryId: 'incoming' } },
+      state: 'complete',
+      data,
+    });
+    expect(current.snapshot().messages[0]?.content[0]).toMatchObject({ subagentKind: 'message_received', subagentState: 'complete', data });
+  });
+
+  it('replaces a hidden custom entry with its provider content', () => {
     const current = projector();
     current.rehydrate([{ role: 'custom', customType: 'subagents', entryId: 'incoming-entry', content: [{ type: 'text', text: '<agent_message>hidden</agent_message>' }] }]);
     current.acceptProviderEvent({
