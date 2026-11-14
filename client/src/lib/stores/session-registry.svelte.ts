@@ -901,6 +901,10 @@ export class SessionRegistry {
     return pending?.[1] ?? null;
   }
 
+  getSubagentViewClosedNotice(rootSessionId: string, path: AgentPath): SubagentViewClosedNotice | null {
+    return this.subagentClosedNotices[this.subagentNoticeKey(rootSessionId, path)] ?? null;
+  }
+
   getLatestSubagentClosedNotice(rootSessionId: string): SubagentViewClosedNotice | null {
     const prefix = `${rootSessionId}\u0000`;
     const notices = Object.entries(this.subagentClosedNotices).filter(([key]) => key.startsWith(prefix));

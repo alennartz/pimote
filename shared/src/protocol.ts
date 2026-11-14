@@ -191,6 +191,8 @@ interface PimoteMessageContentBase {
   operationId?: string;
   /** Operation kind for a `subagent` block. */
   subagentKind?: PimoteSubagentOperationKind;
+  /** Root-relative agent that owns this operation, when one exists. */
+  subagentPath?: AgentPath;
   /** Native assistant slot occupied by a `subagent` block. */
   placement?: PimoteSubagentPlacement;
   /** Lifecycle state for a `subagent` block. */

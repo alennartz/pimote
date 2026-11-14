@@ -46,6 +46,7 @@ function ensureParent(messages: PimoteAgentMessage[], event: SubagentContentEven
 }
 
 function applyDelta(data: PimoteSubagentStartData, delta: PimoteSubagentDeltaData): PimoteSubagentStartData {
+  if (data.operation === 'delegation' && delta.operation === 'delegation') return { ...data, result: { children: delta.children } };
   if (data.operation === 'send' && delta.operation === 'send') {
     if ('field' in delta) {
       if (delta.field === 'request') {

@@ -4,6 +4,7 @@
   import { sessionRegistry, type SubagentViewClosedNotice } from '$lib/stores/session-registry.svelte.js';
   import { projectSubagentPanelRows, type AgentPath, type SubagentPanelState, type SubagentPanelRow, type SubagentTeardownConfirmation } from '$lib/subagent-view-state.js';
   import CardList from './CardList.svelte';
+  import AgentChip from './AgentChip.svelte';
   import { formatTokenCount } from '$lib/session-summary.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
@@ -348,10 +349,17 @@
                 aria-label={`Inspect ${pathLabel(row.path)}`}
                 onclick={() => inspect(row.path)}
               >
-                <span class="status-dot shrink-0 {row.metadata.state}" aria-label={row.metadata.state}></span>
-                {#if row.metadata.personaIcon}<span class="persona-icon">{row.metadata.personaIcon}</span>{/if}
                 <span class="min-w-0 flex-1">
-                  <strong class="block truncate text-xs">{row.label}</strong>
+                  <span class="block min-w-0 truncate">
+                    <AgentChip
+                      path={row.path}
+                      rootSessionId={rootSessionId ?? ''}
+                      name={row.label}
+                      persona={row.metadata.persona}
+                      personaIcon={row.metadata.personaIcon}
+                      state={row.metadata.state}
+                    />
+                  </span>
                   <span class="text-muted-foreground block truncate text-[11px]">{pathLabel(row.path)} · {stateLabel(row)}</span>
                 </span>
               </button>
@@ -397,7 +405,13 @@
     {#if inspectorNode}
       <section class="agent-inspector border-sidebar-border/70 border-b px-2.5 py-3" aria-label="Selected subagent details">
         <div class="flex items-center gap-2">
-          {#if inspectorNode.personaIcon}<span class="persona-icon">{inspectorNode.personaIcon}</span>{/if}
+          <AgentChip
+            path={inspectorNode.path}
+            rootSessionId={rootSessionId ?? ''}
+            persona={inspectorNode.persona}
+            personaIcon={inspectorNode.personaIcon}
+            state={inspectorNode.state}
+          />
           <strong class="min-w-0 flex-1 truncate font-mono text-xs">{pathLabel(inspectorNode.path)}</strong>
           <span class="text-muted-foreground rounded-full border px-1.5 py-0.5 text-[10px]">{inspectorViewOpen ? 'View open' : 'View closed'}</span>
         </div>
@@ -509,37 +523,6 @@
 <style>
   .panel-host {
     container-type: inline-size;
-  }
-  .status-dot {
-    width: 0.45rem;
-    height: 0.45rem;
-    border-radius: 999px;
-    background: var(--muted-foreground);
-  }
-  .status-dot.running {
-    background: var(--status-streaming);
-    box-shadow: 0 0 0 3px color-mix(in oklch, var(--status-streaming) 14%, transparent);
-  }
-  .status-dot.waiting {
-    background: var(--warning);
-    box-shadow: 0 0 0 3px color-mix(in oklch, var(--warning) 14%, transparent);
-  }
-  .status-dot.errored {
-    background: var(--destructive);
-  }
-  .status-dot.dead {
-    background: var(--destructive);
-  }
-  .persona-icon {
-    display: inline-grid;
-    width: 1.25rem;
-    height: 1.25rem;
-    flex: 0 0 auto;
-    place-items: center;
-    border: 1px solid color-mix(in oklch, var(--custom-accent) 42%, var(--border));
-    border-radius: 999px;
-    color: var(--custom-foreground);
-    font-size: 0.7rem;
   }
   .tree-row-select {
     padding-inline-start: calc(0.5rem + var(--tree-indent));

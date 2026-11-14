@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { AssistantRowUsage, PimoteAgentMessage, StreamingMessage } from '@pimote/shared';
+  import type { AgentPath, AssistantRowUsage, PimoteAgentMessage, StreamingMessage } from '@pimote/shared';
   import TextBlock from './TextBlock.svelte';
   import ThinkingBlock from './ThinkingBlock.svelte';
   import ToolCall from './ToolCall.svelte';
@@ -20,6 +20,7 @@
   import CostBreakdownPopover from './CostBreakdownPopover.svelte';
   import { observeFullyOffscreen } from '$lib/auto-collapse.js';
   import SubagentContent from './SubagentContent.svelte';
+  import AgentChip from './AgentChip.svelte';
 
   const MAX_COLLAPSED_LINES = 10;
   const SKILL_COLLAPSED_LINES = 3;
@@ -41,6 +42,8 @@
     messageKey = '',
     assistantRowUsage = null,
     sessionId = '',
+    subagentRootSessionId = '',
+    agentPath = undefined,
     abandonedBranchCount = 0,
     manager = false,
     readOnly = false,
@@ -54,6 +57,10 @@
     messageKey?: string;
     assistantRowUsage?: AssistantRowUsage | null;
     sessionId?: string;
+    /** Root identity for resolving subagent metadata from a child transcript. */
+    subagentRootSessionId?: string;
+    /** The speaker path when this message belongs to a child view. */
+    agentPath?: AgentPath;
     abandonedBranchCount?: number;
     manager?: boolean;
     readOnly?: boolean;
@@ -277,6 +284,9 @@
         </div>
       </div>
       <div class="message-body">
+        {#if agentPath && agentPath.length > 0}
+          <div class="assistant-speaker"><AgentChip path={agentPath} rootSessionId={subagentRootSessionId} /></div>
+        {/if}
         {#if assistantError}
           <div class="assistant-error">
             <div class="assistant-error-header">
@@ -292,7 +302,9 @@
         {#each visibleContent as block, i (`native-${i}`)}
           {@const blockStreaming = block.streaming ?? false}
           {#if block.type === 'subagent'}
-            <SubagentContent content={block} />
+            {@const operationToolCallId = block.placement && 'toolCallId' in block.placement ? block.placement.toolCallId : block.toolCallId}
+            {@const operationExecution = operationToolCallId ? toolExecutions[operationToolCallId] : undefined}
+            <SubagentContent content={block} rootSessionId={subagentRootSessionId} durationMs={operationExecution?.durationMs} />
           {:else if block.type === 'text'}
             <TextBlock text={block.text ?? ''} streaming={blockStreaming} />
           {:else if block.type === 'thinking'}
@@ -329,7 +341,7 @@
     <div class="message custom-message">
       {#each message.content as block (block.operationId ?? block.type)}
         {#if block.type === 'subagent'}
-          <SubagentContent content={block} />
+          <SubagentContent content={block} rootSessionId={subagentRootSessionId} />
         {/if}
       {/each}
     </div>
@@ -562,6 +574,10 @@
     flex: 1;
     min-width: 0;
     font-size: 0.9rem;
+  }
+
+  .assistant-speaker {
+    margin-bottom: 0.3rem;
   }
 
   .assistant-error {

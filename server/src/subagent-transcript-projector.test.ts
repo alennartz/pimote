@@ -782,6 +782,95 @@ describe('subagent transcript projector', () => {
     expect(rows[0]!.content.some((block) => block.type === 'subagent' && block.subagentKind === 'delegation')).toBe(true);
   });
 
+  it('streams delegation task updates into one spawn block and keeps the operation path', () => {
+    const current = createSubagentTranscriptProjector({ sessionId: 'root-session', manifest: { hiddenToolNames: ['subagent'], hiddenCustomTypes: [] } });
+    current.acceptNativeEvent({ type: 'message_start', message: { role: 'assistant', content: [] } } as IncomingSdkEvent);
+    const target = { operationId: 'spawn-call', kind: 'delegation' as const, path: ['owner'], placement: { toolCallId: 'spawn-call', contentIndex: 0 } };
+    const start = current.acceptProviderEvent({
+      type: 'subagent_start',
+      eventId: 'spawn-start',
+      cursor: cursor(1),
+      target,
+      data: { operation: 'delegation', parameters: {}, result: { children: [{ path: ['owner', 'watcher'], task: 'Tail the log' }] } },
+    });
+    expect(start.map((event) => event.type)).toEqual(['subagent_content_start']);
+    expect(start[0]).toMatchObject({ content: { subagentPath: ['owner'], data: { result: { children: [{ task: 'Tail the log' }] } } } });
+
+    const delta = current.acceptProviderEvent({
+      type: 'subagent_delta',
+      eventId: 'spawn-delta',
+      cursor: cursor(2),
+      target,
+      data: {
+        operation: 'delegation',
+        children: [
+          { path: ['owner', 'watcher'], task: 'Tail the log and ping me' },
+          { path: ['owner', 'tracer'], task: 'Check ws ordering' },
+        ],
+      },
+    });
+    expect(delta.map((event) => event.type)).toEqual(['subagent_content_delta']);
+    expect(current.snapshot().messages[0]?.content[0]).toMatchObject({
+      type: 'subagent',
+      subagentPath: ['owner'],
+      data: { result: { children: [{ task: 'Tail the log and ping me' }, { task: 'Check ws ordering' }] } },
+    });
+
+    const completed = current.acceptProviderEvent({
+      type: 'subagent_snapshot_event',
+      eventId: 'spawn-final',
+      cursor: cursor(3),
+      target,
+      state: 'complete',
+      data: {
+        operation: 'delegation',
+        parameters: { agents: [] },
+        result: {
+          children: [
+            { path: ['owner', 'watcher'], task: 'Tail the log and ping me' },
+            { path: ['owner', 'tracer'], task: 'Check ws ordering' },
+          ],
+        },
+      },
+    });
+    expect(completed.map((event) => event.type)).toEqual(['subagent_content_end']);
+    expect(completed[0]).toMatchObject({ content: { subagentState: 'complete', subagentPath: ['owner'] } });
+  });
+
+  it('attaches native tool duration to the projected subagent result without persisting it in tool data', () => {
+    const current = createSubagentTranscriptProjector({ sessionId: 'root-session', manifest: { hiddenToolNames: ['send'], hiddenCustomTypes: [] } });
+    current.acceptNativeEvent({ type: 'message_start', message: { role: 'assistant', content: [] } } as IncomingSdkEvent);
+    current.acceptNativeEvent({
+      type: 'message_update',
+      assistantMessageEvent: {
+        type: 'toolcall_start',
+        contentIndex: 0,
+        partial: { role: 'assistant', content: [{ type: 'toolCall', id: 'send-call', name: 'send', arguments: {} }] },
+      },
+    } as IncomingSdkEvent);
+    const target = { operationId: 'send-call', kind: 'send' as const, path: [], placement: { toolCallId: 'send-call', contentIndex: 0 } };
+    current.acceptProviderEvent({
+      type: 'subagent_start',
+      eventId: 'send-start',
+      cursor: cursor(1),
+      target,
+      data: { operation: 'send', parameters: { to: ['worker'], message: 'check' }, result: { response: '', phase: 'sending' } },
+    });
+    current.acceptProviderEvent({
+      type: 'subagent_end',
+      eventId: 'send-end',
+      cursor: cursor(2),
+      target,
+      state: 'complete',
+      data: { operation: 'send', parameters: { to: ['worker'], message: 'check' }, result: { response: 'done' } },
+    });
+
+    const timing = current.acceptNativeEvent({ type: 'tool_execution_end', toolCallId: 'send-call', durationMs: 725 } as IncomingSdkEvent);
+    expect(timing).toHaveLength(1);
+    expect(timing[0]).toMatchObject({ type: 'subagent_content_end', content: { durationMs: 725 } });
+    expect(current.snapshot().messages[0]?.content[0]).toMatchObject({ type: 'subagent', durationMs: 725 });
+  });
+
   it('still drops fully hidden assistant rows without visible content', () => {
     const current = createSubagentTranscriptProjector({ sessionId: 'root-session', manifest: { hiddenToolNames: ['send'], hiddenCustomTypes: [] } });
     current.acceptNativeEvent({ type: 'message_start', message: { role: 'assistant', content: [] } } as IncomingSdkEvent);

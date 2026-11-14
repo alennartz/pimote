@@ -51,6 +51,7 @@ export type SubagentAwaitResult = Readonly<{
 }>;
 
 export type SubagentStartData =
+  | Readonly<{ operation: 'delegation'; parameters: SubagentToolParameters; result: Readonly<{ children: readonly SubagentDelegatedChild[] }> }>
   | Readonly<{
       operation: 'send';
       parameters: SubagentToolParameters;
@@ -60,6 +61,7 @@ export type SubagentStartData =
   | Readonly<{ operation: 'await'; parameters: SubagentToolParameters; result: SubagentAwaitResult }>;
 
 export type SubagentDeltaData =
+  | Readonly<{ operation: 'delegation'; children: readonly SubagentDelegatedChild[] }>
   | Readonly<{ operation: 'send'; field: 'request' | 'response'; delta: string }>
   | Readonly<{ operation: 'send'; phase: 'waiting' | 'responding' }>
   | Readonly<{ operation: 'respond'; delta: string }>

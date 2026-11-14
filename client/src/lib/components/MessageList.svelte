@@ -489,6 +489,8 @@
               messageKey={entry.key}
               {assistantRowUsage}
               sessionId={childSurface?.childSessionId ?? session?.sessionId ?? ''}
+              subagentRootSessionId={childSurface?.rootSessionId ?? session?.sessionId ?? ''}
+              agentPath={childSurface?.path}
               abandonedBranchCount={alternateCount(entry)}
               manager={Boolean(source || managerTranscript)}
               {readOnly}

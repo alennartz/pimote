@@ -91,6 +91,74 @@ describe('projected subagent content', () => {
     expect(state.active).toHaveLength(1);
   });
 
+  it('streams delegation tasks in the existing spawn block before replacing them with the final children', () => {
+    const delegationTarget = { ...target, operationId: 'spawn-call', kind: 'delegation' as const };
+    const delegationStart: SubagentContentStartEvent = {
+      ...delegationTarget,
+      type: 'subagent_content_start',
+      cursor: 5,
+      placement: { toolCallId: 'spawn-call', contentIndex: 1 },
+      content: {
+        type: 'subagent',
+        operationId: 'spawn-call',
+        subagentKind: 'delegation',
+        subagentState: 'active',
+        data: { operation: 'delegation', parameters: {}, result: { children: [{ path: ['owner', 'watcher'], task: 'Tail the log' }] } },
+      },
+    };
+    const delegationDelta: SubagentContentDeltaEvent = {
+      ...delegationTarget,
+      type: 'subagent_content_delta',
+      cursor: 6,
+      data: {
+        operation: 'delegation',
+        children: [
+          { path: ['owner', 'watcher'], task: 'Tail the log and ping me', persona: 'scout' },
+          { path: ['owner', 'tracer'], task: 'Check ws ordering' },
+        ],
+      },
+    };
+    const delegationEnd: SubagentContentEndEvent = {
+      ...delegationTarget,
+      type: 'subagent_content_end',
+      cursor: 7,
+      state: 'complete',
+      content: {
+        type: 'subagent',
+        operationId: 'spawn-call',
+        subagentKind: 'delegation',
+        subagentState: 'complete',
+        data: {
+          operation: 'delegation',
+          parameters: { agents: [] },
+          result: {
+            children: [
+              { path: ['owner', 'watcher'], task: 'Tail the log and ping me', persona: 'scout' },
+              { path: ['owner', 'tracer'], task: 'Check ws ordering' },
+            ],
+          },
+        },
+      },
+    };
+    let state = applySubagentContentEvent(hydrateSubagentContent([assistant]), delegationStart);
+    state = applySubagentContentEvent(state, delegationDelta);
+    expect(state.messages[0]?.content[1]).toMatchObject({
+      operationId: 'spawn-call',
+      subagentState: 'active',
+      data: {
+        result: {
+          children: [
+            { path: ['owner', 'watcher'], task: 'Tail the log and ping me', persona: 'scout' },
+            { path: ['owner', 'tracer'], task: 'Check ws ordering' },
+          ],
+        },
+      },
+    });
+    state = applySubagentContentEvent(state, delegationEnd);
+    expect(state.messages[0]?.content[1]).toMatchObject({ subagentState: 'complete', data: { operation: 'delegation' } });
+    expect(state.active).toEqual([]);
+  });
+
   it('keeps a visible protocol error in the replacement slot', () => {
     const state = applySubagentContentEvent(hydrateSubagentContent([assistant]), start);
     const error: SubagentContentEndEvent = {

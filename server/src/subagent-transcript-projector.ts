@@ -128,12 +128,14 @@ function mapSubagentBlock(
   state: PimoteMessageContent['subagentState'],
   data: unknown,
   placement: SubagentOperationTarget['placement'],
+  path: SubagentOperationTarget['path'],
 ): PimoteMessageContent {
   return {
     type: 'subagent',
     operationId,
     subagentKind: kind,
     subagentState: state ?? 'active',
+    subagentPath: [...path],
     ...(placement ? { placement: { ...placement } } : {}),
     data: data as never,
   } as unknown as PimoteMessageContent;
@@ -163,6 +165,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
   const operations = new Map<string, OperationRecord>();
   const completedOperations = new Set<string>();
   const completedTargets = new Map<string, SubagentOperationTarget>();
+  const toolDurations = new Map<string, number>();
   const seenProviderEvents = new Set<string>();
   const operationSlots = new Map<string, MutableSlot>();
   const projectedSources = new Map<string, ProjectedSource>();
@@ -392,7 +395,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     const key = operationKey(target);
     if (operations.has(key) && operationSlots.has(key)) return [];
     const clonedTarget = cloneTarget(target);
-    const block = mapSubagentBlock(key, clonedTarget.kind, 'active', data, clonedTarget.placement);
+    const block = mapSubagentBlock(key, clonedTarget.kind, 'active', data, clonedTarget.placement, clonedTarget.path);
     const slot = placeBlock(clonedTarget, block);
     const record: OperationRecord = { target: clonedTarget, data, slot };
     operations.set(key, record);
@@ -402,6 +405,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
 
   const deltaData = (record: OperationRecord, delta: SubagentDeltaData): SubagentStartData => {
     const current = record.data;
+    if (delta.operation === 'delegation' && current.operation === 'delegation') return { ...current, result: { children: delta.children } };
     if (delta.operation === 'send' && current.operation === 'send') {
       if ('field' in delta) {
         if (delta.field === 'request') {
@@ -424,7 +428,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     const record = operations.get(event.target.operationId);
     if (!record) return [];
     record.data = deltaData(record, event.data);
-    const block = mapSubagentBlock(record.target.operationId, record.target.kind, 'active', record.data, record.target.placement);
+    const block = mapSubagentBlock(record.target.operationId, record.target.kind, 'active', record.data, record.target.placement, record.target.path);
     const slot = replaceOperationBlock(record.target.operationId, block) ?? record.slot;
     record.slot = slot;
     const delta = {
@@ -439,8 +443,11 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     return [delta];
   };
 
-  const endEvent = (target: SubagentOperationTarget, state: 'complete' | 'error' | 'aborted', data: SubagentEndData | ProtocolErrorData): PimoteSessionEvent => {
-    const block = mapSubagentBlock(target.operationId, target.kind, stateFromEnd(state), data, target.placement);
+  const endEvent = (target: SubagentOperationTarget, state: 'complete' | 'error' | 'aborted', data: unknown): PimoteSessionEvent => {
+    const durationMs = toolDurations.get(target.operationId);
+    const mapped = mapSubagentBlock(target.operationId, target.kind, stateFromEnd(state), data, target.placement, target.path);
+    const block = durationMs === undefined ? mapped : { ...mapped, durationMs };
+    toolDurations.delete(target.operationId);
     const replaced = replaceOperationBlock(target.operationId, block);
     const effectiveSlot = replaced ?? placeBlock(target, block);
     operationSlots.set(target.operationId, effectiveSlot);
@@ -465,12 +472,45 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     return [endEvent(record.target, event.state, event.data)];
   };
 
+  const updateToolDuration = (operationId: string, durationMs: number): readonly PimoteSessionEvent[] => {
+    toolDurations.delete(operationId);
+    const slot = operationSlots.get(operationId);
+    const message = slot ? messages[slot.messageIndex] : undefined;
+    const block = slot ? message?.content[slot.contentIndex] : undefined;
+    if (!slot || !block || !isSubagentContent(block) || !block.subagentKind || block.durationMs === durationMs) return [];
+    const content = { ...block, durationMs };
+    const updatedSlot = replaceOperationBlock(operationId, content);
+    if (!updatedSlot) return [];
+    const state =
+      block.subagentState === 'protocol_error' ? 'protocol_error' : block.subagentState === 'error' || block.subagentState === 'aborted' ? block.subagentState : 'complete';
+    return [
+      {
+        ...emitBase(),
+        type: 'subagent_content_end',
+        parentMessageId: updatedSlot.parentMessageId,
+        contentIndex: updatedSlot.contentIndex,
+        operationId,
+        kind: block.subagentKind,
+        state,
+        content,
+      },
+    ];
+  };
+
   const finite = (event: Extract<SubagentProviderEvent, { type: 'subagent_snapshot_event' }>): readonly PimoteSessionEvent[] => {
-    const existing = operationSlots.get(event.target.operationId);
-    if (completedOperations.has(event.target.operationId) && existing) return [];
+    const operationId = event.target.operationId;
+    const active = operations.get(operationId);
+    const existing = operationSlots.get(operationId);
+    if (completedOperations.has(operationId) && existing) return [];
     const state = event.state;
-    const target = cloneTarget(event.target);
-    const block = mapSubagentBlock(target.operationId, target.kind, stateFromEnd(state), event.data, target.placement);
+    const target = cloneTarget(active?.target ?? event.target);
+    if (active) {
+      operations.delete(operationId);
+      completedOperations.add(operationId);
+      completedTargets.set(operationId, target);
+      return [endEvent(target, state, event.data)];
+    }
+    const block = mapSubagentBlock(target.operationId, target.kind, stateFromEnd(state), event.data, target.placement, target.path);
     const slot = placeBlock(target, block);
     operationSlots.set(target.operationId, slot);
     completedOperations.add(target.operationId);
@@ -488,9 +528,9 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
       placement: { toolCallId, contentIndex: sourceSlot?.contentIndex ?? 0, ...(sourceSlot?.parentMessageId ? { entryId: sourceSlot.parentMessageId } : {}) },
     };
     const existing = operationSlots.get(toolCallId);
-    const slot = existing ?? placeBlock(target, mapSubagentBlock(toolCallId, 'send', 'protocol_error', dataForProtocolError('send', message), target.placement));
+    const slot = existing ?? placeBlock(target, mapSubagentBlock(toolCallId, 'send', 'protocol_error', dataForProtocolError('send', message), target.placement, target.path));
     const data = dataForProtocolError('send', message);
-    const content = mapSubagentBlock(toolCallId, 'send', 'protocol_error', data, target.placement);
+    const content = mapSubagentBlock(toolCallId, 'send', 'protocol_error', data, target.placement, target.path);
     if (!replaceOperationBlock(toolCallId, content)) placeBlock(target, content);
     completedOperations.add(toolCallId);
     completedTargets.set(toolCallId, target);
@@ -513,7 +553,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     const operationId = `protocol-error:${entryId}`;
     const target: SubagentOperationTarget = { operationId, kind: 'completion', path: [], placement: { entryId } };
     const data: ProtocolErrorData = { operation: 'protocol_error', result: { error: message } };
-    const content = mapSubagentBlock(operationId, 'completion', 'protocol_error', data, target.placement);
+    const content = mapSubagentBlock(operationId, 'completion', 'protocol_error', data, target.placement, target.path);
     const slot = placeBlock(target, content);
     operationSlots.set(operationId, slot);
     completedOperations.add(operationId);
@@ -684,6 +724,10 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
   const acceptNativeEvent = (event: IncomingSdkEvent): readonly PimoteSessionEvent[] => {
     const toolName = nativeToolName(event);
     const toolCallId = nativeToolCallId(event);
+    if (event.type === 'tool_execution_end' && toolCallId && typeof event.durationMs === 'number') {
+      toolDurations.set(toolCallId, event.durationMs);
+      if (completedOperations.has(toolCallId)) return updateToolDuration(toolCallId, event.durationMs);
+    }
     if (event.type === 'message_start') {
       hiddenStreamingIndexes.clear();
       streamingAssistantSlot = event.message.role === 'assistant' ? { messageIndex: messages.length, contentIndex: 0, parentMessageId: `message-${messages.length}` } : undefined;
@@ -932,7 +976,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
           active?.target ?? {
             operationId: block.operationId,
             kind: block.subagentKind,
-            path: [],
+            path: block.subagentPath ?? [],
             ...(block.placement ? { placement: block.placement } : {}),
           },
         );

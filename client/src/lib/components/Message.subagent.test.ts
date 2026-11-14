@@ -2,10 +2,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
 import { fromStore, writable } from 'svelte/store';
-import type { PimoteAgentMessage, PimoteMessageContent, PimoteSubagentStartData, PimoteSubagentFinalData } from '@pimote/shared';
+import type { AgentPath, PimoteAgentMessage, PimoteMessageContent, PimoteSubagentFinalData, PimoteSubagentStartData } from '@pimote/shared';
 import Message from './Message.svelte';
 
 type SubagentContent = Extract<PimoteMessageContent, { type: 'subagent' }>;
+type SubagentKind = SubagentContent['subagentKind'];
+type SubagentState = SubagentContent['subagentState'];
 let component: ReturnType<typeof mount> | undefined;
 
 afterEach(async () => {
@@ -14,12 +16,17 @@ afterEach(async () => {
   document.body.replaceChildren();
 });
 
-function operation(data: PimoteSubagentStartData | PimoteSubagentFinalData, subagentState: SubagentContent['subagentState'] = 'complete'): SubagentContent {
+function operation(
+  data: PimoteSubagentStartData | PimoteSubagentFinalData,
+  subagentState: SubagentState = 'complete',
+  subagentKind: SubagentKind = data.operation === 'protocol_error' ? 'protocol_error' : data.operation,
+): SubagentContent {
   return {
     type: 'subagent',
     operationId: 'operation-call',
-    subagentKind: data.operation === 'protocol_error' ? 'send' : data.operation,
+    subagentKind,
     subagentState,
+    subagentPath: ['team'],
     placement: { toolCallId: 'operation-call', contentIndex: 1 },
     data,
   };
@@ -38,7 +45,8 @@ function mixedMessage(block: SubagentContent): PimoteAgentMessage {
   };
 }
 
-async function render(block: SubagentContent, custom = false) {
+async function render(block: SubagentContent, options: { custom?: boolean; rootSessionId?: string; agentPath?: AgentPath } = {}) {
+  const { custom = false, rootSessionId = '', agentPath } = options;
   const messages = writable<PimoteAgentMessage>(custom ? { role: 'custom', content: [block] } : mixedMessage(block));
   const current = fromStore(messages);
   const target = document.createElement('div');
@@ -49,6 +57,8 @@ async function render(block: SubagentContent, custom = false) {
       get message() {
         return current.current;
       },
+      subagentRootSessionId: rootSessionId,
+      agentPath,
     },
   });
   await tick();
@@ -61,332 +71,253 @@ async function render(block: SubagentContent, custom = false) {
   };
 }
 
-function card(target: HTMLElement, kind: string): HTMLElement {
-  const label = kind === 'resurrect' ? 'Subagent resurrected' : kind === 'teardown' ? 'Subagent torn down' : `Subagent ${kind} operation`;
-  const element = target.querySelector<HTMLElement>(`[aria-label="${label}"]`);
-  expect(element).not.toBeNull();
+function card(target: HTMLElement, kind: SubagentKind): HTMLElement {
+  const element = target.querySelector<HTMLElement>(`[data-subagent-kind="${kind}"]`);
+  expect(element, `The ${kind} card is rendered`).not.toBeNull();
   return element!;
 }
 
-function field(target: Element, label: string): HTMLElement {
+function section(target: Element, label: string): HTMLElement {
   const value = [...target.querySelectorAll<HTMLElement>('[aria-label]')].find((entry) => entry.getAttribute('aria-label') === label);
-  expect(value, `The ${label} field is accessible`).toBeDefined();
+  expect(value, `The ${label} section is rendered`).toBeDefined();
   return value!;
 }
 
-function expectNumber(target: Element, label: string, expected: number): void {
-  const text = field(target, label).textContent?.replace(/,/g, '') ?? '';
-  const number = text.match(/[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/)?.[0];
-  expect(Number(number)).toBeCloseTo(expected, 6);
-}
+describe('subagent transcript cards', () => {
+  it('uses the tool-call header with active, success, failure, and duration states', async () => {
+    const active = operation({ operation: 'send', parameters: { to: ['team', 'worker'], message: 'Check the config.' }, result: { response: '', phase: 'waiting' } }, 'active');
+    const { target } = await render(active);
+    const activeCard = card(target, 'send');
+    expect(activeCard.querySelector('.subagent-name')?.textContent).toBe('send');
+    expect(activeCard.querySelector('.subagent-state-icon.spinning')).not.toBeNull();
+    expect(activeCard.querySelector('.subagent-status')?.textContent).toContain('waiting');
+    expect(activeCard.querySelector('.subagent-header')?.getAttribute('aria-expanded')).toBe('true');
+    expect(activeCard.querySelector('.agent-chip[data-agent-path="team/worker"]')).not.toBeNull();
 
-function expectBoolean(target: Element, label: string, expected: boolean): void {
-  const text = field(target, label).textContent?.toLowerCase() ?? '';
-  expect(text).toMatch(expected ? /\b(true|yes|enabled)\b/ : /\b(false|no|disabled)\b/);
-}
+    const { target: completeTarget } = await render({
+      ...operation({ operation: 'send', parameters: { to: ['worker'], message: 'check' }, result: { response: 'done' } }),
+      durationMs: 1250,
+    });
+    const completeCard = card(completeTarget, 'send');
+    expect(completeCard.querySelector('.subagent-state-icon.succeeded')).not.toBeNull();
+    expect(completeCard.querySelector('.subagent-status')?.textContent).toContain('1s');
 
-function send(phase: 'ready' | 'sending' | 'waiting' | 'responding' | 'complete'): SubagentContent {
-  const message = phase === 'ready' ? '' : phase === 'sending' ? 'Please **verify**' : 'Please **verify** the configuration.';
-  const response = phase === 'responding' ? 'Everything `required`' : phase === 'complete' ? 'Everything `required` is present.' : '';
-  const parameters = { to: ['team', 'worker'], message, expectResponse: true };
-  return operation(
-    phase === 'complete' ? { operation: 'send', parameters, result: { response } } : { operation: 'send', parameters, result: { response, phase } },
-    phase === 'complete' ? 'complete' : 'active',
-  );
-}
-
-describe('semantic subagent transcript rendering', () => {
-  it.each(['ready', 'sending', 'waiting', 'responding', 'complete'] as const)('keeps the %s send card in its assistant slot', async (phase) => {
-    const { target } = await render(send(phase));
-    const operationCard = card(target, 'send');
-    expect(target.querySelectorAll('[aria-label="Subagent send operation"]')).toHaveLength(1);
-    expect(operationCard.textContent?.toLowerCase()).toContain(phase);
-    expect(field(operationCard, 'To').textContent).toBe('team/worker');
-    expectBoolean(operationCard, 'Expect response', true);
-    const text = target.textContent ?? '';
-    expect(text.indexOf('I will ask the worker.')).toBeLessThan(text.indexOf('Subagent send operation'));
-    expect(text.indexOf('Subagent send operation')).toBeLessThan(text.indexOf('I will inspect the local file too.'));
-    expect(text).toContain('read');
-    if (phase !== 'ready') expect(field(operationCard, 'Message').querySelector('strong')?.textContent).toBe('verify');
-    if (phase === 'responding' || phase === 'complete') expect(field(operationCard, 'Response').querySelector('code')?.textContent).toBe('required');
+    const { target: failedTarget } = await render(operation({ operation: 'protocol_error', result: { error: 'bad request' } }, 'protocol_error'));
+    expect(card(failedTarget, 'protocol_error').querySelector('.subagent-state-icon.failed')).not.toBeNull();
   });
 
-  it('identifies a received message and renders its body as Markdown with labeled metadata', async () => {
-    const incoming: SubagentContent = {
-      type: 'subagent',
-      operationId: 'incoming',
-      subagentKind: 'message_received',
-      subagentState: 'complete',
-      data: { operation: 'send', result: { from: ['team', 'worker'], to: [], message: 'Please **check** the `config`.', responseExpected: true } },
-    };
-    const { target } = await render(incoming, true);
-    const received = target.querySelector<HTMLElement>('[aria-label="Message received from team/worker"]');
-    expect(received).not.toBeNull();
-    expect(target.textContent).not.toContain('Subagent send operation');
-    expect(received?.querySelector('[aria-label="Parameters"]')).toBeNull();
-    expect(field(received!, 'Message').querySelector('strong')?.textContent).toBe('check');
-    expect(field(received!, 'Message').querySelector('code')?.textContent).toBe('config');
-    expect(field(received!, 'From').textContent).toBe('team/worker');
-    expect(field(received!, 'To').textContent).toBe('root');
-    expectBoolean(received!, 'Response expected', true);
+  it('keeps a child speaker chip in the assistant message header', async () => {
+    const { target } = await render(operation({ operation: 'send', parameters: { to: ['worker'], message: 'check' }, result: { response: 'done' } }), {
+      rootSessionId: 'root-session',
+      agentPath: ['team', 'worker'],
+    });
+    expect(target.querySelector('.assistant-speaker [data-agent-path="team/worker"]')).not.toBeNull();
   });
 
-  it('omits an empty parameters section', async () => {
-    const { target } = await render(operation({ operation: 'send', parameters: {}, result: { response: 'Done' } }));
-    expect(card(target, 'send').querySelector('[aria-label="Parameters"]')).toBeNull();
-  });
-
-  it('renders tool parameters and results as labeled metadata and Markdown prose', async () => {
-    const longDirectory = `/workspace/${'deep-directory/'.repeat(15)}config`;
-    const { target } = await render(
-      operation({
-        operation: 'send',
-        parameters: {
-          to: ['team', 'worker'],
-          message: 'Check **settings**.\n\n- First check\n- Second check',
-          model: 'provider/model-with-**literal**-name',
-          persona: 'config_*expert*',
-          cwd: longDirectory,
-          channels: ['parent', 'other_**worker**'],
-          timeoutSeconds: 120,
-          context: { note: 'See [the guide](https://example.com/guide).' },
-        },
-        result: {
-          response: 'The settings are **valid**.',
-          output: '```json\n{"enabled": true}\n```',
-          error: 'One *optional* setting is missing.',
-          sessionId: 'session_**literal**',
-          received: false,
-          attempts: 0,
-          detail: { text: '> Review the optional setting.' },
-        },
-      }),
-    );
-    const operationCard = card(target, 'send');
-    expect(operationCard.textContent).toContain('Parameters');
-    expect(operationCard.textContent).toContain('Result');
-    expect(field(operationCard, 'Message').querySelectorAll('li')).toHaveLength(2);
-    expect(field(operationCard, 'Message').querySelector('strong')?.textContent).toBe('settings');
-    expect(field(operationCard, 'Model').textContent).toBe('provider/model-with-**literal**-name');
-    expect(field(operationCard, 'Model').querySelector('strong')).toBeNull();
-    expect(field(operationCard, 'Persona').textContent).toBe('config_*expert*');
-    expect(field(operationCard, 'Working directory').textContent).toBe(longDirectory);
-    expect(field(operationCard, 'Channels').textContent).toContain('other_**worker**');
-    expect(field(operationCard, 'Channels').querySelector('strong')).toBeNull();
-    expectNumber(operationCard, 'Timeout seconds', 120);
-    expect(field(operationCard, 'Note').querySelector('a')?.getAttribute('href')).toBe('https://example.com/guide');
-    expect(field(operationCard, 'Response').querySelector('strong')?.textContent).toBe('valid');
-    expect(field(operationCard, 'Output').querySelector('pre code')?.textContent).toContain('{"enabled": true}');
-    expect(field(operationCard, 'Error').querySelector('em')?.textContent).toBe('optional');
-    expect(field(operationCard, 'Session ID').textContent).toBe('session_**literal**');
-    expectBoolean(operationCard, 'Received', false);
-    expectNumber(operationCard, 'Attempts', 0);
-    expect(field(operationCard, 'Text').querySelector('blockquote')?.textContent).toContain('Review the optional setting.');
-  });
-
-  it.each([{}, { agents: [] }])('names all-agent waits before they have statuses: %j', async (parameters) => {
-    const { target } = await render(operation({ operation: 'await', parameters, result: { statuses: [] } }, 'active'));
-    const operationCard = card(target, 'await');
-    expect(field(operationCard, 'Agents').textContent).toBe('All agents');
-    expect(field(operationCard, 'Statuses').textContent).toBe('None');
-  });
-
-  it('keeps named wait targets, interruption, outputs, errors, and session IDs visible together', async () => {
+  it('streams delegation tasks as bounded Markdown and offers a view without stale child status', async () => {
     const { target, update } = await render(
-      operation({ operation: 'await', parameters: { agents: [['team', 'worker'], ['reviewer']], timeout: 30 }, result: { statuses: [] } }, 'active'),
-    );
-    let operationCard = card(target, 'await');
-    expect(field(operationCard, 'Agents').textContent).toContain('team/worker');
-    expect(field(operationCard, 'Agents').textContent).toContain('reviewer');
-    await update(
       operation(
         {
-          operation: 'await',
-          parameters: { agents: [['team', 'worker'], ['reviewer']], timeout: 30 },
-          result: {
-            statuses: [{ path: ['team', 'worker'], state: 'errored', output: '**Partial report**', error: '*Worker failure*', sessionId: 'saved-worker-session' }],
-            interrupted: true,
-            error: '**Wait interrupted**',
-          },
+          operation: 'delegation',
+          parameters: {},
+          result: { children: [{ path: ['team', 'worker'], task: 'Review **config', persona: 'scout' }] },
         },
-        'aborted',
+        'active',
       ),
+      { rootSessionId: 'root-session' },
     );
-    operationCard = card(target, 'await');
-    expect(field(operationCard, 'Agents').textContent).toContain('reviewer');
-    expect(field(operationCard, 'Path').textContent).toBe('team/worker');
-    expect(field(operationCard, 'State').textContent).toBe('errored');
-    expect(field(operationCard, 'Session ID').textContent).toBe('saved-worker-session');
-    expectBoolean(operationCard, 'Interrupted', true);
-    expect([...operationCard.querySelectorAll('strong')].map((element) => element.textContent)).toContain('Partial report');
-    expect(operationCard.querySelector('em')?.textContent).toBe('Worker failure');
-    expect(operationCard.textContent).toContain('Wait interrupted');
+    const spawnCard = card(target, 'delegation');
+    const task = section(spawnCard, 'Task');
+    expect(task.textContent).toContain('confi');
+    expect(task.querySelector('.code-block[data-mode="markdown"]')).not.toBeNull();
+    const chip = spawnCard.querySelector<HTMLElement>('[data-agent-path="team/worker"]');
+    expect(chip?.getAttribute('aria-label')).toBe('scout:worker');
+    expect(chip?.querySelector('[data-persona-icon] svg')).not.toBeNull();
+    expect(chip?.querySelector('.agent-chip-status:not(.agent-chip-persona)')).toBeNull();
+    expect(spawnCard.querySelector('.subagent-view-button')?.getAttribute('aria-label')).toBe('Open team/worker view');
+    expect(spawnCard.querySelector('.subagent-body')?.textContent).not.toContain('running');
+
+    await update(
+      operation({
+        operation: 'delegation',
+        parameters: { agents: [{ id: 'worker' }] },
+        result: { children: [{ path: ['team', 'worker'], task: 'Review **configuration** and run `tests`.', persona: 'scout' }] },
+      }),
+    );
+    const completedTask = section(card(target, 'delegation'), 'Task');
+    expect(completedTask.querySelector('strong')?.textContent).toBe('configuration');
+    expect(completedTask.querySelector('code')?.textContent).toBe('tests');
   });
 
-  it.each([
-    { operation: 'send', result: { to: [], request: '**Async request**', response: '**Async response**', error: '*Delivery warning*' } },
-    { operation: 'respond', result: { body: '**Async response**', error: '*Delivery warning*' } },
-    {
-      operation: 'completion',
-      result: {
-        state: 'errored',
-        output: '**Async response**',
-        error: '*Delivery warning*',
-        usage: { input: 101, output: 202, cacheRead: 303, cacheWrite: 404, cost: 0.125, turns: 3, costBreakdown: { input: 0.01, output: 0.1, cacheRead: 0.005, cacheWrite: 0.01 } },
-      },
-    },
-  ] satisfies PimoteSubagentFinalData[])('renders async $operation results without fabricated parameters', async (data) => {
-    const { target } = await render(operation(data), true);
-    const operationCard = card(target, data.operation);
-    expect(operationCard.textContent).not.toContain('Parameters');
-    expect([...operationCard.querySelectorAll('strong')].map((element) => element.textContent)).toContain('Async response');
-    expect(operationCard.querySelector('em')?.textContent).toBe('Delivery warning');
-    if (data.operation === 'send') {
-      expect(field(operationCard, 'To').textContent).toBe('root');
-      expect(field(operationCard, 'Request').querySelector('strong')?.textContent).toBe('Async request');
-    }
-    if (data.operation === 'completion') {
-      expect(field(operationCard, 'State').textContent).toBe('errored');
-      const usage = field(operationCard, 'Usage');
-      expectNumber(usage, 'Input', 101);
-      expectNumber(usage, 'Output', 202);
-      expectNumber(usage, 'Cache read', 303);
-      expectNumber(usage, 'Cache write', 404);
-      expectNumber(usage, 'Cost', 0.125);
-      expectNumber(usage, 'Turns', 3);
-      expectNumber(field(usage, 'Cost breakdown'), 'Output', 0.1);
-    }
-  });
-
-  it('renders delegation inputs and every child result', async () => {
+  it('bounds long spawn tasks and offers show-more', async () => {
+    const task = Array.from({ length: 25 }, (_, index) => `Task line ${index + 1}`).join('\n');
     const { target } = await render(
       operation({
         operation: 'delegation',
-        parameters: { agents: [{ id: 'worker', task: 'Check **configuration**', model: 'provider/model', cwd: '/workspace', channels: ['parent'] }] },
-        result: {
-          children: [
-            { path: ['team', 'worker'], task: 'Check **configuration**', persona: 'reviewer' },
-            { path: ['tester'], task: 'Run `tests`' },
-          ],
-        },
+        parameters: {},
+        result: { children: [{ path: ['worker'], task }] },
       }),
     );
-    const operationCard = card(target, 'delegation');
-    expect(field(operationCard, 'ID').textContent).toBe('worker');
-    expect(field(operationCard, 'Model').textContent).toBe('provider/model');
-    const children = field(operationCard, 'Children');
-    expect(children.textContent).toContain('team/worker');
-    expect(children.textContent).toContain('tester');
-    expect(children.querySelector('strong')?.textContent).toBe('configuration');
-    expect(children.querySelector('code')?.textContent).toBe('tests');
-    expect(field(children, 'Persona').textContent).toBe('reviewer');
+    expect(section(card(target, 'delegation'), 'Task').querySelector('.code-block-toggle')?.textContent).toContain('Show more');
   });
 
-  it('distinguishes interrupted, pending, and failed targets without losing their prose', async () => {
-    const { target } = await render(
-      operation({
-        operation: 'interrupt',
-        parameters: { agents: [['team', 'worker']] },
-        result: {
-          interrupted: [{ path: ['team', 'worker'], output: '**Stopped output**', error: '*Stop warning*' }],
-          pending: [{ path: ['slow'], output: '`Pending output`' }],
-          failed: [{ path: ['gone'], error: '**Missing runtime**' }],
-        },
-      }),
-    );
-    const operationCard = card(target, 'interrupt');
-    expect(field(operationCard, 'Interrupted').textContent).toContain('team/worker');
-    expect(field(operationCard, 'Interrupted').querySelector('strong')?.textContent).toBe('Stopped output');
-    expect(field(operationCard, 'Interrupted').querySelector('em')?.textContent).toBe('Stop warning');
-    expect(field(operationCard, 'Pending').querySelector('code')?.textContent).toBe('Pending output');
-    expect(field(operationCard, 'Failed').querySelector('strong')?.textContent).toBe('Missing runtime');
-  });
+  it('uses one bounded Markdown section for awaited output after completion or message interruption', async () => {
+    const parameters = { agents: [['team', 'worker']] };
+    const output = 'Deployment is **healthy**.\n\n- New process started\n- No failed units';
+    const active = operation({ operation: 'await', parameters, result: { statuses: [] } }, 'active');
+    const { target: activeTarget } = await render(active);
+    const activeCard = card(activeTarget, 'await');
+    expect(activeCard.querySelector('[data-agent-path="team/worker"]')).not.toBeNull();
+    expect(activeCard.textContent).toContain('Waiting');
 
-  it.each(['teardown', 'resurrect'] as const)('renders %s parameters and saved runtime details', async (kind) => {
-    const affectedAgents = [
+    const completed = operation({ operation: 'await', parameters, result: { statuses: [{ path: ['team', 'worker'], state: 'idle', output }] } });
+    const { target: completedTarget } = await render(completed);
+    const completedCard = card(completedTarget, 'await');
+    expect(completedCard.querySelector('.subagent-status')?.textContent).toContain('completed');
+    expect(section(completedCard, 'Output').querySelector('strong')?.textContent).toBe('healthy');
+    expect(section(completedCard, 'Output').querySelectorAll('li')).toHaveLength(2);
+
+    const interrupted = operation(
       {
-        path: ['team', 'worker'],
-        sessionId: 'saved-session',
-        incarnation: 'incarnation-2',
-        state: 'idle' as const,
-        usage: { input: 5, output: 6, cacheRead: 7, cacheWrite: 8, cost: 0.015, turns: 2 },
-        output: '**Saved output**',
-        error: '*Saved warning*',
+        operation: 'await',
+        parameters,
+        result: { statuses: [{ path: ['team', 'worker'], state: 'running', output }], interrupted: true },
       },
-    ];
-    const { target } = await render(
-      operation(
-        kind === 'teardown'
-          ? { operation: kind, parameters: { agent: ['team', 'worker'] }, result: { status: 'removed', affectedAgents } }
-          : {
-              operation: kind,
-              parameters: { agents: [{ id: 'worker', sessionId: 'saved-session', task: '**Continue review**', channels: ['parent'] }] },
-              result: { affectedAgents },
-            },
-      ),
+      'aborted',
     );
-    const operationCard = card(target, kind);
-    const affected = field(operationCard, 'Affected agents');
-    expect(field(affected, 'Path').textContent).toBe('team/worker');
-    expect(field(affected, 'Session ID').textContent).toBe('saved-session');
-    expect(field(affected, 'Incarnation').textContent).toBe('incarnation-2');
-    expectNumber(affected, 'Turns', 2);
-    expect(affected.querySelector('strong')?.textContent).toBe('Saved output');
-    expect(field(affected, 'Error').querySelector('em')?.textContent).toBe('Saved warning');
-    if (kind === 'teardown') expect(field(operationCard, 'Status').textContent).toBe('removed');
-    else expect(field(operationCard, 'Task').querySelector('strong')?.textContent).toBe('Continue review');
+    const { target: interruptedTarget } = await render(interrupted);
+    const interruptedCard = card(interruptedTarget, 'await');
+    expect(interruptedCard.querySelector('.subagent-state-icon[aria-label="Interrupted"]')).not.toBeNull();
+    expect(interruptedCard.querySelector('.subagent-status')?.textContent).toContain('interrupted');
+    expect(section(interruptedCard, 'Output').querySelector('strong')?.textContent).toBe('healthy');
+    expect(section(interruptedCard, 'Output').querySelectorAll('li')).toHaveLength(2);
   });
 
-  it('renders protocol errors as Markdown', async () => {
-    const { target } = await render(operation({ operation: 'protocol_error', result: { error: '**Invalid operation**: `missing result`.' } }, 'protocol_error'));
-    const operationCard = card(target, 'send');
-    expect(operationCard.textContent).toContain('protocol error');
-    expect(field(operationCard, 'Error').querySelector('strong')?.textContent).toBe('Invalid operation');
-    expect(field(operationCard, 'Error').querySelector('code')?.textContent).toBe('missing result');
+  it('renders all message text through the streaming Markdown renderer', async () => {
+    const send = operation(
+      {
+        operation: 'send',
+        parameters: { to: ['team', 'worker'], message: 'Check **settings**.' },
+        result: { response: 'The settings are `valid`.', phase: 'responding' },
+      },
+      'active',
+    );
+    const { target, update } = await render(send);
+    const sendCard = card(target, 'send');
+    expect(section(sendCard, 'Message').querySelector('strong')?.textContent).toBe('settings');
+    expect(section(sendCard, 'Response').querySelector('code')?.textContent).toBe('valid');
+    await update(operation({ operation: 'send', parameters: { to: ['team', 'worker'], message: 'Final **request**.' }, result: { response: 'Final *reply*.' } }));
+    expect(section(card(target, 'send'), 'Message').querySelector('strong')?.textContent).toBe('request');
+    expect(section(card(target, 'send'), 'Response').querySelector('em')?.textContent).toBe('reply');
   });
 
-  it('streams send prose, then replaces it with authoritative final text and later corrections', async () => {
-    const { target, update } = await render(
-      operation({ operation: 'send', parameters: { to: ['worker'], message: 'Draft **request' }, result: { phase: 'sending', response: '' } }, 'active'),
-    );
-    let operationCard = card(target, 'send');
-    expect(field(operationCard, 'Message').textContent).toContain('Draft');
-    await update(
-      operation({ operation: 'send', parameters: { to: ['worker'], message: 'Draft **request** grows.' }, result: { phase: 'responding', response: 'Draft *answer' } }, 'active'),
-    );
-    operationCard = card(target, 'send');
-    expect(field(operationCard, 'Message').querySelector('strong')?.textContent).toBe('request');
-    expect(field(operationCard, 'Response').textContent).toContain('Draft');
-    await update(
-      operation(
-        { operation: 'send', parameters: { to: ['worker'], message: 'Draft **request** grows.' }, result: { phase: 'responding', response: 'Draft *answer* grows.' } },
-        'active',
-      ),
-    );
-    expect(field(card(target, 'send'), 'Response').querySelector('em')?.textContent).toBe('answer');
-    await update(operation({ operation: 'send', parameters: { to: ['worker'], message: '**Final** request.' }, result: { response: '`Final` answer.' } }));
-    operationCard = card(target, 'send');
-    expect(field(operationCard, 'Message').textContent).toBe('Final request.');
-    expect(field(operationCard, 'Message').querySelector('strong')?.textContent).toBe('Final');
-    expect(field(operationCard, 'Response').textContent).toBe('Final answer.');
-    expect(field(operationCard, 'Response').querySelector('code')?.textContent).toBe('Final');
-    expect(operationCard.textContent).not.toContain('Draft');
-    await update(operation({ operation: 'send', parameters: { to: ['worker'], message: '**Final** request.' }, result: { response: '**Corrected** answer.' } }));
-    expect(field(card(target, 'send'), 'Response').textContent).toBe('Corrected answer.');
-    expect(field(card(target, 'send'), 'Response').querySelector('strong')?.textContent).toBe('Corrected');
+  it('renders replies with the owner AgentChip and bounded Markdown', async () => {
+    const respond = operation({ operation: 'respond', parameters: { message: 'All **clear**.' }, result: { message: 'Delivered.' } });
+    const { target } = await render(respond);
+    const respondCard = card(target, 'respond');
+    expect(respondCard.querySelector('[data-agent-path="team"]')).not.toBeNull();
+    expect(respondCard.querySelector('.subagent-status')?.textContent).toContain('replied');
+    expect(section(respondCard, 'Reply').querySelector('strong')?.textContent).toBe('clear');
+    expect(section(respondCard, 'Result').textContent).toContain('Delivered');
   });
 
-  it('streams respond messages and replaces both final message and result text', async () => {
-    const { target, update } = await render(operation({ operation: 'respond', parameters: { message: 'Draft **reply' }, result: {} }, 'active'));
-    expect(field(card(target, 'respond'), 'Message').textContent).toContain('Draft');
-    await update(operation({ operation: 'respond', parameters: { message: 'Draft **reply** grows.' }, result: {} }, 'active'));
-    expect(field(card(target, 'respond'), 'Message').querySelector('strong')?.textContent).toBe('reply');
-    await update(operation({ operation: 'respond', parameters: { message: '*Final reply*' }, result: { message: '**Delivered**', error: '*Delivery warning*' } }));
-    const operationCard = card(target, 'respond');
-    expect(field(operationCard, 'Message').textContent).toBe('Final reply');
-    expect(field(operationCard, 'Message').querySelector('em')?.textContent).toBe('Final reply');
-    expect(operationCard.textContent).toContain('Delivered');
-    expect(field(operationCard, 'Error').querySelector('em')?.textContent).toBe('Delivery warning');
-    expect(operationCard.textContent).not.toContain('Draft');
+  it('renders incoming message sender as an AgentChip and message body as Markdown', async () => {
+    const incoming = operation(
+      { operation: 'send', result: { from: ['team', 'worker'], to: [], message: 'Please **check** the `config`.', responseExpected: true } },
+      'complete',
+      'message_received',
+    );
+    const { target } = await render(incoming, { custom: true, rootSessionId: 'root-session' });
+    const messageCard = card(target, 'message_received');
+    expect(messageCard.querySelector('[data-agent-path="team/worker"]')).not.toBeNull();
+    expect(section(messageCard, 'Message').querySelector('strong')?.textContent).toBe('check');
+    expect(section(messageCard, 'Message').querySelector('code')?.textContent).toBe('config');
+    expect(messageCard.textContent).toContain('Response expected');
+  });
+
+  it('renders teardown rows with agent identity and usage, without output fields', async () => {
+    const teardown = operation({
+      operation: 'teardown',
+      parameters: { agent: ['team', 'worker'] },
+      result: {
+        status: 'removed',
+        affectedAgents: [
+          {
+            path: ['team', 'worker'],
+            sessionId: 'saved-session',
+            incarnation: 'incarnation-2',
+            state: 'idle',
+            usage: { input: 5, output: 6, cacheRead: 7, cacheWrite: 8, cost: 0.015, turns: 2 },
+          },
+        ],
+      },
+    });
+    const { target } = await render(teardown, { custom: true, rootSessionId: 'root-session' });
+    const teardownCard = card(target, 'teardown');
+    expect(teardownCard.querySelector('[data-agent-path="team/worker"]')?.textContent).toContain('worker');
+    expect(teardownCard.textContent).toContain('$0.0150');
+    expect(teardownCard.querySelector('[aria-label="Output"]')).toBeNull();
+    expect(teardownCard.querySelector('[aria-label="Error"]')).toBeNull();
+    expect(teardownCard.textContent).not.toContain('saved-session');
+    expect(teardownCard.textContent).not.toContain('incarnation-2');
+  });
+
+  it('shows a view action, session identity, and bounded output on resurrection', async () => {
+    const resurrect = operation({
+      operation: 'resurrect',
+      parameters: { agents: [{ id: 'worker', sessionId: 'saved-session', task: 'continue', channels: ['parent'] }] },
+      result: {
+        affectedAgents: [
+          {
+            path: ['team', 'worker'],
+            sessionId: 'saved-session',
+            incarnation: 'incarnation-2',
+            state: 'idle',
+            usage: { input: 5, output: 6, cacheRead: 7, cacheWrite: 8, cost: 0.015, turns: 2 },
+            output: 'The `review` is **done**.',
+          },
+        ],
+      },
+    });
+    const { target } = await render(resurrect, { custom: true, rootSessionId: 'root-session' });
+    const resurrectCard = card(target, 'resurrect');
+    expect(resurrectCard.querySelector('.subagent-view-button')?.getAttribute('aria-label')).toBe('Open team/worker view');
+    expect(resurrectCard.textContent).toContain('saved-session');
+    expect(section(resurrectCard, 'Output').querySelector('code')?.textContent).toBe('review');
+    expect(section(resurrectCard, 'Output').querySelector('strong')?.textContent).toBe('done');
+  });
+
+  it('renders completion identity, output, errors, and usage', async () => {
+    const completion = operation({
+      operation: 'completion',
+      result: {
+        state: 'idle',
+        output: 'The **deploy** passed.',
+        usage: { input: 101, output: 202, cacheRead: 303, cacheWrite: 404, cost: 0.125, turns: 3, costBreakdown: { input: 0.01, output: 0.1, cacheRead: 0.005, cacheWrite: 0.01 } },
+      },
+    });
+    const { target } = await render(completion);
+    const completionCard = card(target, 'completion');
+    expect(completionCard.querySelector('[data-agent-path="team"]')).not.toBeNull();
+    expect(section(completionCard, 'Output').querySelector('strong')?.textContent).toBe('deploy');
+    expect(completionCard.textContent).toContain('$0.1250');
+  });
+
+  it('renders interrupt outcomes as agent rows with bounded error content', async () => {
+    const interrupt = operation({
+      operation: 'interrupt',
+      parameters: { agents: [['team', 'worker']] },
+      result: {
+        interrupted: [{ path: ['team', 'worker'], output: 'Stopped at **checkpoint**.' }],
+        pending: [{ path: ['slow'], output: '`Still running`' }],
+        failed: [{ path: ['gone'], error: '**Missing runtime**' }],
+      },
+    });
+    const { target } = await render(interrupt, { custom: true, rootSessionId: 'root-session' });
+    const interruptCard = card(target, 'interrupt');
+    expect(interruptCard.querySelector('[data-agent-path="team/worker"]')).not.toBeNull();
+    expect(section(interruptCard, 'Output').querySelector('strong')?.textContent).toBe('checkpoint');
+    expect(section(interruptCard, 'Error').querySelector('strong')?.textContent).toBe('Missing runtime');
+    expect(interruptCard.querySelector('.subagent-status')?.textContent).toContain('partially failed');
   });
 });
