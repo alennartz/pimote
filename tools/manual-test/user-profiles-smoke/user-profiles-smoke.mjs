@@ -26,7 +26,7 @@ import { WsProbe } from '../lib/ws-probe.mjs';
 import { makeBrowserHelpers } from '../lib/browser.mjs';
 
 const REAL_AGENT_DIR = join(process.env.HOME ?? '', '.pi', 'agent');
-const { assert, soft, section, log, stats, softFailures } = makeReporter('user-profiles');
+const { assert, section, log, stats, softFailures } = makeReporter('user-profiles');
 
 const PROJECT_NAME = 'pilot';
 const T_SHARED = 'Shared sync seed';
@@ -156,7 +156,7 @@ async function main() {
   await mkdir(agentDir, { recursive: true });
   await gitInit(projectDir, 'main');
 
-  let modelAvailable = false;
+  let modelAvailable;
   try {
     const { readFile } = await import('node:fs/promises');
     const models = JSON.parse(await readFile(join(REAL_AGENT_DIR, 'models.json'), 'utf8'));
@@ -241,7 +241,6 @@ async function main() {
     const probeB1 = track(new WsProbe(port, `up-bob-${Math.random().toString(36).slice(2, 8)}`, 'bob'));
     await probeB1.open();
     await probeB1.waitForEvent('user_sessions_changed', () => true, 8_000);
-    const beforeBobOpen = Date.now();
     const openSharedBob = await probeB1.send({ type: 'open_session', sessionId: sharedId, folderPath: projectDir });
     assert(openSharedBob.success === true, 'bob opens the same session');
     let users = await summaries(defaultProbe);

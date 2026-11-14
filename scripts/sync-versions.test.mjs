@@ -45,7 +45,7 @@ test('keeps non-version fields and formatting intact', () =>
     const manifest = JSON.parse(raw);
     assert.equal(manifest.name, '@pimote/client');
     assert.match(raw, /\n$/);
-    assert.match(raw, /^\{\n  "/);
+    assert.match(raw, /^\{\n {2}"/);
   }));
 
 test('is idempotent once workspaces match the root version', () =>

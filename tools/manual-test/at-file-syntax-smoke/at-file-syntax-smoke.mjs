@@ -624,7 +624,7 @@ async function main() {
     );
     await abCmd(['wait', '1500']);
     if (!modelAvailable) {
-      soft(true, 'optimistic user message shows the literal "@top.txt" token unchanged (no expansion)', 'no model catalog in this environment — pi preflight rejects every prompt');
+      log('SKIP optimistic message check: no model catalog in this environment — pi preflight rejects every prompt');
     } else if (sent.stdout.includes('SENT')) {
       const echoed = (await abCmd(['eval', `(() => document.body.innerText.includes('check @top.txt now') ? 'YES' : 'NO')()`], { allowFailure: true })).stdout;
       assert(echoed.includes('YES'), 'optimistic user message shows the literal "@top.txt" token unchanged (no expansion)');
