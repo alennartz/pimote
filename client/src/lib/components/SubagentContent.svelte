@@ -21,10 +21,14 @@
   }
 
   function contentLabel(content: SubagentContent): string {
-    if (content.subagentKind !== 'message_received') return `Subagent ${content.subagentKind} operation`;
-    const from = 'from' in content.data.result ? content.data.result.from : undefined;
-    if (Array.isArray(from) && from.every((part) => typeof part === 'string')) return `Message received from ${from.length ? from.join('/') : 'root'}`;
-    return 'Message received';
+    if (content.subagentKind === 'message_received') {
+      const from = 'from' in content.data.result ? content.data.result.from : undefined;
+      if (Array.isArray(from) && from.every((part) => typeof part === 'string')) return `Message received from ${from.length ? from.join('/') : 'root'}`;
+      return 'Message received';
+    }
+    if (content.subagentKind === 'resurrect') return 'Subagent resurrected';
+    if (content.subagentKind === 'teardown') return 'Subagent torn down';
+    return `Subagent ${content.subagentKind} operation`;
   }
 
   let label = $derived(contentLabel(content));

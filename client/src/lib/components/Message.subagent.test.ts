@@ -62,7 +62,8 @@ async function render(block: SubagentContent, custom = false) {
 }
 
 function card(target: HTMLElement, kind: string): HTMLElement {
-  const element = target.querySelector<HTMLElement>(`[aria-label="Subagent ${kind} operation"]`);
+  const label = kind === 'resurrect' ? 'Subagent resurrected' : kind === 'teardown' ? 'Subagent torn down' : `Subagent ${kind} operation`;
+  const element = target.querySelector<HTMLElement>(`[aria-label="${label}"]`);
   expect(element).not.toBeNull();
   return element!;
 }
