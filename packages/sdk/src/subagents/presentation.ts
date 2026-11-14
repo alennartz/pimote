@@ -81,8 +81,6 @@ export type SubagentAffectedAgent = Readonly<{
   usage: SubagentUsage;
   /** Pre-attach usage the reported delta excludes; present only when non-zero. */
   usageBaseline?: SubagentUsage;
-  output?: string;
-  error?: string;
 }>;
 
 export type SubagentInterruptTarget = Readonly<{
