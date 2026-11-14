@@ -72,6 +72,19 @@ export type SubagentEndData =
 
 export type SubagentDelegatedChild = Readonly<{ path: AgentPath; task: string; persona?: string; status?: SubagentAwaitStatus['state'] }>;
 
+/** One agent touched by a teardown, carrying its final identity and usage. */
+export type SubagentAffectedAgent = Readonly<{
+  path: AgentPath;
+  sessionId: string;
+  incarnation: string;
+  state: SubagentAwaitStatus['state'];
+  usage: SubagentUsage;
+  /** Pre-attach usage the reported delta excludes; present only when non-zero. */
+  usageBaseline?: SubagentUsage;
+  output?: string;
+  error?: string;
+}>;
+
 export type SubagentInterruptTarget = Readonly<{
   path: AgentPath;
   output?: string;
@@ -90,6 +103,7 @@ export type SubagentResurrectedAgent = Readonly<{
   incarnation: string;
   state: 'idle' | 'running';
   usage: SubagentUsage;
+  usageBaseline?: SubagentUsage;
   output?: string;
   error?: string;
 }>;
@@ -101,18 +115,7 @@ export type SubagentFiniteData =
   | Readonly<{
       operation: 'teardown';
       parameters: SubagentToolParameters;
-      result: Readonly<{
-        affectedAgents: readonly Readonly<{
-          path: AgentPath;
-          sessionId: string;
-          incarnation: string;
-          state: SubagentAwaitStatus['state'];
-          usage: SubagentUsage;
-          output?: string;
-          error?: string;
-        }>[];
-        status: 'removed' | 'already_removed' | 'not_found';
-      }>;
+      result: Readonly<{ affectedAgents: readonly SubagentAffectedAgent[]; status: 'removed' | 'already_removed' | 'not_found' }>;
     }>
   | Readonly<{ operation: 'resurrect'; parameters: SubagentToolParameters; result: Readonly<{ affectedAgents: readonly SubagentResurrectedAgent[] }> }>
   | Readonly<{ operation: 'protocol_error'; result: Readonly<{ error: string }> }>;
