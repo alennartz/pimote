@@ -94,11 +94,13 @@ Each spawn or resurrection must have a parent transcript entry linked to the res
 
 ## BUG-012: Await settles on idle despite an open session
 
-**Status:** Open.
+**Status:** Fixed in source. Deployment pending.
 
 An await on a child settled as soon as the child went idle, even though the user had the session open.
 
-Idle must not release an await while the user has the session open. The wait holds until the open-session condition ends.
+Open child views retain their leases across disconnects. An unavailable view no longer marks a running child as stopped. Idle waits release when the open-session condition ends.
+
+Commits: 52f6d95a94eba2835aa239b95bd660f20c6e8b62 in my-pi, pushed to origin/main, and 6f81439413496a17ed036b299ee31023deae475c in Pimote.
 
 ## BUG-013: UI steering to a subagent window is not queued
 
