@@ -2,11 +2,19 @@
   import { connection } from '$lib/stores/connection.svelte.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { getRestoreModeLabel } from '$lib/restore-status.js';
+  import { createDelayedIndicator } from '$lib/navigation-indicator.svelte.js';
 
   interface StatusChip {
     label: string;
     className: string;
   }
+
+  const navigationIndicator = createDelayedIndicator(() => sessionRegistry.viewed?.isNavigatingTree ?? false);
+
+  $effect(() => {
+    navigationIndicator.update();
+    return () => navigationIndicator.stop();
+  });
 
   let chips = $derived.by(() => {
     const next: StatusChip[] = [];
@@ -21,9 +29,9 @@
       });
     }
 
-    if (session?.isNavigatingTree) {
+    if (navigationIndicator.visible) {
       next.push({
-        label: session.treeNavigationSummarizing ? 'Summarizing…' : 'Navigating…',
+        label: session?.treeNavigationSummarizing ? 'Summarizing…' : 'Navigating…',
         className: 'border-violet-500/20 bg-violet-500/10 text-violet-600 dark:text-violet-400',
       });
     }

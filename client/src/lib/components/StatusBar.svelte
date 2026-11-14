@@ -22,6 +22,14 @@
   import { panelStore } from '$lib/stores/panel-store.svelte.js';
   import PanelRight from '@lucide/svelte/icons/panel-right';
   import X from '@lucide/svelte/icons/x';
+  import { createDelayedIndicator } from '$lib/navigation-indicator.svelte.js';
+
+  const navigationIndicator = createDelayedIndicator(() => sessionRegistry.viewed?.isNavigatingTree ?? false);
+
+  $effect(() => {
+    navigationIndicator.update();
+    return () => navigationIndicator.stop();
+  });
 
   let restoreLabel = $derived(sessionRegistry.viewed?.isRestoring ? getRestoreModeLabel(sessionRegistry.viewed.restoreMode) : null);
   let connectionLabel = $derived(restoreLabel ?? connection.phaseLabel);
@@ -201,13 +209,13 @@
     {/if}
 
     <!-- Tree navigation indicator -->
-    {#if sessionRegistry.viewed?.isNavigatingTree}
+    {#if navigationIndicator.visible}
       <Badge variant="secondary" class="gap-1 text-xs">
         <span class="relative flex size-2">
           <span class="absolute inline-flex size-full animate-ping rounded-full bg-violet-400 opacity-75"></span>
           <span class="relative inline-flex size-2 rounded-full bg-violet-500"></span>
         </span>
-        {sessionRegistry.viewed.treeNavigationSummarizing ? 'Summarizing…' : 'Navigating…'}
+        {sessionRegistry.viewed?.treeNavigationSummarizing ? 'Summarizing…' : 'Navigating…'}
       </Badge>
     {/if}
 
