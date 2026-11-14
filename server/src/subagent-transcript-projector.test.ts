@@ -739,4 +739,56 @@ describe('subagent transcript projector', () => {
     current.acceptNativeEvent({ type: 'tool_execution_end', toolCallId: 'send-call', result: 'native result' } as IncomingSdkEvent);
     expect(current.snapshot().messages[0]?.content[1]).toMatchObject({ type: 'subagent', subagentState: 'protocol_error' });
   });
+
+  it.each(['subagent', 'fork'] as const)('commits a %s spawn row before its delegation card arrives', (toolName) => {
+    // Real live ordering: the assistant message ends before the tool executes, so
+    // the provider snapshot only arrives after message_end was processed. The
+    // client holds the row as its streaming placeholder until it receives the
+    // commit; the next message_start would otherwise wipe it, losing the spawn
+    // entry together with the surrounding thinking and text.
+    const current = createSubagentTranscriptProjector({ sessionId: 'root-session', manifest: { hiddenToolNames: [toolName], hiddenCustomTypes: ['subagents'] } });
+    const nativeContent = [
+      { type: 'thinking', thinking: 'x' },
+      { type: 'text', text: 'Spawning.' },
+      { type: 'toolCall', id: 'spawn-call', name: toolName, arguments: {} },
+    ];
+    current.acceptNativeEvent({ type: 'message_start', message: { role: 'assistant', content: [] } } as IncomingSdkEvent);
+    current.acceptNativeEvent({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'toolcall_start', contentIndex: 2, partial: { role: 'assistant', content: nativeContent } },
+    } as IncomingSdkEvent);
+
+    const endEvents = current.acceptNativeEvent({ type: 'message_end', message: { role: 'assistant', content: nativeContent } } as IncomingSdkEvent);
+    expect(endEvents).toHaveLength(1);
+    expect(endEvents[0]).toMatchObject({ type: 'message_end' });
+    expect((endEvents[0] as { message: PimoteAgentMessage }).message.content.map((block) => block.type)).toEqual(['thinking', 'text']);
+
+    const card: SubagentProviderEvent = {
+      type: 'subagent_snapshot_event',
+      eventId: 'card-spawn',
+      cursor: cursor(1),
+      target: { operationId: 'spawn-call', kind: 'delegation', path: [], placement: { toolCallId: 'spawn-call', contentIndex: 2 } },
+      state: 'complete',
+      data: {
+        operation: 'delegation',
+        parameters: { agents: [{ id: 'worker', task: 'inspect' }] },
+        result: { children: [{ path: ['worker'], task: 'inspect', status: 'running' }] },
+      },
+    } as unknown as SubagentProviderEvent;
+    expect(current.acceptProviderEvent(card).map((event) => event.type)).toEqual(['subagent_content_start', 'subagent_content_end']);
+
+    const rows = current.snapshot().messages.filter((message) => message.content.some((block) => block.type === 'text' && block.text === 'Spawning.'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.content.some((block) => block.type === 'subagent' && block.subagentKind === 'delegation')).toBe(true);
+  });
+
+  it('still drops fully hidden assistant rows without visible content', () => {
+    const current = createSubagentTranscriptProjector({ sessionId: 'root-session', manifest: { hiddenToolNames: ['send'], hiddenCustomTypes: [] } });
+    current.acceptNativeEvent({ type: 'message_start', message: { role: 'assistant', content: [] } } as IncomingSdkEvent);
+    const events = current.acceptNativeEvent({
+      type: 'message_end',
+      message: { role: 'assistant', content: [{ type: 'toolCall', id: 'send-call', name: 'send', arguments: { to: 'worker', message: 'secret' } }] },
+    } as IncomingSdkEvent);
+    expect(events).toEqual([]);
+  });
 });

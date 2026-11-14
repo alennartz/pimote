@@ -816,7 +816,11 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
       hiddenStreamingIndexes.clear();
       if (hidden) {
         const projected = existing >= 0 ? messages[existing] : mapped.role === 'toolResult' && visible.content.length === 0 ? undefined : messages[messages.length - 1];
-        if (!projected?.content.some(isSubagentContent)) return [];
+        // A hidden row with visible native content (e.g. thinking and text around a
+        // hidden subagent tool call) must still be committed: the client holds it as
+        // its streaming placeholder, and the next message_start would otherwise wipe
+        // it before the projected card arrives via content events.
+        if (!projected || projected.content.length === 0) return [];
         return [{ type: 'message_end', message: projected } as PimoteSessionEvent];
       }
     }
