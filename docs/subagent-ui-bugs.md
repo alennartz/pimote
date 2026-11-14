@@ -52,11 +52,11 @@ The header now shows the live count only when children exist. The root row appea
 
 ## BUG-007: Manual teardown is difficult to find
 
-**Status:** Open.
+**Status:** Fixed in source. Deployment pending.
 
 The user could not find the manual teardown control. It currently appears at the bottom of the inspector after selecting a live child row.
 
-Make manual teardown discoverable for live children. The placement remains to be discussed.
+Every live child row now carries a teardown affordance at its trailing edge. The control is always visible on live rows, never on terminal rows, opens the same confirmation dialog, and leaves row click-to-inspect intact. The inspector teardown button stays in place. Commit: `2f5890d` in Pimote.
 
 ## BUG-008: Empty hidden custom message reaches the transcript
 
