@@ -418,12 +418,14 @@ function stateFor(session: BorrowedAgentSession, capabilities: SessionSurfaceCap
   };
 }
 
-function fullMessagesFor(options: SessionSurfaceOptions, capabilities: SessionSurfaceCapabilities): PimoteAgentMessage[] {
+function fullMessagesFor(options: SessionSurfaceOptions, capabilities: SessionSurfaceCapabilities, visible?: (customType: string) => boolean): PimoteAgentMessage[] {
   const session = options.session;
   const manager = session.sessionManager as unknown as NativeSessionManagerExtras | undefined;
   const native = session as BorrowedAgentSession & NativeSessionExtras;
-  const customVisible = (customType: string) =>
-    capabilities.renderer?.visible !== false && (native.extensionRunner?.getEntryRenderer ? Boolean(native.extensionRunner.getEntryRenderer(customType)) : true);
+  const customVisible =
+    visible ??
+    ((customType: string) =>
+      capabilities.renderer?.visible !== false && (native.extensionRunner?.getEntryRenderer ? Boolean(native.extensionRunner.getEntryRenderer(customType)) : true));
   if (options.kind === 'child') {
     const rawEntries = manager?.getBranch?.() ?? manager?.getEntries?.();
     if (Array.isArray(rawEntries)) return mapSavedBranch(rawEntries as SdkSessionEntry[], customVisible);
@@ -479,13 +481,19 @@ function activeContentForOperation(
   };
 }
 
-function snapshotFor(options: SessionSurfaceOptions, capabilities: SessionSurfaceCapabilities, cursor: number, projector?: SubagentTranscriptProjector): SessionSurfaceSnapshot {
+function snapshotFor(
+  options: SessionSurfaceOptions,
+  capabilities: SessionSurfaceCapabilities,
+  cursor: number,
+  projector?: SubagentTranscriptProjector,
+  visible?: (customType: string) => boolean,
+): SessionSurfaceSnapshot {
   const session = options.session;
   const branchEntryIds = nativeBranchEntryIds(session);
   const pending = session.state?.pendingToolCalls;
   const pendingToolCallIds = pending && typeof (pending as Set<string>).values === 'function' ? [...(pending as Set<string>)] : [];
   const partial = mapStreamingMessage(session.state?.streamingMessage);
-  const nativeMessages = fullMessagesFor(options, capabilities);
+  const nativeMessages = fullMessagesFor(options, capabilities, visible);
   const projectedPartial = partial ? (projector?.projectStreamingMessage?.(partial) ?? partial) : undefined;
   const projected = projector?.snapshot();
   const projectedMessages = [...(projected?.messages ?? nativeMessages)];
@@ -539,13 +547,14 @@ function dispatchPrompt(
 /** Construct a shared root or borrowed-child session surface. */
 export function createSessionSurface(options: SessionSurfaceOptions): SessionSurface {
   const capabilities = getCapability(options);
+  let subagentProvider = options.subagentProvider;
+  let providerSnapshot = subagentProvider?.snapshot?.();
   const customEntryVisible = (customType: string): boolean => {
+    if (providerSnapshot?.manifest?.hiddenCustomTypes.includes(customType)) return true;
     if (capabilities.renderer?.visible === false) return false;
     const runner = (options.session as unknown as { extensionRunner?: { getEntryRenderer?: (name: string) => unknown } }).extensionRunner;
     return runner?.getEntryRenderer ? Boolean(runner.getEntryRenderer(customType)) : true;
   };
-  let subagentProvider = options.subagentProvider;
-  let providerSnapshot = subagentProvider?.snapshot?.();
   const surfacePath = options.subagentPath ?? [];
   const samePath = (left: readonly string[], right: readonly string[]): boolean => left.length === right.length && left.every((part, index) => part === right[index]);
   const providerEventBelongsToSurface = (event: SubagentProviderEvent): boolean => {
@@ -563,7 +572,7 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
   const eventBuffer =
     options.eventBuffer ??
     new EventBuffer(options.bufferCapacity ?? SURFACE_BUFFER_CAPACITY, customEntryVisible, 0, () =>
-      fullMessagesFor(options, capabilities).flatMap((message) => (message.entryId ? [message.entryId] : [])),
+      fullMessagesFor(options, capabilities, customEntryVisible).flatMap((message) => (message.entryId ? [message.entryId] : [])),
     );
   const listensToNative = options.subscribeNative !== false;
   const listeners = new Set<(event: PimoteSessionEvent) => void>();
@@ -628,7 +637,7 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     nativeUnsubscribe = options.session.subscribe((event) => mapAndReceive(event));
   };
 
-  const readMessages = (): readonly PimoteAgentMessage[] => projector?.snapshot().messages ?? fullMessagesFor(options, capabilities);
+  const readMessages = (): readonly PimoteAgentMessage[] => projector?.snapshot().messages ?? fullMessagesFor(options, capabilities, customEntryVisible);
 
   const dispatch = async (command: SessionSurfaceCommand, caller?: SessionSurfaceCallerContext): Promise<unknown> => {
     if (closed) throw new Error('session surface is closed');
@@ -908,26 +917,26 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
   const refreshSnapshot = (): SessionSurfaceSnapshot => {
     if (closed) throw new Error('session surface is closed');
     eventBuffer.invalidateReplay();
-    const native = fullMessagesFor(options, capabilities);
+    const native = fullMessagesFor(options, capabilities, customEntryVisible);
     projector?.rehydrate(native);
     const partial = mapStreamingMessage(options.session.state?.streamingMessage);
     if (projector && partial) projector.projectStreamingMessage?.(partial);
     providerSnapshot = subagentProvider?.snapshot?.() ?? providerSnapshot;
     const active = activeOperationsForSurface(providerSnapshot?.activeOperations);
     if (projector && active.length > 0) projector.hydrateActiveOperations?.(active);
-    return snapshotFor(options, capabilities, eventBuffer.currentCursor, projector);
+    return snapshotFor(options, capabilities, eventBuffer.currentCursor, projector, customEntryVisible);
   };
 
   const initialize = async (): Promise<SessionSurfaceSnapshot> => {
     if (closed) throw new Error('session surface is closed');
-    if (initialized) return snapshotFor(options, capabilities, eventBuffer.currentCursor, projector);
+    if (initialized) return snapshotFor(options, capabilities, eventBuffer.currentCursor, projector, customEntryVisible);
     ensureSubscription();
     if (subagentProvider && !providerUnsubscribe) providerUnsubscribe = subagentProvider.subscribe(receiveProviderEvent as never);
     initializing = true;
     try {
       // Native reload is the persistence authority. Project the saved branch
       // before provider hydration so provider events have a stable placement.
-      projector?.rehydrate(fullMessagesFor(options, capabilities));
+      projector?.rehydrate(fullMessagesFor(options, capabilities, customEntryVisible));
       const partial = mapStreamingMessage(options.session.state?.streamingMessage);
       if (projector && partial) projector.projectStreamingMessage?.(partial);
       if (projector && options.initialProjection) {
@@ -950,7 +959,7 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
       providerSnapshot = provider?.snapshot?.() ?? providerState;
       const hydratedActive = activeOperationsForSurface(providerSnapshot?.activeOperations);
       if (projector && hydratedActive.length > 0) projector.hydrateActiveOperations?.(hydratedActive);
-      const snapshot = snapshotFor(options, capabilities, eventBuffer.currentCursor, projector);
+      const snapshot = snapshotFor(options, capabilities, eventBuffer.currentCursor, projector, customEntryVisible);
       initialized = true;
       const pending = staged;
       staged = [];
@@ -974,7 +983,7 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     if (after !== undefined) {
       const replay = eventBuffer.replay(after);
       if (replay === null) {
-        snapshot = snapshotFor(options, capabilities, eventBuffer.currentCursor, projector);
+        snapshot = snapshotFor(options, capabilities, eventBuffer.currentCursor, projector, customEntryVisible);
         observer.cursor = eventBuffer.currentCursor;
       } else {
         events = replay;
@@ -1007,7 +1016,7 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
       sessionId: options.sessionId,
       manifest: providerSnapshot.manifest ?? { hiddenToolNames: [], hiddenCustomTypes: [] },
     });
-    projector.rehydrate(fullMessagesFor(options, capabilities));
+    projector.rehydrate(fullMessagesFor(options, capabilities, customEntryVisible));
     const partial = mapStreamingMessage(options.session.state?.streamingMessage);
     if (partial) projector.projectStreamingMessage?.(partial);
     if (previousProjection) {
@@ -1035,7 +1044,7 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
       return eventBuffer.currentCursor;
     },
     snapshot() {
-      return snapshotFor(options, capabilities, eventBuffer.currentCursor, projector);
+      return snapshotFor(options, capabilities, eventBuffer.currentCursor, projector, customEntryVisible);
     },
     initialize,
     acceptNativeEvent,

@@ -21,6 +21,28 @@ function projector() {
 }
 
 describe('subagent transcript projector', () => {
+  it.each(['subagent', 'fork'] as const)('keeps a model %s spawn in the parent transcript on replay', (toolName) => {
+    const makeProjector = () => createSubagentTranscriptProjector({ sessionId: 'root-session', manifest: { hiddenToolNames: [toolName], hiddenCustomTypes: ['subagents'] } });
+    const native = [assistant([{ type: 'tool_call', toolCallId: 'spawn-call', toolName, args: {} }])];
+    const event = {
+      type: 'subagent_snapshot_event',
+      eventId: 'spawn',
+      cursor: cursor(1),
+      target: { operationId: 'spawn-call', kind: 'delegation', path: [], placement: { toolCallId: 'spawn-call', contentIndex: 0 } },
+      state: 'complete',
+      data: { operation: 'delegation', parameters: {}, result: { children: [{ path: ['worker'], task: 'inspect' }] } },
+    } as const;
+    const live = makeProjector();
+    live.rehydrate(native);
+    live.acceptProviderEvent(event);
+    const restored = makeProjector();
+    restored.rehydrate(native);
+    restored.acceptProviderEvent(event);
+    for (const current of [live, restored]) {
+      expect(current.snapshot().messages[0]?.content).toContainEqual(expect.objectContaining({ subagentKind: 'delegation', data: event.data }));
+    }
+  });
+
   it('preserves native content around a replacement and does not send hidden native content', () => {
     const current = projector();
     current.rehydrate([

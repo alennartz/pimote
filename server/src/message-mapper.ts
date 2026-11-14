@@ -104,7 +104,9 @@ export function customEntryDisplayText(data: unknown): string | undefined {
 /** Map a persisted custom entry to a display-only wire message. */
 export function mapCustomEntry(entry: Extract<SessionEntry, { type: 'custom' }>): PimoteAgentMessage {
   const text = customEntryDisplayText(entry.data);
-  const details = (entry as Extract<SessionEntry, { type: 'custom' }> & { details?: unknown }).details;
+  const explicitDetails = (entry as Extract<SessionEntry, { type: 'custom' }> & { details?: unknown }).details;
+  const data = entry.data;
+  const details = explicitDetails ?? (data && typeof data === 'object' && 'subagentContent' in data ? data : undefined);
   return {
     role: 'custom',
     content: text ? [{ type: 'text', text }] : [],

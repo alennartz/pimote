@@ -262,6 +262,161 @@ describe('SessionSurface', () => {
     surface.close();
   });
 
+  it.each(['delegation', 'resurrect'] as const)('attributes a nested %s to the spawning child across live delivery and reload', async (operation) => {
+    const root = fixture();
+    const child = fixture();
+    const toolName = operation === 'delegation' ? 'subagent' : 'resurrect';
+    const path = ['worker', 'scout'];
+    const data =
+      operation === 'delegation'
+        ? ({ operation, parameters: { agents: [{ id: 'scout', task: 'Inspect' }] }, result: { children: [{ path, task: 'Inspect' }] } } as const)
+        : ({
+            operation,
+            parameters: { agents: [{ id: 'scout', sessionId: 'saved-scout' }] },
+            result: {
+              affectedAgents: [
+                { path, sessionId: 'saved-scout', incarnation: 'scout-2', state: 'running', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
+              ],
+            },
+          } as const);
+    child.data.branch = [
+      {
+        type: 'message',
+        id: 'child-assistant',
+        parentId: null,
+        timestamp: '2026-01-01T00:00:00.000Z',
+        message: { role: 'assistant', content: [{ type: 'toolCall', id: 'nested-call', name: toolName, arguments: {} }], timestamp: 1 },
+      },
+    ] as unknown as typeof child.data.branch;
+    const cursor = { epoch: 'epoch-1', sequence: 1 };
+    const event = {
+      type: 'subagent_snapshot_event',
+      eventId: 'nested-event',
+      cursor,
+      target: { operationId: 'nested-call', kind: operation, path: ['worker'], placement: { toolCallId: 'nested-call', contentIndex: 0, entryId: 'child-assistant' } },
+      state: 'complete',
+      data,
+    } as const;
+    const listeners = new Set<(event: import('@pimote/sdk/subagents').SubagentProviderEvent) => void>();
+    let saved = false;
+    const provider = {
+      snapshot: () => ({ manifest: { hiddenToolNames: ['subagent', 'resurrect'], hiddenCustomTypes: [] }, nodes: [], cursor, activeOperations: [] }),
+      subscribe: (listener: (event: import('@pimote/sdk/subagents').SubagentProviderEvent) => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+      replay: () => ({ kind: 'events' as const, cursor, events: [] }),
+      rehydrate: async ({ path: owner }: { session: BorrowedAgentSession; path: readonly string[] }) => {
+        if (saved && owner.length === 1 && owner[0] === 'worker') listeners.forEach((listener) => listener(event));
+      },
+    };
+    const rootSurface = createSessionSurface({
+      sessionId: 'root',
+      session: root.native,
+      kind: 'root',
+      capabilities: root.capabilities,
+      subagentProvider: provider,
+      subagentPath: [],
+    });
+    const makeChildSurface = () =>
+      createSessionSurface({
+        sessionId: 'child-session',
+        session: child.native,
+        kind: 'child',
+        capabilities: child.capabilities,
+        subagentProvider: provider,
+        subagentPath: ['worker'],
+      });
+    const childSurface = makeChildSurface();
+    await rootSurface.initialize();
+    await childSurface.initialize();
+    listeners.forEach((listener) => listener(event));
+    const childMessages = childSurface.snapshot().messages;
+    expect(childMessages).toContainEqual(
+      expect.objectContaining({
+        entryId: 'child-assistant',
+        content: expect.arrayContaining([expect.objectContaining({ type: 'subagent', subagentKind: operation, data })]),
+      }),
+    );
+    expect(rootSurface.snapshot().messages.flatMap((message) => message.content)).not.toContainEqual(expect.objectContaining({ type: 'subagent', operationId: 'nested-call' }));
+
+    childSurface.close();
+    saved = true;
+    const reopened = makeChildSurface();
+    expect((await reopened.initialize()).messages).toContainEqual(
+      expect.objectContaining({
+        entryId: 'child-assistant',
+        content: expect.arrayContaining([expect.objectContaining({ type: 'subagent', subagentKind: operation, data })]),
+      }),
+    );
+    reopened.close();
+    rootSurface.close();
+  });
+
+  it('shows a control resurrection at its saved parent entry live and after reopening', async () => {
+    const f = fixture();
+    const path = ['restored'];
+    const data = {
+      operation: 'resurrect',
+      parameters: { agents: [{ id: 'restored', task: 'continue', sessionId: 'saved' }] },
+      result: { affectedAgents: [{ path, sessionId: 'saved', state: 'running' }] },
+    } as const;
+    const payload = { operationId: 'control-resurrect', kind: 'resurrect', source: 'custom_entry', state: 'complete', data };
+    const savedEntry = {
+      type: 'custom',
+      id: 'resurrection-entry',
+      parentId: 'old',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      customType: 'subagents',
+      data: { subagentContent: [payload] },
+    };
+    const cursor = { epoch: 'epoch-1', sequence: 1 };
+    const event = {
+      type: 'subagent_snapshot_event',
+      eventId: 'resurrect-event',
+      cursor,
+      target: { operationId: payload.operationId, kind: 'resurrect', path: [], placement: { entryId: savedEntry.id } },
+      state: 'complete',
+      data,
+    } as const;
+    (f.native as unknown as { extensionRunner: unknown }).extensionRunner = { getEntryRenderer: () => undefined };
+    (f.native.sessionManager as unknown as { buildContextEntries: () => unknown }).buildContextEntries = () => f.data.branch;
+    f.data.branch = [entry('old', null, 'before')];
+    const listeners = new Set<(event: import('@pimote/sdk/subagents').SubagentProviderEvent) => void>();
+    let saved = false;
+    const provider = {
+      snapshot: () => ({ manifest: { hiddenToolNames: [], hiddenCustomTypes: ['subagents'] }, nodes: [], cursor, activeOperations: [] }),
+      subscribe: (listener: (event: import('@pimote/sdk/subagents').SubagentProviderEvent) => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+      replay: () => ({ kind: 'events' as const, cursor, events: saved ? [event] : [] }),
+      rehydrate: async () => {},
+    };
+    const create = () => createSessionSurface({ sessionId: 'root', session: f.native, kind: 'root', capabilities: f.capabilities, subagentProvider: provider });
+    const live = create();
+    await live.initialize();
+    f.data.branch = [...f.data.branch, savedEntry, entry('after', savedEntry.id, 'after')] as unknown as typeof f.data.branch;
+    f.publish({ type: 'entry_appended', entry: savedEntry } as unknown as AgentSessionEvent);
+    listeners.forEach((listener) => listener(event));
+    expect(live.snapshot().messages).toContainEqual(
+      expect.objectContaining({ entryId: savedEntry.id, content: expect.arrayContaining([expect.objectContaining({ subagentKind: 'resurrect', data })]) }),
+    );
+    live.close();
+    saved = true;
+    const reopened = create();
+    const messages = (await reopened.initialize()).messages;
+    const index = messages.findIndex((item) => item.entryId === savedEntry.id);
+    expect(index).toBeGreaterThan(0);
+    expect(messages[index]).toMatchObject({ content: [expect.objectContaining({ subagentKind: 'resurrect', data })] });
+    expect(messages[index + 1]).toMatchObject({ entryId: 'after' });
+    reopened.close();
+  });
+
   it('does not leak a hidden tail when message_end arrives empty', async () => {
     const f = fixture();
     f.data.messages = [
