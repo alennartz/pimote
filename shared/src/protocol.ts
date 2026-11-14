@@ -1,3 +1,55 @@
+import type {
+  ActiveSubagentOperation as SdkActiveSubagentOperation,
+  AgentPath,
+  FeedCursor,
+  PersistedSubagentContent,
+  PiEventRef,
+  SubagentAwaitResult,
+  SubagentAwaitStatus,
+  SubagentDeltaData,
+  SubagentFinalData,
+  SubagentInterruptResult,
+  SubagentInterruptTarget,
+  SubagentNodeEventData,
+  SubagentNodeSnapshot,
+  SubagentRuntimeReplacedData,
+  SubagentOperationKind,
+  SubagentPlacement,
+  SubagentPresentationManifest,
+  SubagentProviderSnapshot,
+  SubagentResurrectResult,
+  SubagentResurrectedAgent,
+  SubagentStartData,
+  SubagentTeardownResult,
+  SubagentToolParameters,
+} from '@pimote/sdk/subagents';
+import type { Card as SdkCard } from '@pimote/sdk/panels';
+import type { RepoInfo as SdkRepoInfo } from '@pimote/sdk/folders';
+
+// Canonical subagent, panel, and folder types live in @pimote/sdk. The wire
+// re-exports them; nothing here redeclares a shape the SDK already owns.
+export type {
+  AgentPath,
+  FeedCursor,
+  PiEventRef,
+  SubagentAwaitChildStatus,
+  SubagentCostBreakdown,
+  SubagentNodeEventData,
+  SubagentNodeSnapshot,
+  SubagentNodeState,
+  SubagentNode,
+  SubagentRuntimeReplacedData,
+  SubagentState,
+  SubagentStopRequest,
+  SubagentTeardownReason,
+  SubagentTeardownResult,
+  SubagentUsage,
+  SubagentUsageSnapshot,
+} from '@pimote/sdk/subagents';
+export type { BodySection, BodySectionStyle, CardColor } from '@pimote/sdk/panels';
+
+export type Card = SdkCard;
+
 /** How a hub materializes its code members on disk. */
 export type HubMemberRepresentation = 'symlink' | 'worktree';
 
@@ -7,25 +59,7 @@ export interface HubInfo {
 }
 
 /** A git repository as discovered by the server's repo index. */
-export interface RepoInfo {
-  path: string;
-  name: string;
-  branch: string | null;
-  dirty: boolean;
-  /** Commits ahead of upstream; 0 when unknown. */
-  ahead: number;
-  behind: number;
-  /** Present for worktree hub members: the nested checkout inside the hub
-   *  whose git facts these are. The canonical `path` stays the source repo. */
-  worktreePath?: string;
-  /** Epoch ms of last session activity in this repo, when known. */
-  lastActivity?: number;
-  /** True when the repo path no longer exists on disk (deleted member, broken symlink).
-   *  Hubs always remain editable: members can be removed regardless of state. */
-  missing?: boolean;
-  /** Effective tags (user + source-contributed). Absent when untagged. */
-  tags?: string[];
-}
+export type RepoInfo = SdkRepoInfo;
 
 /** One hub member behind `FolderInfo.members` — a symlink or, in worktree
  *  hubs, a nested detached Git worktree for code members. */
@@ -124,53 +158,19 @@ export interface SessionState {
   messageCount: number;
 }
 
-export type PimoteSubagentOperationKind = 'send' | 'message_received' | 'respond' | 'await' | 'delegation' | 'completion' | 'interrupt' | 'teardown' | 'resurrect';
-
-export type PimoteSubagentPlacement = { toolCallId: string; contentIndex: number; entryId?: string } | { entryId: string };
-
-export type PimoteSubagentPresentationManifest = Readonly<{
-  hiddenToolNames: readonly string[];
-  hiddenCustomTypes: readonly string[];
-}>;
-
-export type PimoteSubagentInterruptTarget = Readonly<{
-  path: AgentPath;
-  output?: string;
-  error?: string;
-}>;
-
-export type PimoteSubagentInterruptResult = Readonly<{
-  interrupted: readonly PimoteSubagentInterruptTarget[];
-  pending: readonly PimoteSubagentInterruptTarget[];
-  failed: readonly PimoteSubagentInterruptTarget[];
-}>;
-
-export type PimoteSubagentResurrectedAgent = Readonly<{
-  path: AgentPath;
-  sessionId: string;
-  incarnation: string;
-  state: 'idle' | 'running';
-  usage: SubagentUsage;
-  output?: string;
-  error?: string;
-}>;
-
-export type PimoteSubagentToolParameters = Readonly<Record<string, unknown>>;
-
-export type PimoteSubagentAwaitResult = Readonly<{
-  statuses: readonly SubagentAwaitChildStatus[];
-  interrupted?: boolean;
-  error?: string;
-}>;
-
-export type PimoteSubagentStartData =
-  | {
-      operation: 'send';
-      parameters: PimoteSubagentToolParameters;
-      result: Readonly<{ response: string; phase: 'ready' | 'sending' | 'waiting' | 'responding' }>;
-    }
-  | { operation: 'respond'; parameters: PimoteSubagentToolParameters; result: Readonly<Record<string, unknown>> }
-  | { operation: 'await'; parameters: PimoteSubagentToolParameters; result: PimoteSubagentAwaitResult };
+export type PimoteSubagentOperationKind = SubagentOperationKind;
+export type PimoteSubagentPlacement = SubagentPlacement;
+export type PimoteSubagentPresentationManifest = SubagentPresentationManifest;
+export type PimoteSubagentInterruptTarget = SubagentInterruptTarget;
+export type PimoteSubagentInterruptResult = SubagentInterruptResult;
+export type PimoteSubagentResurrectedAgent = SubagentResurrectedAgent;
+export type PimoteSubagentToolParameters = SubagentToolParameters;
+export type PimoteSubagentAwaitResult = SubagentAwaitResult;
+export type PimoteSubagentStartData = SubagentStartData;
+export type PimoteSubagentDeltaData = SubagentDeltaData;
+export type PimotePersistedSubagentContent = PersistedSubagentContent;
+export type PimoteSubagentFinalData = SubagentFinalData;
+export type PimoteActiveSubagentOperation = SdkActiveSubagentOperation;
 export type PimoteActiveSubagentContent = {
   parentMessageId: string;
   contentIndex: number;
@@ -179,47 +179,6 @@ export type PimoteActiveSubagentContent = {
   placement?: PimoteSubagentPlacement;
   data: PimoteSubagentStartData;
 };
-
-/** A provider active operation mirrored on the hierarchy snapshot. */
-export type PimoteActiveSubagentOperation = Readonly<{
-  target: Readonly<{
-    operationId: string;
-    kind: PimoteSubagentOperationKind;
-    path: AgentPath;
-    placement?: PimoteSubagentPlacement;
-  }>;
-  data: PimoteSubagentStartData;
-}>;
-export type PimoteSubagentDeltaData =
-  | { operation: 'send'; field: 'request' | 'response'; delta: string }
-  | { operation: 'send'; phase: 'waiting' | 'responding' }
-  | { operation: 'respond'; delta: string }
-  | { operation: 'await'; statuses: readonly SubagentAwaitChildStatus[] };
-export type PimotePersistedSubagentContent = Readonly<{
-  operationId: string;
-  kind: PimoteSubagentOperationKind;
-  state: 'complete' | 'error' | 'aborted';
-  data: PimoteSubagentFinalData;
-}> &
-  (Readonly<{ source: 'tool'; placement: { toolCallId: string; contentIndex: number; entryId?: string } }> | Readonly<{ source: 'custom_entry'; placement?: { entryId: string } }>);
-
-export type PimoteSubagentFinalData =
-  | { operation: 'send'; parameters?: PimoteSubagentToolParameters; result: Readonly<Record<string, unknown>> }
-  | { operation: 'respond'; parameters?: PimoteSubagentToolParameters; result: Readonly<Record<string, unknown>> }
-  | { operation: 'await'; parameters: PimoteSubagentToolParameters; result: PimoteSubagentAwaitResult }
-  | { operation: 'delegation'; parameters: PimoteSubagentToolParameters; result: { children: readonly { path: AgentPath; task: string; persona?: string }[] } }
-  | { operation: 'completion'; result: { state: 'idle' | 'errored' | 'dead' | 'stopped'; output?: string; error?: string; usage?: SubagentUsage } }
-  | { operation: 'interrupt'; parameters: PimoteSubagentToolParameters; result: PimoteSubagentInterruptResult }
-  | {
-      operation: 'teardown';
-      parameters: PimoteSubagentToolParameters;
-      result: {
-        status: 'removed' | 'already_removed' | 'not_found';
-        affectedAgents: readonly { path: AgentPath; sessionId: string; incarnation: string; state: SubagentAwaitState; usage: SubagentUsage; output?: string; error?: string }[];
-      };
-    }
-  | { operation: 'resurrect'; parameters: PimoteSubagentToolParameters; result: { affectedAgents: readonly PimoteSubagentResurrectedAgent[] } }
-  | { operation: 'protocol_error'; result: { error: string } };
 
 /** Common fields for projected message content. */
 interface PimoteMessageContentBase {
@@ -351,33 +310,6 @@ export interface PimoteAgentMessage {
   [key: string]: unknown;
 }
 
-/** Semantic visual hint for a card's host-rendered status accent. */
-export type CardColor = 'accent' | 'active' | 'success' | 'warning' | 'error' | 'muted';
-export type BodySectionStyle = 'text' | 'code' | 'secondary';
-
-export interface BodySection {
-  content: string;
-  style: BodySectionStyle;
-}
-
-export interface Card {
-  id: string;
-  color?: CardColor;
-  header: {
-    title: string;
-    tag?: string;
-  };
-  body?: BodySection[];
-  footer?: string[];
-  /**
-   * Optional same-origin URL. When present, the client renders the entire
-   * card as a clickable link that opens in a new tab. No server-side
-   * validation — any string is allowed; the consumer is responsible for
-   * using a sane URL.
-   */
-  href?: string;
-}
-
 /** Session tree node transferred over the wire. */
 export interface PimoteTreeNode {
   id: string;
@@ -395,138 +327,9 @@ export interface PimoteTreeNode {
   children: PimoteTreeNode[];
 }
 
-/** Root-relative identity of a my-pi child runtime. */
-export type AgentPath = readonly string[];
-
-/** Provider-owned replay position. This is distinct from a Pimote event cursor. */
-export type FeedCursor = Readonly<{
-  epoch: string;
-  sequence: number;
-}>;
-
-/** Cursor allocated by a child SessionSurface event buffer. */
 export type SubagentViewCursor = number;
-
-export type SubagentState = 'running' | 'waiting' | 'idle' | 'errored' | 'dead';
-export type SubagentNodeState = SubagentState;
-export type SubagentAwaitState = SubagentState | 'stopped';
-
-export type SubagentCostBreakdown = Readonly<{
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-}>;
-
-/** Provider usage accumulated for one child runtime. */
-export type SubagentUsage = Readonly<{
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  cost: number;
-  costBreakdown?: SubagentCostBreakdown;
-  turns: number;
-}>;
-
-/** Root-relative registry node projected by the subagent provider. */
-export type SubagentNode = Readonly<{
-  path: AgentPath;
-  /** Opaque identity of this live incarnation at the public path. */
-  incarnation: string;
-  /** The current child session. */
-  sessionId: string;
-  task?: string;
-  personaIcon?: string;
-  persona?: string;
-  model?: string;
-  thinkingLevel?: string;
-  state: SubagentState;
-  activity?: string;
-  usage: SubagentUsage;
-  /** Context fill as an integer percentage from 0 through 100. */
-  contextFill?: number;
-  channels: readonly string[];
-  waitingFor: readonly AgentPath[];
-  hasSubgroup: boolean;
-  lastOutput?: string;
-  lastError?: string;
-}>;
-
-export type SubagentNodeSnapshot = SubagentNode;
-export type SubagentUsageSnapshot = SubagentUsage;
-
-/** Hierarchy snapshot, presentation manifest, and provider cursor at one feed boundary. */
-export type SubagentSnapshot = Readonly<{
-  nodes: readonly SubagentNodeSnapshot[];
-  cursor: FeedCursor;
-  manifest: PimoteSubagentPresentationManifest;
-  activeOperations: readonly PimoteActiveSubagentOperation[];
-}>;
-
-/** Native Pi provenance attached to a semantic provider event. */
-export type PiEventRef = Readonly<{
-  sessionId: string;
-  entryId?: string;
-  toolCallId?: string;
-  kind: 'message' | 'tool_call' | 'custom_message' | 'lifecycle';
-}>;
-
-/** One child state included in await progress and settlement facts. */
-export type SubagentAwaitChildStatus = Readonly<{
-  path: AgentPath;
-  state: SubagentAwaitState;
-  output?: string;
-  error?: string;
-  sessionId?: string;
-}>;
-
-export type SubagentRuntimeReplacedData = Readonly<{
-  oldSessionId: string;
-  newSessionId: string;
-}>;
-
-/** A public node projection carried by topology events and snapshots. */
-export type SubagentNodeEventData = SubagentNodeSnapshot | Readonly<{ sessionId: string }>;
-
-export type SubagentTeardownReason = 'not_found' | 'already_removed' | 'removed';
-
-/** Result of delegating a live node teardown to my-pi. */
-export type SubagentTeardownResult = Readonly<{
-  path: AgentPath;
-  removed: boolean;
-  sessionId?: string;
-  incarnation?: string;
-  reason?: SubagentTeardownReason;
-}>;
-
-/** Guarded child-stop request sent through the owning manager. */
-export type SubagentStopRequest = Readonly<{
-  path: AgentPath;
-  incarnation: string;
-  expectedSessionId: string;
-}>;
-
-/** Request to restore a saved child session under a root-relative parent. */
-export type SubagentResurrectRequest = Readonly<{
-  /** Saved child session id returned by teardown. */
-  sessionId: string;
-  /** Owning root-relative parent path. */
-  parentPath: AgentPath;
-  /** New local id under `parentPath`. */
-  localId: string;
-  task: string;
-  channels: readonly string[];
-  model?: string;
-}>;
-
-/** Result of restoring a child session. */
-export type SubagentResurrectResult = Readonly<{
-  path: AgentPath;
-  node?: SubagentNodeSnapshot;
-  sessionId?: string;
-  incarnation?: string;
-}>;
+export type SubagentAwaitState = SubagentAwaitStatus['state'];
+export type SubagentSnapshot = SubagentProviderSnapshot;
 
 interface CommandBase {
   /** Correlation ID for request/response matching */

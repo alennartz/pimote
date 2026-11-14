@@ -15,7 +15,7 @@ export type SubagentPresentationManifest = Readonly<{
   hiddenCustomTypes: readonly string[];
 }>;
 
-export type SubagentOperationKind = 'send' | 'message_received' | 'respond' | 'await' | 'delegation' | 'completion' | 'interrupt' | 'teardown' | 'resurrect';
+export type SubagentOperationKind = 'send' | 'message_received' | 'respond' | 'await' | 'delegation' | 'completion' | 'interrupt' | 'teardown' | 'resurrect' | 'protocol_error';
 
 /** Normalized public tool inputs. Final operations carry complete values. */
 export type SubagentToolParameters = Readonly<Record<string, unknown>>;
