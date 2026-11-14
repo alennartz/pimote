@@ -142,6 +142,7 @@ export interface SubagentAttachmentState {
   viewCursor: number;
   /** Observer cursor kept separately so reconnect code can reason about gaps. */
   observerCursor: number;
+  pendingSteeringMessages: string[];
   draftText: string;
   closed: boolean;
   closeReason?: SubagentAttachmentCloseReason;
@@ -427,6 +428,9 @@ function applyChildNativeEvent(attachment: SubagentAttachmentState, event: Pimot
     return;
   }
   switch (event.type) {
+    case 'queue_update':
+      attachment.pendingSteeringMessages = [...(event as QueueUpdateEvent).steering];
+      break;
     case 'agent_start':
       attachment.state = { ...attachment.state, isStreaming: true };
       break;
@@ -988,6 +992,18 @@ export class SessionRegistry {
     attachment.state = { ...attachment.state, messageCount: attachment.messages.length };
   }
 
+  dropSubagentOptimisticUserMessage(attachment: SubagentAttachmentState, clientMessageId: string): void {
+    const entry = attachment.optimisticEntries.find((item) => item.clientMessageId === clientMessageId);
+    if (!entry) return;
+    attachment.optimisticEntries = attachment.optimisticEntries.filter((item) => item !== entry);
+    const index = attachment.messageKeys.indexOf(entry.key);
+    if (index === -1) return;
+    attachment.messages = attachment.messages.filter((_, i) => i !== index);
+    attachment.transcript = attachment.messages;
+    attachment.messageKeys = attachment.messageKeys.filter((_, i) => i !== index);
+    attachment.state = { ...attachment.state, messageCount: attachment.messages.length };
+  }
+
   private notifySubagentClosed(rootSessionId: string, path: AgentPath, reason: SubagentAttachmentCloseReason, node?: SubagentNodeSnapshot): void {
     const selected = this.selectedSubagentPaths[rootSessionId];
     if (selected && (sameAgentPath(selected, path) || pathStartsWith(path, selected))) {
@@ -1044,6 +1060,7 @@ export class SessionRegistry {
       projectedSubagentContent: hydrateSubagentContent(messages, snapshot.activeSubagentContent ?? []),
       viewCursor: snapshot.viewCursor,
       observerCursor: snapshot.viewCursor,
+      pendingSteeringMessages: [...(snapshot.pendingSteeringMessages ?? [])],
       draftText: '',
       closed: false,
       toolExecutions: rebuildToolExecutionsFromMessages(messages, snapshot.runningToolCallIds ?? []),
@@ -1373,6 +1390,7 @@ export class SessionRegistry {
     attachment.runningToolCallIds = [...(snapshot.runningToolCallIds ?? [])];
     attachment.viewCursor = snapshot.viewCursor;
     attachment.observerCursor = snapshot.viewCursor;
+    attachment.pendingSteeringMessages = [...(snapshot.pendingSteeringMessages ?? [])];
     attachment.draftText = draftText;
     attachment.closed = false;
     attachment.closeReason = undefined;

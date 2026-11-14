@@ -204,6 +204,8 @@ export type BorrowedAgentSession = Pick<
   | 'getSessionStats'
 > & {
   readonly sessionManager: BorrowedSessionManager;
+  /** Current native steering queue, when supported by the provider. */
+  readonly getSteeringMessages?: AgentSession['getSteeringMessages'];
   /** Full-resync native state projection. */
   readonly state: Pick<AgentSession['state'], 'streamingMessage' | 'pendingToolCalls' | 'errorMessage'>;
 };

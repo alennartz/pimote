@@ -357,6 +357,7 @@ describe('native branch snapshot wire fields', () => {
           },
           messages: [{ role: 'user', entryId: 'visible-child', content: [{ type: 'text', text: 'Child text' }] }],
           branchEntryIds: ['visible-child', 'hidden-child'],
+          pendingSteeringMessages: ['Queued before opening'],
         },
       }),
       snapshot: () => ({ cursor: { epoch: 'epoch-1', sequence: 1 }, nodes: [{ path: ['worker'], incarnation: 'inc-1' }] }),
@@ -364,7 +365,10 @@ describe('native branch snapshot wire fields', () => {
     const { handler, sent } = createTestHandler('branch-client', { sessions: new Map([['branch-root', slot]]) });
     await handler.handleMessage(JSON.stringify({ type: 'subagent_open_view', id: 'open-child-branch', sessionId: 'branch-root', path: ['worker'] }));
 
-    expect(findResponse(sent, 'open-child-branch')).toMatchObject({ success: true, data: { snapshot: { branchEntryIds: ['visible-child', 'hidden-child'] } } });
+    expect(findResponse(sent, 'open-child-branch')).toMatchObject({
+      success: true,
+      data: { snapshot: { branchEntryIds: ['visible-child', 'hidden-child'], pendingSteeringMessages: ['Queued before opening'] } },
+    });
   });
 });
 

@@ -5,7 +5,8 @@
 
   let loading = $state(false);
 
-  const pending = $derived(sessionRegistry.viewed?.pendingSteeringMessages ?? []);
+  const child = $derived(sessionRegistry.viewedSubagentAttachment);
+  const pending = $derived(child?.pendingSteeringMessages ?? sessionRegistry.viewed?.pendingSteeringMessages ?? []);
 
   async function dequeue() {
     const session = sessionRegistry.viewed;
@@ -32,7 +33,15 @@
   }
 </script>
 
-{#if pending.length > 0}
+{#if pending.length > 0 && child}
+  <div class="border-border bg-background w-full border-t">
+    <div class="mx-auto flex max-w-3xl flex-col gap-0.5 px-4 py-2">
+      {#each pending as msg, i (i)}
+        <p class="text-muted-foreground truncate text-left text-xs">{msg}</p>
+      {/each}
+    </div>
+  </div>
+{:else if pending.length > 0}
   <button
     class="border-border bg-background hover:bg-accent/50 active:bg-accent w-full border-t transition-colors"
     onclick={dequeue}

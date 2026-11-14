@@ -1862,6 +1862,7 @@ export interface SubagentViewSnapshot {
   viewCursor: SubagentViewCursor;
   state: SessionState;
   messages: PimoteAgentMessage[];
+  pendingSteeringMessages?: readonly string[];
   activeSubagentContent?: readonly PimoteActiveSubagentContent[];
   /** Current child branch, independent of its rendered message projection. */
   branchEntryIds?: readonly string[];

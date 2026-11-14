@@ -80,7 +80,13 @@ function fixture() {
         listeners.delete(listener);
       };
     },
-    async prompt(text: string, options?: { preflightResult?: (value: 'started') => void }) {
+    async prompt(text: string, options?: { streamingBehavior?: 'steer' | 'followUp'; preflightResult?: (value: 'started' | 'queued') => void }) {
+      if (data.streaming && options?.streamingBehavior) {
+        (options.streamingBehavior === 'steer' ? data.steering : data.followUp).push(text);
+        publish({ type: 'queue_update', steering: data.steering, followUp: data.followUp });
+        options.preflightResult?.('queued');
+        return;
+      }
       options?.preflightResult?.('started');
       const next = entry('prompt', data.leaf, text);
       data.branch = [...data.branch, next];
@@ -493,6 +499,7 @@ describe('SessionSurface', () => {
     const root = createSessionSurface({ sessionId: 'root-session', session: f.native, kind: 'root', capabilities: f.capabilities });
     await root.initialize();
     await expect(root.dispatch({ type: 'steer', message: 'Start a root run' })).resolves.toMatchObject({ outcome: 'started' });
+    f.data.streaming = false;
     await expect(root.dispatch({ type: 'follow_up', message: 'Continue the root run' })).resolves.toMatchObject({ outcome: 'started' });
     expect(f.data.steering).toEqual([]);
     expect(f.data.followUp).toEqual([]);

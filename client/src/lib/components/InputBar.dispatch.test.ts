@@ -65,12 +65,67 @@ afterEach(async () => {
   for (const component of mounted.splice(0)) await unmount(component);
   document.body.replaceChildren();
   vi.restoreAllMocks();
+  sessionRegistry.clearSubagentRoot('s1');
   sessionRegistry.sessions = {};
   sessionRegistry.viewedSessionId = null;
   connection.ready = false;
   branchTreeStore.close();
   sharedImagesRequest.images = [];
   sharedImagesRequest.seq = 0;
+});
+
+describe('child steering dispatch', () => {
+  function selectChild(streaming: boolean) {
+    setupSession(false);
+    sessionRegistry.handleEvent({
+      type: 'subagent_view_snapshot',
+      sessionId: 's1',
+      childSessionId: 'child',
+      path: ['worker'],
+      incarnation: 'inc-1',
+      attachmentGeneration: 'gen-1',
+      viewCursor: 1,
+      state: {
+        sessionId: 'child',
+        sessionFile: undefined,
+        model: null,
+        thinkingLevel: 'off',
+        availableThinkingLevels: [],
+        isStreaming: streaming,
+        isCompacting: false,
+        autoCompactionEnabled: false,
+        messageCount: 0,
+      },
+      messages: [],
+    });
+    sessionRegistry.selectSubagentView('s1', ['worker']);
+    return sessionRegistry.getSubagentAttachment('s1', ['worker'])!;
+  }
+
+  it('shows the pending child message while a steer request is in flight', async () => {
+    const child = selectChild(true);
+    let release!: (response: PimoteResponse) => void;
+    const send = vi.spyOn(connection, 'send').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    await submit('Check progress');
+    expect(send.mock.calls[0][0]).toMatchObject({ type: 'subagent_steer', message: 'Check progress' });
+    expect(child.pendingSteeringMessages).toEqual(['Check progress']);
+    release({ id: 'r', success: false, error: 'rejected' });
+    for (let i = 0; i < 4; i++) await tick();
+    expect(child.pendingSteeringMessages).toEqual([]);
+  });
+
+  it('removes the optimistic transcript row when a stale idle view queues its prompt', async () => {
+    const child = selectChild(false);
+    const sent = respond({ outcome: 'queued' });
+    await submit('Check progress');
+    expect(sent[0]).toMatchObject({ type: 'subagent_prompt', message: 'Check progress' });
+    expect(child.messages).toEqual([]);
+  });
 });
 
 describe('prompt dispatch outcome', () => {

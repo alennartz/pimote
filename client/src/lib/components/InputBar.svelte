@@ -536,15 +536,16 @@
       // Show the pending pill and clear the submitted draft before the
       // round-trip. Slash input waits for pi's command handling or
       // queue_update: a command may run instead of queueing.
-      const showPill = !isSlashCommand && !originatingChild;
-      if (showPill && sessionRegistry.viewed) sessionRegistry.viewed.pendingSteeringMessages.push(text);
+      const showPill = !isSlashCommand;
+      const pending = originatingChild?.pendingSteeringMessages ?? sessionRegistry.sessions[sessionId]?.pendingSteeringMessages;
+      if (showPill && pending) pending.push(text);
       clearSubmittedComposer(sessionId, isSlashCommand);
       // Remove the pill when pi will not queue the text. A queued text needs
       // no cleanup: pi's queue_update snapshot already replaced the list.
       const dropPill = () => {
-        const pending = sessionRegistry.sessions[sessionId]?.pendingSteeringMessages;
-        const idx = showPill && pending ? pending.lastIndexOf(text) : -1;
-        if (idx !== -1) pending!.splice(idx, 1);
+        const currentPending = originatingChild?.pendingSteeringMessages ?? sessionRegistry.sessions[sessionId]?.pendingSteeringMessages;
+        const idx = showPill && currentPending ? currentPending.lastIndexOf(text) : -1;
+        if (idx !== -1) currentPending!.splice(idx, 1);
       };
       try {
         const dispatchResponse = isSlashCommand
@@ -590,6 +591,11 @@
         else sessionRegistry.addOptimisticUserMessage(sessionId, text, clientMessageId);
       }
       clearSubmittedComposer(sessionId);
+      const dropOptimistic = () => {
+        if (!clientMessageId) return;
+        if (originatingChild) sessionRegistry.dropSubagentOptimisticUserMessage(originatingChild, clientMessageId);
+        else sessionRegistry.dropOptimisticUserMessage(sessionId, clientMessageId);
+      };
       try {
         const promptResponse = await sendSurface({
           type: 'prompt',
@@ -598,7 +604,7 @@
           ...(clientMessageId ? { clientMessageId } : {}),
         });
         if (!promptResponse.success) {
-          if (clientMessageId && !originatingChild) sessionRegistry.dropOptimisticUserMessage(sessionId, clientMessageId);
+          dropOptimistic();
           restoreSubmittedComposer(sessionId, submittedDraft, submittedImages, clientMessageId);
           console.error('Prompt rejected:', promptResponse.error);
         } else {
@@ -613,14 +619,14 @@
               },
               originatingSurfaceRef,
             );
-          } else if (clientMessageId && !originatingChild && (promptData as PromptResponseData | undefined)?.outcome !== 'started') {
+          } else if (clientMessageId && (promptData as PromptResponseData | undefined)?.outcome !== 'started') {
             // Only a started prompt echoes a stamped user message. A queued
             // prompt shows in the steering queue and echoes unstamped later.
-            sessionRegistry.dropOptimisticUserMessage(sessionId, clientMessageId);
+            dropOptimistic();
           }
         }
       } catch (e) {
-        if (clientMessageId && !originatingChild) sessionRegistry.dropOptimisticUserMessage(sessionId, clientMessageId);
+        dropOptimistic();
         restoreSubmittedComposer(sessionId, submittedDraft, submittedImages, clientMessageId);
         console.error('Failed to send prompt:', e);
       }

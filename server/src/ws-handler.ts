@@ -1272,6 +1272,7 @@ export class WsHandler {
       viewCursor: snapshot.cursor,
       state: snapshot.state,
       messages: snapshot.messages,
+      ...(snapshot.pendingSteeringMessages !== undefined ? { pendingSteeringMessages: [...snapshot.pendingSteeringMessages] } : {}),
       ...(snapshot.activeSubagentContent !== undefined ? { activeSubagentContent: snapshot.activeSubagentContent } : {}),
       ...(snapshot.branchEntryIds !== undefined ? { branchEntryIds: [...snapshot.branchEntryIds] } : {}),
       ...(snapshot.streamingMessage ? { streamingMessage: snapshot.streamingMessage } : {}),

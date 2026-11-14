@@ -58,6 +58,7 @@ export interface SessionSurfaceSnapshot {
   cursor: number;
   state: SessionState;
   messages: PimoteAgentMessage[];
+  pendingSteeringMessages?: readonly string[];
   activeSubagentContent?: readonly import('../../shared/dist/index.js').PimoteActiveSubagentContent[];
   branchEntryIds?: readonly string[];
   streamingMessage?: StreamingMessage;
@@ -498,6 +499,7 @@ function snapshotFor(options: SessionSurfaceOptions, capabilities: SessionSurfac
     cursor,
     state: stateFor(session, capabilities),
     messages,
+    ...(options.kind === 'child' ? { pendingSteeringMessages: [...(session.getSteeringMessages?.() ?? [])] } : {}),
     ...(projected ? { activeSubagentContent: projected.activeOperations.map((operation) => activeContentForOperation(operation, projectedMessages, options.sessionId)) } : {}),
     ...(branchEntryIds !== undefined ? { branchEntryIds } : {}),
     ...(projectedPartial ? { streamingMessage: projectedPartial } : {}),
@@ -675,20 +677,9 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
         ensure('steer');
         const slash = commandToken(command.message);
         if (options.kind === 'child' && slash) throw new Error(`slash command /${slash} is not available on a child surface`);
-        if (options.kind === 'root') {
-          const intent = caller?.queueOwnership && caller.clientId ? caller.queueOwnership.intend('steering', caller.clientId, command.message) : undefined;
-          try {
-            const result = await dispatchPrompt(session, command.message, parseDataUrlImages(command.images), 'steer', () => undefined);
-            if (intent && result !== 'queued') caller?.queueOwnership?.cancel(intent);
-            return { outcome: result };
-          } catch (error) {
-            if (intent) caller?.queueOwnership?.cancel(intent);
-            throw error;
-          }
-        }
         const intent = caller?.queueOwnership && caller.clientId ? caller.queueOwnership.intend('steering', caller.clientId, command.message) : undefined;
         try {
-          const result = await (session.steer as unknown as (text: string, images?: unknown) => Promise<'queued' | 'handled'>)(command.message, parseDataUrlImages(command.images));
+          const result = await dispatchPrompt(session, command.message, parseDataUrlImages(command.images), 'steer', () => undefined);
           if (intent && result !== 'queued') caller?.queueOwnership?.cancel(intent);
           return { outcome: result };
         } catch (error) {

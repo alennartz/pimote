@@ -10,6 +10,8 @@ import {
   SessionManager,
   SettingsManager,
 } from '@earendil-works/pi-coding-agent';
+import type { BorrowedAgentSession } from '@pimote/sdk/subagents';
+import { createSessionSurface } from './session-surface.js';
 
 // Exercise the installed SDK, not a copy of its lifecycle implementation.
 // All model responses, resources, settings, and session storage are local/in-memory.
@@ -146,6 +148,56 @@ function runResult(session: AgentSession) {
     (error: unknown) => ({ status: 'rejected' as const, error }),
   );
 }
+
+describe('installed SDK child steering', () => {
+  it('starts a child that became idle before a steer arrived', async () => {
+    const { session, started } = makeSession();
+    const surface = createSessionSurface({ sessionId: session.sessionId, session: session as unknown as BorrowedAgentSession, kind: 'child' });
+    try {
+      await surface.initialize();
+      const response = surface.dispatch({ type: 'steer', message: 'Continue work' });
+      await expect(response).resolves.toMatchObject({ outcome: 'started' });
+      await started;
+      expect(session.messages).toEqual(
+        expect.arrayContaining([expect.objectContaining({ role: 'user', content: expect.arrayContaining([expect.objectContaining({ text: 'Continue work' })]) })]),
+      );
+      expect(session.getSteeringMessages()).toEqual([]);
+    } finally {
+      await session.abort();
+      surface.close();
+      session.dispose();
+    }
+  });
+
+  it('queues a child surface steer and delivers it to the running child', async () => {
+    const { session, started, streams } = makeSession();
+    const surface = createSessionSurface({ sessionId: session.sessionId, session: session as unknown as BorrowedAgentSession, kind: 'child' });
+    const events: import('../../shared/dist/index.js').PimoteSessionEvent[] = [];
+    surface.subscribe((event) => events.push(event));
+    try {
+      await surface.initialize();
+      const run = session.prompt('Initial task');
+      const first = await started;
+      expect(session.isStreaming).toBe(true);
+      await expect(surface.dispatch({ type: 'steer', message: 'Check the result' })).resolves.toMatchObject({ outcome: 'queued' });
+      expect(session.getSteeringMessages()).toEqual(['Check the result']);
+      expect(events).toContainEqual(expect.objectContaining({ type: 'queue_update', steering: ['Check the result'] }));
+      expect(surface.snapshot().pendingSteeringMessages).toEqual(['Check the result']);
+      first.finish('stop');
+      await vi.waitFor(() => expect(streams.length).toBeGreaterThan(1));
+      expect(session.getSteeringMessages()).toEqual([]);
+      expect(session.messages).toEqual(
+        expect.arrayContaining([expect.objectContaining({ role: 'user', content: expect.arrayContaining([expect.objectContaining({ text: 'Check the result' })]) })]),
+      );
+      streams[1].finish('stop');
+      await run;
+    } finally {
+      await session.abort();
+      surface.close();
+      session.dispose();
+    }
+  });
+});
 
 describe('installed SDK exception-safe settlement', () => {
   it('settles and releases existing idle/abort waiters when final custom-message dispatch throws', async () => {
