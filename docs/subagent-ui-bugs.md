@@ -92,11 +92,11 @@ Commits: 0a7f4275348de1bd138719f9a2869c2dc4f059bf in my-pi, pushed to origin/mai
 
 Subagents appeared in the sidepane without a corresponding visible spawning entry in the parent transcript.
 
-UI-initiated resurrection now creates a durable entry in the owning parent transcript. Model-issued root spawns retain their existing entries.
+UI-initiated resurrection and manual teardown inform the parent turn through a custom `subagents` message delivered as next turn, so the parent model learns of the event without a turn being triggered. Each notice carries persisted presentation content, rides the hidden-custom-type manifest, and rehydrates from the parent transcript through the provider. Model-issued root spawns retain their existing entries.
 
 Nested spawns and resurrections remain visible only in the spawning child's transcript. The root transcript still lacks an entry for those descendants. A root entry needs explicit child attribution and durable cross-session provenance to avoid attributing the operation to the root.
 
-Commits: de93fb8656c454b076ed2b394609cc504e2760fc in my-pi, pushed to origin/main, and 6f103ebcf4e21d1e717e3ddba555b309c7a537d2 in Pimote.
+Commits: de93fb8656c454b076ed2b394609cc504e2760fc and 7492a1c in my-pi, pushed to origin/main, and 6f103ebcf4e21d1e717e3ddba555b309c7a537d2 and 1f274e3 in Pimote.
 
 ## BUG-012: Await settles on idle despite an open session
 
