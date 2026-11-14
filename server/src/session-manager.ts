@@ -1525,6 +1525,14 @@ export class PimoteSessionManager {
     // unchanged reset notification, but it does not rebuild or bind anything.
     if (newId === oldId && !sessionChanged) {
       slot.sessionState.eventBuffer.invalidateReplay();
+      // Navigation mutates the branch without session events, so the surface
+      // projection still holds the abandoned branch. Rebuild it from the new
+      // branch before the unchanged reset reaches observers.
+      try {
+        slot.sessionSurface?.refreshSnapshot();
+      } catch {
+        // A closed surface has no consumers; the reset notification still goes out.
+      }
       return { observers, outcome: { kind: 'unchanged' }, needsBinding: false };
     }
 

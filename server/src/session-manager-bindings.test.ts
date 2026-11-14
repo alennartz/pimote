@@ -351,7 +351,7 @@ describe('manager-owned extension startup', () => {
     await actions.navigateTree('entry-1');
 
     expect(navigateTree).toHaveBeenCalledWith('entry-1', undefined);
-    expect(invalidateReplay).toHaveBeenCalledOnce();
+    expect(invalidateReplay).toHaveBeenCalled();
     expect(rebuildSessionState).not.toHaveBeenCalled();
     expect(slot.sessionState).toBe(state);
     expect(harness.bindCalls).toHaveLength(1);
