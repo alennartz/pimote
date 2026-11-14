@@ -104,8 +104,10 @@ Commits: 52f6d95a94eba2835aa239b95bd660f20c6e8b62 in my-pi, pushed to origin/mai
 
 ## BUG-013: UI steering to a subagent window is not queued
 
-**Status:** Open.
+**Status:** Fixed in source. Deployment pending.
 
 A steering message sent from the UI to a running subagent window did not queue for the child.
 
 The UI must queue steering messages to a running subagent window and deliver them to the child.
+
+Commits: 939846eb24c34b538cb522f78ec61325ad5b8120 in Pimote.
