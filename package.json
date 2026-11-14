@@ -56,7 +56,9 @@
     "prepare": "husky",
     "prepack": "npm run build",
     "pack:dry-run": "npm pack --dry-run",
-    "test:patches": "node --test scripts/patch-dependencies.test.mjs"
+    "test:patches": "node --test scripts/patch-dependencies.test.mjs",
+    "version": "node ./scripts/sync-versions.mjs && npm install --package-lock-only",
+    "test:versions": "node --test scripts/sync-versions.test.mjs"
   },
   "lint-staged": {
     "*.{ts,js,svelte,css,html,json,md,yaml}": "prettier --write",

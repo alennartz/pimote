@@ -1,4 +1,4 @@
-.PHONY: all install build patch-dependencies build-shared build-sdk build-server build-client package \
+.PHONY: all install build patch-dependencies build-shared build-sdk build-server build-client package version \
         dev dev-server dev-client \
         start test clean help \
         format format-check lint check \
@@ -49,6 +49,11 @@ build-client: patch-dependencies
 package: build
 	mkdir -p $(ARTIFACTS_DIR)
 	npm pack --ignore-scripts --pack-destination $(ARTIFACTS_DIR)
+
+## Bump the release version everywhere (root, server, client, SDK, lockfile).
+## Requires VERSION, e.g.: make version VERSION=0.17.0
+version:
+	npm version $(VERSION) --no-git-tag-version
 
 # ── Dev (hot-reload) ──────────────────────────────────────────────────────────
 
