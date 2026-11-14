@@ -93,6 +93,8 @@ export interface SubagentPanelRow {
   readonly label: string;
   readonly task: string;
   readonly metadata: SubagentNodeMetadata;
+  /** A live row can still act; errored and dead rows are terminal. */
+  readonly live: boolean;
   readonly inspected: boolean;
   readonly viewOpen: boolean;
   readonly openAction: 'open' | 'show';
@@ -354,6 +356,7 @@ export function projectSubagentPanelRows(snapshot: PanelSnapshotInput, state: Su
       const path = copyPath(node.path);
       const viewOpen = state.openChildPaths.some((openPath) => samePath(openPath, path));
       const openAction: SubagentPanelRow['openAction'] = viewOpen ? 'show' : 'open';
+      const live = node.state !== 'errored' && node.state !== 'dead';
       return {
         path,
         depth: Math.max(0, path.length - 1),
@@ -373,6 +376,7 @@ export function projectSubagentPanelRows(snapshot: PanelSnapshotInput, state: Su
           ...(node.lastOutput !== undefined ? { lastOutput: node.lastOutput } : {}),
           ...(node.lastError !== undefined ? { lastError: node.lastError } : {}),
         },
+        live,
         inspected: samePath(state.inspectedPath, path),
         viewOpen,
         openAction,

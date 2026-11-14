@@ -262,4 +262,17 @@ describe('subagent panel and child-view state', () => {
       metadata: expect.objectContaining({ state: 'waiting', waitingTargets: [workerPath] }),
     });
   });
+
+  it.each([
+    ['running', true],
+    ['waiting', true],
+    ['idle', true],
+    ['errored', false],
+    ['dead', false],
+  ] as const)('marks %s rows live=%s', (state, expectedLive) => {
+    const rows = projectSubagentPanelRows({ ...snapshot, nodes: [{ ...snapshot.nodes[0], state }] }, rootState);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].live).toBe(expectedLive);
+  });
 });

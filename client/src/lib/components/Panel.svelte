@@ -9,6 +9,7 @@
   import { Input } from '$lib/components/ui/input/index.js';
   import Bot from '@lucide/svelte/icons/bot';
   import ExternalLink from '@lucide/svelte/icons/external-link';
+  import Trash2 from '@lucide/svelte/icons/trash-2';
   import X from '@lucide/svelte/icons/x';
 
   interface Props {
@@ -358,6 +359,22 @@
                 {#if contextLabel(row)}<span>{contextLabel(row)}</span>{/if}
                 {#if costLabel(row)}<span>{costLabel(row)}</span>{/if}
               </div>
+              {#if row.live}
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  class="row-teardown text-muted-foreground hover:text-destructive hover:bg-destructive/10 max-md:size-11"
+                  aria-label={`Teardown ${pathLabel(row.path)}`}
+                  title={`Teardown ${pathLabel(row.path)}`}
+                  disabled={busy}
+                  onclick={(event) => {
+                    event.stopPropagation();
+                    requestTeardown(row.path);
+                  }}
+                >
+                  <Trash2 class="size-3" />
+                </Button>
+              {/if}
               <Button
                 variant="ghost"
                 size="xs"
@@ -446,7 +463,15 @@
       <p class="text-muted-foreground mt-2 text-xs leading-relaxed">This stops and removes the child from the live hierarchy. Its session file stays available for resurrection.</p>
       <div class="mt-4 flex justify-end gap-2">
         <Button variant="outline" size="sm" class="max-md:min-h-11" onclick={cancelTeardown}>Cancel</Button>
-        <Button variant="destructive" size="sm" class="max-md:min-h-11" disabled={busy} onclick={() => void confirmTeardown()}>Teardown child</Button>
+        <Button
+          variant="destructive"
+          size="sm"
+          class="max-md:min-h-11"
+          aria-label={`Teardown ${pathLabel(teardownConfirmation.path)}`}
+          title={`Teardown ${pathLabel(teardownConfirmation.path)}`}
+          disabled={busy}
+          onclick={() => void confirmTeardown()}>Teardown child</Button
+        >
       </div>
     </div>
   </div>

@@ -1,10 +1,29 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
+import type { PimoteResponse } from '@pimote/shared';
 import Panel from './Panel.svelte';
 import { panelStore } from '$lib/stores/panel-store.svelte.js';
 import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
 import type { SubagentNodeSnapshot } from '@pimote/shared';
+
+// Panel imports the session registry, whose command paths flow through the
+// connection. Mock it so teardown outcomes stay observable without a socket.
+vi.mock('$lib/stores/connection.svelte.js', () => {
+  const base: Record<string, unknown> = { status: 'connected', send: vi.fn(async () => ({ success: true, data: {} }) as PimoteResponse) };
+  const connection = new Proxy(base, {
+    get(target, prop) {
+      if (typeof prop !== 'string') return undefined;
+      if (prop in target) return target[prop];
+      const fn = vi.fn();
+      target[prop] = fn;
+      return fn;
+    },
+  });
+  return { connection, isSessionNotFoundError: () => false };
+});
+
+const { connection } = await import('$lib/stores/connection.svelte.js');
 
 const rootName = 'Root conversation';
 const initialTask = 'Initial delegation task.';
@@ -43,7 +62,14 @@ function rootButton(target: HTMLElement): HTMLButtonElement {
   return button!;
 }
 
+function teardownButton(target: HTMLElement, path: string): HTMLButtonElement {
+  const button = target.querySelector<HTMLButtonElement>(`button[aria-label="Teardown ${path}"]`);
+  expect(button).not.toBeNull();
+  return button!;
+}
+
 beforeEach(() => {
+  vi.clearAllMocks();
   panelStore.reset();
   panelStore.collapsed = false;
   panelStore.presentation = 'sidebar';
@@ -176,6 +202,122 @@ describe('Panel hierarchy navigation', () => {
     expect(sessionRegistry.viewedSurface?.kind).toBe('child');
     expect(sessionRegistry.getSubagentDraftText('root', ['worker'])).toBe('Child draft');
     expect(sessionRegistry.getSubagentAttachment('root', ['worker'])?.messages[0].content[0]).toMatchObject({ type: 'text', text: initialTask });
+  });
+});
+
+describe('Panel row teardown', () => {
+  function openWorkerChildView(): void {
+    sessionRegistry.handleEvent({
+      type: 'subagent_view_snapshot',
+      sessionId: 'root',
+      childSessionId: 'child-worker',
+      path: ['worker'],
+      incarnation: 'inc-worker',
+      attachmentGeneration: 'gen-worker',
+      viewCursor: 1,
+      state: {
+        sessionId: 'child-worker',
+        sessionFile: undefined,
+        model: null,
+        thinkingLevel: 'off',
+        availableThinkingLevels: [],
+        isStreaming: false,
+        isCompacting: false,
+        autoCompactionEnabled: true,
+        messageCount: 1,
+      },
+      messages: [{ role: 'user', content: [{ type: 'text', text: initialTask }] }],
+    });
+    sessionRegistry.selectSubagentView('root', ['worker']);
+  }
+
+  function settleTeardown(): void {
+    sessionRegistry.handleEvent({
+      type: 'subagent_event',
+      sessionId: 'root',
+      cursor: 2,
+      eventId: 'teardown-worker',
+      path: ['worker'],
+      kind: 'node_removed',
+      data: { node: node(['worker']), reason: 'manual' },
+      relatedPiEvents: [],
+    });
+  }
+
+  it('offers teardown on every live row without inspecting it first', async () => {
+    const target = render();
+    await tick();
+
+    expect(teardownButton(target, 'worker')).not.toBeNull();
+    expect(teardownButton(target, 'worker/scout')).not.toBeNull();
+    expect(target.querySelector('[aria-label="Selected subagent details"]')).toBeNull();
+  });
+
+  it('hides the teardown affordance on a dead row', async () => {
+    sessionRegistry.handleEvent({
+      type: 'subagent_event',
+      sessionId: 'root',
+      cursor: 2,
+      eventId: 'worker-died',
+      path: ['worker'],
+      kind: 'node_updated',
+      data: { ...node(['worker']), state: 'dead' },
+      relatedPiEvents: [],
+    });
+    const target = render();
+    await tick();
+
+    expect(target.querySelector('button[aria-label="Teardown worker"]')).toBeNull();
+    expect(teardownButton(target, 'worker/scout')).not.toBeNull();
+  });
+
+  it('opens the confirmation dialog from the row and tears down on confirm', async () => {
+    vi.mocked(connection.send).mockClear();
+    openWorkerChildView();
+    const target = render();
+    await tick();
+
+    teardownButton(target, 'worker').click();
+    await tick();
+
+    const dialog = target.querySelector('[role="alertdialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog?.textContent).toContain('Teardown worker?');
+    // The dialog names the row's child; the inspected view stays untouched.
+    expect(sessionRegistry.getSelectedSubagentPath('root')).toEqual(['worker']);
+
+    target.querySelector<HTMLButtonElement>('[role="alertdialog"] button[aria-label="Teardown worker"]')!.click();
+    await tick();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(connection.send).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'subagent_teardown', sessionId: 'root', path: ['worker'], incarnation: 'inc-worker', attachmentGeneration: 'gen-worker' }),
+    );
+    settleTeardown();
+    await tick();
+
+    expect(target.querySelector('[aria-label="Teardown worker"]')).toBeNull();
+    expect(target.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(target.querySelector('[role="status"]')?.textContent).toContain('was removed.');
+  });
+
+  it('keeps the child when the row teardown is canceled', async () => {
+    openWorkerChildView();
+    const target = render();
+    await tick();
+
+    teardownButton(target, 'worker').click();
+    await tick();
+    expect(target.querySelector('[role="alertdialog"]')).not.toBeNull();
+
+    const cancel = [...target.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find((button) => button.textContent?.trim() === 'Cancel');
+    cancel!.click();
+    await tick();
+
+    expect(target.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(connection.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'subagent_teardown' }));
+    expect(sessionRegistry.getSubagentAttachment('root', ['worker'])?.closed).toBe(false);
   });
 });
 
