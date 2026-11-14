@@ -295,7 +295,6 @@ function fixture(retainedEvents: readonly SubagentEvent[] = []) {
       viewChanges.push(notification);
       for (const waiter of waiters) waiter(notification);
     },
-    reconnectGraceMs: 1000,
     childCapabilities: () => ({
       resolveModel: async () => undefined,
       getSettings: () => ({ availableThinkingLevels: [], autoCompactionEnabled: true }),
@@ -497,7 +496,7 @@ describe('SubagentHost', () => {
     expect(f.pending.delivered).toEqual(['latest answer']);
   });
 
-  it('retains all connection attachments during reconnect grace and releases them after expiry', async () => {
+  it('holds open views across a long disconnect until the user closes them', async () => {
     vi.useFakeTimers();
     try {
       const f = fixture();
@@ -505,21 +504,16 @@ describe('SubagentHost', () => {
       const first = await f.host.openView('connection-1', scout);
       await f.host.openView('connection-1', reviewer);
       f.host.disconnect('connection-1');
-      await vi.advanceTimersByTimeAsync(999);
-      expect(f.active(scout)).toBe(1);
+      await vi.advanceTimersByTimeAsync(5000);
       expect(f.pending.delivered).toEqual([]);
+      expect(f.viewChanges.filter(({ change }) => change.type === 'closed')).toEqual([]);
       const reattached = await f.host.reconnect('connection-1');
       expect(reattached.map((view) => view.path)).toEqual(expect.arrayContaining([scout, reviewer]));
-      await vi.advanceTimersByTimeAsync(1000);
       await expect(f.host.dispatch('connection-1', first, { type: 'get_state' })).resolves.toBe('scout-1:get_state');
-
-      f.host.disconnect('connection-1');
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(f.active(scout)).toBe(0);
-      expect(f.active(reviewer)).toBe(0);
+      await f.host.closeView('connection-1', first);
       expect(f.pending.delivered).toEqual(['latest answer']);
-      expect(await f.host.reconnect('connection-1')).toEqual([]);
-      await expect(f.host.dispatch('connection-1', first, { type: 'get_state' })).rejects.toThrow();
+      await f.host.releaseConnection('connection-1');
+      expect(f.active(reviewer)).toBe(0);
     } finally {
       vi.useRealTimers();
     }

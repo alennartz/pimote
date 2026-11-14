@@ -107,7 +107,7 @@ function isSubagentTopologyEvent(event: WireSubagentTopologyEvent): boolean {
   return event.kind === 'node_added' || event.kind === 'node_updated' || event.kind === 'node_removed' || event.kind === 'runtime_replaced';
 }
 
-export type SubagentAttachmentCloseReason = SubagentViewClosedEvent['reason'] | 'expired';
+export type SubagentAttachmentCloseReason = SubagentViewClosedEvent['reason'];
 
 /** Client state for one root-relative child attachment. This state never enters
  * `sessions`, `activeSessions`, or URL routing. */
@@ -744,9 +744,6 @@ export class SessionRegistry {
   private subagentClosedNotices: Record<string, SubagentViewClosedNotice> = $state({});
   private subagentResurrectionRequests: Record<string, SubagentViewClosedNotice> = $state({});
   subagentNoticeVersion = $state(0);
-  private subagentReconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private subagentConnectionGeneration = 0;
-  private subagentReconnectGraceMs: number | null = null;
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- in-flight child opens are request bookkeeping
   private pendingSubagentOpens = new Map<string, Promise<SubagentAttachmentState | null>>();
   private _nextMessageKey: number = 0;
@@ -989,40 +986,6 @@ export class SessionRegistry {
     attachment.messageKeys = [...attachment.messageKeys, key];
     if (clientMessageId) attachment.optimisticEntries = [...attachment.optimisticEntries, { key, clientMessageId }];
     attachment.state = { ...attachment.state, messageCount: attachment.messages.length };
-  }
-
-  /** Keep attachments alive while a socket reconnects. The server preserves
-   * generations for the same client id during this grace period. */
-  setSubagentReconnectGraceMs(milliseconds: number): void {
-    this.subagentReconnectGraceMs = Math.max(0, milliseconds);
-  }
-
-  markSubagentConnectionLost(): void {
-    this.subagentConnectionGeneration += 1;
-    const generation = this.subagentConnectionGeneration;
-    if (this.subagentReconnectTimer) clearTimeout(this.subagentReconnectTimer);
-    this.subagentReconnectTimer = setTimeout(
-      () => {
-        if (generation !== this.subagentConnectionGeneration) return;
-        this.subagentReconnectTimer = null;
-        for (const root of Object.values(this.subagentRoots)) {
-          for (const attachment of Object.values(root.attachments)) {
-            if (attachment.closed) continue;
-            this.closeSubagentAttachment(root, attachment, 'expired');
-          }
-        }
-      },
-      Math.max(0, this.subagentReconnectGraceMs ?? connection.subagentReconnectGraceMs),
-    );
-  }
-
-  /** Reconnect restored attachments before any new explicit open is needed. */
-  markSubagentConnectionRestored(): void {
-    this.subagentConnectionGeneration += 1;
-    if (this.subagentReconnectTimer) {
-      clearTimeout(this.subagentReconnectTimer);
-      this.subagentReconnectTimer = null;
-    }
   }
 
   private notifySubagentClosed(rootSessionId: string, path: AgentPath, reason: SubagentAttachmentCloseReason, node?: SubagentNodeSnapshot): void {
@@ -1370,7 +1333,7 @@ export class SessionRegistry {
     if (current && current.closed && source === 'event') return current;
     if (current && current.attachmentGeneration !== snapshot.attachmentGeneration) {
       // A response for an explicit reopen is the only authority that can
-      // replace an expired generation. A late event from the old socket cannot.
+      // replace a closed generation. A late event from the old socket cannot.
       if (source !== 'response' && !current.closed) return current;
     }
     if (current && current.attachmentGeneration === snapshot.attachmentGeneration) {
@@ -1383,7 +1346,7 @@ export class SessionRegistry {
       const freshSurface = source === 'event' && snapshot.viewCursor === 0;
       if (source === 'response' && !current.closed && snapshot.viewCursor < current.observerCursor) return current;
       if (!rebind && !freshSurface && snapshot.viewCursor < current.observerCursor) return current;
-      if (!rebind && snapshot.viewCursor === current.observerCursor && !current.closed) return current;
+      if (!rebind && !freshSurface && snapshot.viewCursor === current.observerCursor && !current.closed) return current;
     }
     const attachment =
       current &&
@@ -2882,7 +2845,6 @@ connection.onDisconnect(() => {
   attachedSessionIds.clear();
   lifecycleAttachmentPromises.clear();
   cancelledNewSessionIds.clear();
-  sessionRegistry.markSubagentConnectionLost();
 });
 
 // Subscribe to connection events and route to the registry
@@ -2989,7 +2951,6 @@ connection.onPendingAdopt = (sessionId, folderPath, { openDownloads }) => {
 // After restore completes, refresh per-session supplemental data and restore
 // the correct viewed session on the server.
 connection.onReconnected = () => {
-  sessionRegistry.markSubagentConnectionRestored();
   for (const session of sessionRegistry.activeSessions) {
     if (session.sessionId.startsWith('pending-')) continue;
     // A bash response can be accepted by the server just before the socket

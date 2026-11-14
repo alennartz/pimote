@@ -79,7 +79,6 @@ export interface SubagentHostOptions {
   parentCursor: () => number;
   emitParentEvent: ParentTopologyEventSink;
   emitViewChange: (connectionId: string, change: SubagentViewChange, incarnation?: string, viewCursor?: number) => void;
-  reconnectGraceMs: number;
   childCapabilities: (session: BorrowedAgentSession) => SessionSurfaceCapabilities;
   createChildSurface?: (options: SessionSurfaceOptions) => SessionSurface;
 }
@@ -109,11 +108,11 @@ export interface SubagentHost {
     connectionId?: string,
     connectionToken?: number,
   ): Promise<import('@pimote/sdk/subagents').SubagentResurrectResult>;
-  /** Release every attachment for one connection without reconnect grace. */
+  /** Release every attachment for one connection. */
   releaseConnection(connectionId: string, connectionToken?: number): Promise<void>;
   /** Close all views when the root runtime is replaced or closed. */
   shutdown(reason?: 'replaced' | 'unavailable'): Promise<void>;
-  /** Keep attachments during the grace period for this reconnect identity. */
+  /** Keep attachments for this reconnect identity until explicitly released. */
   disconnect(connectionId: string, connectionToken?: number): void;
   reconnect(connectionId: string, connectionToken?: number): Promise<readonly SubagentViewAttachment[]>;
   /**
@@ -121,7 +120,7 @@ export interface SubagentHost {
    * The optional incarnation and attachment identity guard confirmation flows.
    */
   teardown(path: AgentPath, incarnation?: string, connectionId?: string, attachmentGeneration?: string, connectionToken?: number): Promise<SubagentTeardownResult>;
-  /** Release subscriptions, timers, child surfaces, and leases. */
+  /** Release subscriptions, child surfaces, and leases. */
   shutdown(): Promise<void>;
 }
 
@@ -129,7 +128,6 @@ type ConnectionRecord = {
   readonly id: string;
   token: number;
   connected: boolean;
-  timer?: ReturnType<typeof setTimeout>;
   readonly attachments: Map<string, ViewRecord>;
 };
 
@@ -230,10 +228,6 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
   const getConnection = (connectionId: string): ConnectionRecord => {
     const existing = connections.get(connectionId);
     if (existing) {
-      if (existing.timer) {
-        clearTimeout(existing.timer);
-        existing.timer = undefined;
-      }
       existing.connected = true;
       return existing;
     }
@@ -743,27 +737,12 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     if (!connection.connected) return;
     connection.connected = false;
     connection.token++;
-    const timerToken = connection.token;
-    if (connection.timer) clearTimeout(connection.timer);
-    connection.timer = setTimeout(
-      () => {
-        if (closed || connection.connected || connection.token !== timerToken) return;
-        connection.timer = undefined;
-        const records = [...connection.attachments.values()];
-        void Promise.all(records.map((record) => closeRecord(record, 'unavailable', true)));
-      },
-      Math.max(0, options.reconnectGraceMs),
-    );
   };
 
   const reconnect = async (connectionId: string, connectionToken?: number): Promise<readonly SubagentViewAttachment[]> => {
     const connection = connections.get(connectionId);
     if (!connection || closed) return [];
     assertConnectionToken(connection, connectionToken);
-    if (connection.timer) {
-      clearTimeout(connection.timer);
-      connection.timer = undefined;
-    }
     connection.connected = true;
     connection.token++;
     const records = [...connection.attachments.values()];
@@ -799,10 +778,6 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     const connection = connections.get(connectionId);
     if (!connection || closed) return;
     assertConnectionToken(connection, connectionToken);
-    if (connection.timer) {
-      clearTimeout(connection.timer);
-      connection.timer = undefined;
-    }
     connection.connected = false;
     const records = [...connection.attachments.values()];
     await Promise.all(records.map((record) => closeRecord(record, 'released', false)));
@@ -841,10 +816,6 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     closed = true;
     providerUnsubscribe?.();
     providerUnsubscribe = undefined;
-    for (const connection of connections.values()) {
-      if (connection.timer) clearTimeout(connection.timer);
-      connection.timer = undefined;
-    }
     const records = [...recordsByPath.values()].flatMap((records) => [...records]);
     await Promise.all(records.map((record) => closeRecord(record, reason, true)));
     for (const connection of connections.values()) connection.connected = false;

@@ -2176,6 +2176,50 @@ describe('subagent child surface state', () => {
     } as PimoteEvent;
   }
 
+  it('keeps the selected child open through a long socket interruption and resync', async () => {
+    vi.useFakeTimers();
+    class Socket {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      readyState = Socket.CONNECTING;
+      onclose: (() => void) | null = null;
+      close() {
+        this.readyState = 3;
+        this.onclose?.();
+      }
+    }
+    vi.stubGlobal('WebSocket', Socket);
+    vi.stubGlobal('location', { protocol: 'http:', host: 'localhost', href: 'http://localhost/' });
+    try {
+      sessionRegistry.addSession('root', '/workspace', 'workspace');
+      sessionRegistry.handleEvent(childSnapshot([]));
+      sessionRegistry.selectSubagentView('root', ['worker']);
+      const notices: unknown[] = [];
+      const unsubscribe = sessionRegistry.onSubagentViewClosed((notice) => notices.push(notice));
+      connection.connect();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(sessionRegistry.getSelectedSubagentPath('root')).toEqual(['worker']);
+      expect(sessionRegistry.getSubagentAttachment('root', ['worker'])?.closed).toBe(false);
+      expect(notices).toEqual([]);
+      sessionRegistry.handleEvent(childSnapshot([]));
+      expect(sessionRegistry.getSelectedSubagentAttachment('root')?.path).toEqual(['worker']);
+      unsubscribe();
+    } finally {
+      connection.disconnect();
+      sessionRegistry.removeSession('root');
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
+  it('refreshes a reconnected child snapshot when both surfaces start at cursor zero', () => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    registry.handleEvent(childSnapshot([], { viewCursor: 0, state: { ...childState(), isStreaming: true } }));
+    registry.handleEvent(childSnapshot([], { viewCursor: 0, state: { ...childState(), isStreaming: false } }));
+    expect(registry.getSubagentAttachment('root', ['worker'])?.state.isStreaming).toBe(false);
+  });
+
   it('rehydrates child tool executions and gives streaming content a render key', () => {
     const registry = new SessionRegistry();
     registry.addSession('root', '/workspace', 'workspace');

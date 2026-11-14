@@ -54,7 +54,6 @@ export interface SessionManagerOptions {
   /** Returns whether the current slot is owned by an active voice call. */
   isVoiceModeActive?: (slot: ManagedSlot) => boolean;
   /** Grace period for restoring child-view leases after a socket reconnect. */
-  subagentReconnectGraceMs?: number;
 }
 
 export interface PendingUiEntry {
@@ -806,7 +805,6 @@ export class PimoteSessionManager {
   private readonly managerExtensionFactory?: ExtensionFactory;
   private readonly pimoteDocsFactory?: ExtensionFactory;
   private readonly isVoiceModeActive?: (slot: ManagedSlot) => boolean;
-  private readonly subagentReconnectGraceMs: number;
   private readonly configSupplier: () => PimoteConfig;
 
   private constructor(
@@ -822,7 +820,6 @@ export class PimoteSessionManager {
     this.managerExtensionFactory = options.managerExtensionFactory;
     this.pimoteDocsFactory = options.pimoteDocsFactory;
     this.isVoiceModeActive = options.isVoiceModeActive;
-    this.subagentReconnectGraceMs = Math.max(0, options.subagentReconnectGraceMs ?? 15_000);
     this.configSupplier = options.configSupplier ?? (() => this.config);
   }
 
@@ -1100,7 +1097,6 @@ export class PimoteSessionManager {
       emitViewChange: (connectionId, change, incarnation, viewCursor) => {
         slot.subagentViewListeners?.get(connectionId)?.(change, incarnation, viewCursor);
       },
-      reconnectGraceMs: this.subagentReconnectGraceMs,
       childCapabilities: (session) => this.childSurfaceCapabilities(session),
     });
   }

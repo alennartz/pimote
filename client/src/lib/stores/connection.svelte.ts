@@ -149,14 +149,7 @@ export class ConnectionStore {
   // sessionCursors: doing so makes the next root restore skip parent events.
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- cursor bookkeeping, not UI state
   private subagentViewCursors: Map<string, number> = new Map();
-  /** The server default. The host uses the same grace so local expiry agrees
-   * with a missed `subagent_view_closed` event while the socket is down. */
-  readonly subagentReconnectGraceMs: number;
   subscribedSessions: Map<string, string> = $state(new SvelteMap());
-
-  constructor(options?: { subagentReconnectGraceMs?: number }) {
-    this.subagentReconnectGraceMs = Math.max(0, options?.subagentReconnectGraceMs ?? 15_000);
-  }
 
   /** Last root replay cursor observed for a session. */
   getRootCursor(sessionId: string): number | undefined {
