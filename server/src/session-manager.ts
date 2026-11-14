@@ -98,6 +98,8 @@ export interface SessionState {
   sessionIdentity: AgentSession;
   /** True while a tree navigation + optional summarization is in progress. */
   treeNavigationInProgress: boolean;
+  /** Whether the in-progress tree navigation will produce a branch summary. */
+  treeNavigationSummarizing?: boolean;
   /** True from bash admission through extension interception/native execution. */
   bashDispatchInProgress?: boolean;
   /** Set when abort_bash arrives before native execution has been admitted. */

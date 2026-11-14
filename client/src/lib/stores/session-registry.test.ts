@@ -930,6 +930,26 @@ describe('SessionRegistry', () => {
   });
 
   // --------------------------------------------------------------------------
+  // Event Routing — Tree Navigation
+  // --------------------------------------------------------------------------
+  describe('Event Routing — Tree Navigation', () => {
+    it('tree_navigation_start marks the session navigating and summarizing', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent(makeSessionEvent('tree_navigation_start', 's1', { targetId: 'u1', summarizing: true }));
+      expect(registry.sessions['s1'].isNavigatingTree).toBe(true);
+      expect(registry.sessions['s1'].treeNavigationSummarizing).toBe(true);
+    });
+
+    it('tree_navigation_end clears navigation state', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent(makeSessionEvent('tree_navigation_start', 's1', { targetId: 'u1', summarizing: true }));
+      registry.handleEvent(makeSessionEvent('tree_navigation_end', 's1', {}));
+      expect(registry.sessions['s1'].isNavigatingTree).toBe(false);
+      expect(registry.sessions['s1'].treeNavigationSummarizing).toBe(false);
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // Event Routing — Reconnect
   // --------------------------------------------------------------------------
   describe('Event Routing — Reconnect', () => {

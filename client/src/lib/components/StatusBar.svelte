@@ -200,6 +200,17 @@
       </Badge>
     {/if}
 
+    <!-- Tree navigation indicator -->
+    {#if sessionRegistry.viewed?.isNavigatingTree}
+      <Badge variant="secondary" class="gap-1 text-xs">
+        <span class="relative flex size-2">
+          <span class="absolute inline-flex size-full animate-ping rounded-full bg-violet-400 opacity-75"></span>
+          <span class="relative inline-flex size-2 rounded-full bg-violet-500"></span>
+        </span>
+        {sessionRegistry.viewed.treeNavigationSummarizing ? 'Summarizing…' : 'Navigating…'}
+      </Badge>
+    {/if}
+
     {#if updateStore.showMarker}
       {@const updateStatus = updateStore.status}
       {#if updateStatus}

@@ -27,6 +27,7 @@ import type {
   ToolExecutionEndEvent,
   AgentSettledEvent,
   FullResyncEvent,
+  TreeNavigationStartEvent,
   AgentEndEvent,
   AutoRetryEndEvent,
   SessionConflictEvent,
@@ -629,6 +630,10 @@ export interface PerSessionState {
   /** Invalidates in-flight streaming snapshots when a newer lifecycle event arrives. */
   streamingRevision: number;
   isCompacting: boolean;
+  /** True while a tree navigation (optional branch summary) is in progress. */
+  isNavigatingTree?: boolean;
+  /** Whether the in-progress tree navigation will produce a branch summary. */
+  treeNavigationSummarizing?: boolean;
   model: { provider: string; id: string; name: string } | null;
   thinkingLevel: string;
   /** Server-provided list of thinking levels the current model supports. */
@@ -1080,6 +1085,8 @@ export class SessionRegistry {
       isStreaming: false,
       streamingRevision: 0,
       isCompacting: false,
+      isNavigatingTree: false,
+      treeNavigationSummarizing: false,
       model: null,
       thinkingLevel: 'off',
       availableThinkingLevels: [],
@@ -1779,6 +1786,16 @@ export class SessionRegistry {
         this.refreshSessionMeta(sessionId);
         break;
 
+      case 'tree_navigation_start':
+        session.isNavigatingTree = true;
+        session.treeNavigationSummarizing = (event as TreeNavigationStartEvent).summarizing;
+        break;
+
+      case 'tree_navigation_end':
+        session.isNavigatingTree = false;
+        session.treeNavigationSummarizing = false;
+        break;
+
       case 'full_resync': {
         const resync = event as FullResyncEvent;
         this.clearBashOutputBytes(sessionId);
@@ -1809,6 +1826,8 @@ export class SessionRegistry {
         rebuilt.availableThinkingLevels = state.availableThinkingLevels;
         rebuilt.isStreaming = state.isStreaming;
         rebuilt.isCompacting = state.isCompacting;
+        rebuilt.isNavigatingTree = state.isNavigatingTree ?? false;
+        rebuilt.treeNavigationSummarizing = state.treeNavigationSummarizing ?? false;
         rebuilt.autoCompactionEnabled = state.autoCompactionEnabled;
         rebuilt.messageCount = state.messageCount;
         rebuilt.sessionName = state.sessionName ?? null;

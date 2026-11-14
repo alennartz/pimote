@@ -113,6 +113,10 @@ export interface SessionState {
   availableThinkingLevels: string[];
   isStreaming: boolean;
   isCompacting: boolean;
+  /** True while a tree navigation (optional branch summary) is in progress. */
+  isNavigatingTree?: boolean;
+  /** Whether the in-progress tree navigation will produce a branch summary. */
+  treeNavigationSummarizing?: boolean;
   sessionFile: string | undefined;
   sessionId: string;
   sessionName?: string;

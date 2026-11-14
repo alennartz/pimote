@@ -21,6 +21,13 @@
       });
     }
 
+    if (session?.isNavigatingTree) {
+      next.push({
+        label: session.treeNavigationSummarizing ? 'Summarizing…' : 'Navigating…',
+        className: 'border-violet-500/20 bg-violet-500/10 text-violet-600 dark:text-violet-400',
+      });
+    }
+
     if (connection.phase === 'syncing' && session?.isRestoring) {
       const restoreLabel = getRestoreModeLabel(session.restoreMode);
       if (restoreLabel) {

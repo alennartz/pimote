@@ -154,7 +154,7 @@
           </div>
         {/if}
 
-        {#if child?.state.isStreaming || child?.state.isCompacting || session?.isStreaming || session?.isCompacting}
+        {#if child?.state.isStreaming || child?.state.isCompacting || session?.isStreaming || session?.isCompacting || session?.isNavigatingTree}
           <div class="border-border/60 flex items-start justify-between gap-3 border-t px-3 py-3">
             <span class="text-muted-foreground">Runtime</span>
             <div class="flex flex-wrap justify-end gap-1.5 text-xs">
@@ -166,6 +166,11 @@
               {#if child?.state.isCompacting || (!child && session?.isCompacting)}
                 <span class="inline-flex items-center rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 font-medium text-amber-600 dark:text-amber-400"
                   >Compacting…</span
+                >
+              {/if}
+              {#if !child && session?.isNavigatingTree}
+                <span class="inline-flex items-center rounded-full border border-violet-500/20 bg-violet-500/10 px-2 py-0.5 font-medium text-violet-600 dark:text-violet-400"
+                  >{session.treeNavigationSummarizing ? 'Summarizing…' : 'Navigating…'}</span
                 >
               {/if}
             </div>

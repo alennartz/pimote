@@ -1464,6 +1464,7 @@ export class WsHandler {
     if (surfaceCommand.type === 'navigate_tree') {
       if (slot.sessionState.treeNavigationInProgress && !isNestedSlotLifecycle(slot)) throw new Error('Tree navigation already in progress');
       slot.sessionState.treeNavigationInProgress = true;
+      slot.sessionState.treeNavigationSummarizing = (surfaceCommand as { summarize?: boolean }).summarize === true;
       try {
         const result = await runSlotLifecycle(slot, 'reset', async () => {
           const navigation = await surface.dispatch(surfaceCommand, caller);
@@ -1473,6 +1474,7 @@ export class WsHandler {
         return { handled: true, data: result };
       } finally {
         slot.sessionState.treeNavigationInProgress = false;
+        slot.sessionState.treeNavigationSummarizing = false;
       }
     }
 
@@ -1899,6 +1901,7 @@ export class WsHandler {
           if (command.label !== undefined) options.label = command.label;
 
           slot.sessionState.treeNavigationInProgress = true;
+          slot.sessionState.treeNavigationSummarizing = !!command.summarize;
           this.emitBufferedSessionEvent(slot, sessionId, {
             type: 'tree_navigation_start',
             targetId: command.targetId,
@@ -1910,6 +1913,7 @@ export class WsHandler {
             result = (await session.navigateTree(command.targetId, options)) as { cancelled: boolean; editorText?: string };
           } finally {
             slot.sessionState.treeNavigationInProgress = false;
+            slot.sessionState.treeNavigationSummarizing = false;
             this.emitBufferedSessionEvent(slot, sessionId, {
               type: 'tree_navigation_end',
             });
@@ -2489,6 +2493,8 @@ export class WsHandler {
       availableThinkingLevels: session.getAvailableThinkingLevels(),
       isStreaming: session.isStreaming,
       isCompacting: session.isCompacting,
+      isNavigatingTree: slot.sessionState.treeNavigationInProgress,
+      treeNavigationSummarizing: slot.sessionState.treeNavigationSummarizing ?? false,
       sessionFile: session.sessionFile,
       sessionId: session.sessionId,
       sessionName: session.sessionName,
