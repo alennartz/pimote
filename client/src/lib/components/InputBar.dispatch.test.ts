@@ -126,6 +126,20 @@ describe('child steering dispatch', () => {
     expect(sent[0]).toMatchObject({ type: 'subagent_prompt', message: 'Check progress' });
     expect(child.messages).toEqual([]);
   });
+
+  it('shows a staged image in the optimistic child transcript', async () => {
+    const child = selectChild(false);
+    const sent = respond({ outcome: 'started' });
+    const imageUrl = 'data:image/webp;base64,AQIDBA==';
+
+    await submit('Inspect this', [imageUrl]);
+
+    expect(sent[0]).toMatchObject({ type: 'subagent_prompt', message: 'Inspect this', images: [imageUrl] });
+    expect(child.messages[0].content).toEqual([
+      { type: 'text', text: 'Inspect this' },
+      { type: 'image', image: { data: 'AQIDBA==', mimeType: 'image/webp' } },
+    ]);
+  });
 });
 
 describe('prompt dispatch outcome', () => {
@@ -176,6 +190,20 @@ describe('prompt dispatch outcome', () => {
     expect(command.clientMessageId).toEqual(expect.any(String));
     expect(texts()).toEqual(['hello']);
     expect(sessionRegistry.sessions['s1']!.optimisticEntries).toEqual([expect.objectContaining({ clientMessageId: command.clientMessageId })]);
+  });
+
+  it('shows a staged image in the optimistic transcript and sends it with the prompt', async () => {
+    const session = setupSession(false);
+    const sent = respond({ outcome: 'started' });
+    const imageUrl = 'data:image/png;base64,AQIDBA==';
+
+    await submit('Look at this', [imageUrl]);
+
+    expect(sent[0]).toMatchObject({ type: 'prompt', message: 'Look at this', images: [imageUrl] });
+    expect(session.messages[0].content).toEqual([
+      { type: 'text', text: 'Look at this' },
+      { type: 'image', image: { data: 'AQIDBA==', mimeType: 'image/png' } },
+    ]);
   });
 
   it.each(['queued', 'handled'])('a %s prompt drops its optimistic entry', async (outcome) => {

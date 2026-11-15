@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { EventBuffer, type IncomingSdkEvent } from './event-buffer.js';
-import type { PimoteSessionEvent } from '../../shared/dist/index.js';
+import { IMAGE_TOO_LARGE_PLACEHOLDER, MAX_IMAGE_BASE64_LENGTH, type PimoteSessionEvent } from '../../shared/dist/index.js';
 
 describe('EventBuffer', () => {
   const SESSION_ID = 'test-session-1';
@@ -579,6 +579,34 @@ describe('EventBuffer', () => {
 
       expect(liveEvents[0]).toEqual(expect.objectContaining({ type: 'tool_execution_end', durationMs: 250 }));
       expect((liveEvents[1] as any).durationMs).toBeUndefined();
+    });
+
+    it('bounds oversized images in live and replayable tool results', () => {
+      const buffer = new EventBuffer(10);
+      const liveEvents: PimoteSessionEvent[] = [];
+      const data = 'A'.repeat(MAX_IMAGE_BASE64_LENGTH + 1);
+      const result = {
+        content: [
+          { type: 'text', text: 'Read image file [image/png]' },
+          { type: 'image', data, mimeType: 'image/png' },
+        ],
+        structuredContent: { type: 'image', data, mimeType: 'image/png', note: 'Read image file [image/png]' },
+      };
+
+      buffer.onEvent(makeSdkEvent('tool_execution_end', { toolCallId: 'read-image', result }), SESSION_ID, (event) => liveEvents.push(event));
+
+      expect(liveEvents[0]).toMatchObject({
+        type: 'tool_execution_end',
+        result: {
+          content: [
+            { type: 'text', text: 'Read image file [image/png]' },
+            { type: 'text', text: IMAGE_TOO_LARGE_PLACEHOLDER },
+          ],
+          structuredContent: undefined,
+        },
+      });
+      expect(JSON.stringify(liveEvents[0])).not.toContain(data);
+      expect(buffer.replay(0)).toEqual(liveEvents);
     });
 
     it('forwards aborted on agent_settled and omits it for a finished run', () => {

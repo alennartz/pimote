@@ -1,6 +1,13 @@
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import { sessionEntryToContextMessages, type SessionEntry } from '@earendil-works/pi-coding-agent';
-import type { PimoteAgentMessage, PimoteMessageContent, PimoteUsage } from '../../shared/dist/index.js';
+import {
+  IMAGE_TOO_LARGE_PLACEHOLDER,
+  MAX_IMAGE_BASE64_LENGTH,
+  type PimoteAgentMessage,
+  type PimoteImageContent,
+  type PimoteMessageContent,
+  type PimoteUsage,
+} from '../../shared/dist/index.js';
 
 /** The SDK usage carried by assistant and tool-result messages. */
 type SdkUsage = NonNullable<Extract<AgentMessage, { role: 'assistant' | 'toolResult' }>['usage']>;
@@ -59,6 +66,39 @@ export function mapAgentMessageUsage(message: AgentMessage | undefined): PimoteU
  * TextContent | ThinkingContent | ToolCall | ImageContent union.
  */
 type AgentContentItem = Extract<Extract<AgentMessage, { role: 'assistant' | 'user' | 'toolResult' | 'custom' }>['content'], readonly unknown[]>[number];
+
+type AgentImageContent = Extract<AgentContentItem, { type: 'image' }>;
+
+function mapImageContent(item: AgentImageContent): PimoteImageContent | undefined {
+  if (item.data.length > MAX_IMAGE_BASE64_LENGTH) return undefined;
+  return { data: item.data, mimeType: item.mimeType };
+}
+
+/** Limit image payloads in a live tool result before buffering or sending it. */
+export function limitToolExecutionResultImages(result: unknown): unknown {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return result;
+  const wrapper = result as { content?: unknown; structuredContent?: unknown };
+  const content = Array.isArray(wrapper.content) ? [...wrapper.content] : [];
+  const hasContent = Array.isArray(wrapper.content);
+  let replacedImage = false;
+  const boundedContent = content.map((block) => {
+    if (!block || typeof block !== 'object' || Array.isArray(block)) return block;
+    const image = block as { type?: unknown; data?: unknown };
+    if (image.type !== 'image' || typeof image.data !== 'string' || image.data.length <= MAX_IMAGE_BASE64_LENGTH) return block;
+    replacedImage = true;
+    return { type: 'text', text: IMAGE_TOO_LARGE_PLACEHOLDER };
+  });
+  const structured = wrapper.structuredContent;
+  const structuredImage = structured && typeof structured === 'object' && !Array.isArray(structured) ? (structured as { type?: unknown; data?: unknown }) : undefined;
+  const oversizedStructuredImage = structuredImage?.type === 'image' && typeof structuredImage.data === 'string' && structuredImage.data.length > MAX_IMAGE_BASE64_LENGTH;
+  if (!replacedImage && !oversizedStructuredImage) return result;
+  if (oversizedStructuredImage && !replacedImage) boundedContent.push({ type: 'text', text: IMAGE_TOO_LARGE_PLACEHOLDER });
+  return {
+    ...(result as Record<string, unknown>),
+    ...(hasContent || oversizedStructuredImage ? { content: boundedContent } : {}),
+    ...(oversizedStructuredImage ? { structuredContent: undefined } : {}),
+  };
+}
 
 /** Session entries whose relative order must match buildSessionContext's message list. */
 export type SdkSessionEntry = SessionEntry;
@@ -239,10 +279,12 @@ function mapContentBlocks(content: string | readonly AgentContentItem[]): Pimote
       case 'toolCall':
         out.push({ type: 'tool_call', toolCallId: item.id, toolName: item.name, args: item.arguments });
         break;
-      case 'image':
-        // Images map to a text placeholder (the client renders no inline images here).
-        out.push({ type: 'text', text: '[image]' });
+      case 'image': {
+        const image = mapImageContent(item);
+        if (image) out.push({ type: 'image', image });
+        else out.push({ type: 'text', text: IMAGE_TOO_LARGE_PLACEHOLDER });
         break;
+      }
     }
   }
   return out;
@@ -254,7 +296,17 @@ export function mapAgentMessage(msg: AgentMessage): PimoteAgentMessage {
       // Join every text block. Tools may split one result across blocks
       // (codemode emits a status header block plus one block per script
       // output item); taking only the first drops the payload.
-      const texts = msg.content.flatMap((c) => (c.type === 'text' ? [c.text] : []));
+      const texts: string[] = [];
+      const images: PimoteImageContent[] = [];
+      for (const item of msg.content) {
+        if (item.type === 'text') {
+          texts.push(item.text);
+        } else if (item.type === 'image') {
+          const image = mapImageContent(item);
+          if (image) images.push(image);
+          else texts.push(IMAGE_TOO_LARGE_PLACEHOLDER);
+        }
+      }
       const text = texts.length > 0 ? texts.join('\n') : undefined;
       const usage = mapAgentMessageUsage(msg);
       return {
@@ -265,6 +317,7 @@ export function mapAgentMessage(msg: AgentMessage): PimoteAgentMessage {
             toolCallId: msg.toolCallId,
             toolName: msg.toolName,
             result: text,
+            ...(images.length > 0 ? { images } : {}),
             // Structured payload (same data the tool returned as
             // structuredContent/details) so the client can render it typed.
             ...(msg.details !== undefined && msg.details !== null ? { data: msg.details } : {}),

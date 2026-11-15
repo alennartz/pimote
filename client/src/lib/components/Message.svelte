@@ -1,8 +1,9 @@
 <script lang="ts">
-  import type { AgentPath, AssistantRowUsage, PimoteAgentMessage, StreamingMessage } from '@pimote/shared';
+  import type { AgentPath, AssistantRowUsage, PimoteAgentMessage, PimoteImageContent, StreamingMessage } from '@pimote/shared';
   import TextBlock from './TextBlock.svelte';
   import ThinkingBlock from './ThinkingBlock.svelte';
   import ToolCall from './ToolCall.svelte';
+  import ImagePreview from './ImagePreview.svelte';
   import BoundedOutput from './BoundedOutput.svelte';
   import BashExecution, { type FinalBashExecutionMessage } from './BashExecution.svelte';
   import TtsButton from './TtsButton.svelte';
@@ -32,6 +33,7 @@
     status: 'running' | 'completed';
     result?: unknown;
     data?: unknown;
+    images?: PimoteImageContent[];
     isError?: boolean;
     durationMs?: number;
   };
@@ -94,7 +96,9 @@
   let abortedIsEmpty = $derived(
     isAbortedAssistant &&
       message.content.every(
-        (c) => (c.type === 'text' && (!c.text || c.text.length === 0)) || (c.type !== 'text' && c.type !== 'tool_call' && c.type !== 'tool_result' && c.type !== 'thinking'),
+        (c) =>
+          (c.type === 'text' && (!c.text || c.text.length === 0)) ||
+          (c.type !== 'text' && c.type !== 'tool_call' && c.type !== 'tool_result' && c.type !== 'thinking' && c.type !== 'image'),
       ),
   );
 
@@ -135,6 +139,7 @@
   }
 
   let userText = $derived(getUserText(message));
+  let userImages = $derived(message.content.filter((content) => content.type === 'image'));
   let skillBlock = $derived(message.role === 'user' ? parseSkillBlock(userText) : null);
   let skillLines = $derived(skillBlock ? skillBlock.body.split('\n') : []);
   let skillNeedsCollapse = $derived(skillLines.length > SKILL_COLLAPSED_LINES);
@@ -221,9 +226,18 @@
             <div class="user-text">{skillBlock.after}</div>
           </div>
         {/if}
-      {:else}
+      {:else if userText}
         <div class="user-body">
           <div class="user-text">{userText}</div>
+        </div>
+      {/if}
+      {#if userImages.length > 0}
+        <div class="message-images">
+          {#each userImages as block, i (`user-image-${i}`)}
+            {#if block.type === 'image'}
+              <ImagePreview image={block.image} alt={`User attachment ${i + 1}`} />
+            {/if}
+          {/each}
         </div>
       {/if}
     </div>
@@ -309,6 +323,8 @@
             <TextBlock text={block.text ?? ''} streaming={blockStreaming} />
           {:else if block.type === 'thinking'}
             <ThinkingBlock text={block.text ?? ''} streaming={blockStreaming} />
+          {:else if block.type === 'image'}
+            <ImagePreview image={block.image} alt="Image in assistant response" />
           {:else if block.type === 'tool_call'}
             {@const exec = block.toolCallId ? toolExecutions[block.toolCallId] : undefined}
             <ToolCall
@@ -318,6 +334,7 @@
               partialResult={exec?.partialResult ?? ''}
               result={exec?.status === 'completed' ? exec.result : undefined}
               data={exec?.data}
+              images={exec?.images}
               isError={exec?.isError}
               durationMs={exec?.durationMs}
             />
@@ -624,6 +641,14 @@
     white-space: pre-wrap;
     word-wrap: break-word;
     line-height: 1.5;
+  }
+
+  .message-images {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    max-width: 100%;
+    margin-top: 8px;
   }
 
   .system-message {

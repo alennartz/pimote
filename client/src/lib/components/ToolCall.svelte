@@ -1,7 +1,8 @@
 <script lang="ts">
-  import type { PimoteMessageContent } from '@pimote/shared';
+  import type { PimoteImageContent, PimoteMessageContent } from '@pimote/shared';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import BoundedOutput from './BoundedOutput.svelte';
+  import ImagePreview from './ImagePreview.svelte';
   import EditDiffBlock from './EditDiffBlock.svelte';
   import CodeBlock from './CodeBlock.svelte';
   import { createEditDiffStreamer, type EditArgs, type EditEntry } from '$lib/edit-diff.js';
@@ -9,6 +10,7 @@
   import { createCodemodeCodeStreamer, extractCodemodeCode } from '$lib/codemode-content.js';
   import { createBashCommandStreamer, extractBashCommand } from '$lib/bash-content.js';
   import { inferLanguageFromPath } from '$lib/editor-language.js';
+  import { imageFromToolData } from '$lib/image-content.js';
   import { observeFullyOffscreen } from '$lib/auto-collapse.js';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import Wrench from '@lucide/svelte/icons/wrench';
@@ -31,6 +33,7 @@
     partialResult = '',
     result = undefined,
     data = undefined,
+    images = undefined,
     isError = false,
     durationMs = undefined,
   }: {
@@ -40,6 +43,7 @@
     partialResult?: string;
     result?: unknown;
     data?: unknown;
+    images?: PimoteImageContent[];
     isError?: boolean;
     durationMs?: number;
   } = $props();
@@ -58,6 +62,15 @@
   let isWrite = $derived(toolName === 'write');
   let isCodemode = $derived(toolName === 'codemode');
   let isBash = $derived(toolName === 'bash');
+  let isRead = $derived(toolName === 'read');
+  let resultImages = $derived.by(() => {
+    if (!isRead) return [];
+    if (content.type === 'tool_result') return content.images ?? [];
+    if (images && images.length > 0) return images;
+    const image = imageFromToolData(data);
+    return image ? [image] : [];
+  });
+  let hasReadImages = $derived(isRead && resultImages.length > 0);
 
   // Streaming-diff state used only when isEdit.
   let streamer: ReturnType<typeof createEditDiffStreamer> | undefined = $state();
@@ -100,8 +113,8 @@
   // active (streaming or the result is still in progress). See the
   // delayed-collapse effect below.
   $effect(() => {
-    if (!isEdit && !isWrite && !isCodemode && !isBash) return;
-    if (streaming || inProgress) {
+    if (!isEdit && !isWrite && !isCodemode && !isBash && !hasReadImages) return;
+    if (streaming || inProgress || hasReadImages) {
       expanded = true;
     }
   });
@@ -110,7 +123,7 @@
   // collapse it the first time it fully scrolls out of view, rather than
   // snapping shut on completion.
   $effect(() => {
-    if (!isEdit && !isWrite && !isCodemode && !isBash) return;
+    if (!isEdit && !isWrite && !isCodemode && !isBash && !hasReadImages) return;
     if (streaming || inProgress) return;
     if (!expanded) return;
     if (!rootEl) return;
@@ -365,7 +378,19 @@
         </div>
       {/if}
 
-      {#if resultText}
+      {#if resultImages.length > 0}
+        <div class="tool-section">
+          <div class="tool-section-label">Image</div>
+          {#if resultText}
+            <div class="tool-image-caption">{resultText}</div>
+          {/if}
+          <div class="tool-images">
+            {#each resultImages as image, i (`read-image-${i}`)}
+              <ImagePreview {image} alt={`Image read by agent ${i + 1}`} />
+            {/each}
+          </div>
+        </div>
+      {:else if resultText}
         <div class="tool-section">
           <div class="tool-section-label">{inProgress ? 'Output (streaming)' : 'Result'}</div>
           <BoundedOutput text={resultText} streaming={inProgress} bounded />
@@ -454,6 +479,19 @@
     color: var(--muted-foreground);
     margin-bottom: 4px;
     font-weight: 500;
+  }
+
+  .tool-image-caption {
+    margin-bottom: 8px;
+    color: var(--muted-foreground);
+    font-size: 0.85rem;
+    white-space: pre-wrap;
+  }
+
+  .tool-images {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
   }
 
   .in-progress .tool-header {

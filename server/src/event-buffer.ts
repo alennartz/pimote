@@ -2,7 +2,7 @@ import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type { SubagentTopologyEvent as ProviderTopologyEvent } from '@pimote/sdk/subagents';
 import type { PimoteSessionEvent, SubagentTopologyEvent } from '../../shared/dist/index.js';
-import { mapAgentMessage, mapAgentMessageUsage, mapCustomEntry, type CustomEntryVisibility } from './message-mapper.js';
+import { limitToolExecutionResultImages, mapAgentMessage, mapAgentMessageUsage, mapCustomEntry, type CustomEntryVisibility } from './message-mapper.js';
 
 export interface TreeNavigationStartEvent {
   type: 'tree_navigation_start';
@@ -296,7 +296,7 @@ export class EventBuffer {
           ...base,
           type: 'tool_execution_end',
           toolCallId: sdkEvent.toolCallId,
-          result: sdkEvent.result,
+          result: limitToolExecutionResultImages(sdkEvent.result),
           isError: sdkEvent.isError || undefined,
           ...(sdkEvent.durationMs !== undefined ? { durationMs: sdkEvent.durationMs } : {}),
         };

@@ -587,8 +587,8 @@
       // never echo, and skill or template expansion echoes different text.
       const clientMessageId = text.startsWith('/') ? undefined : crypto.randomUUID();
       if (clientMessageId) {
-        if (originatingChild && originatingChildPath) sessionRegistry.addSubagentOptimisticUserMessage(sessionId, originatingChildPath, text, clientMessageId);
-        else sessionRegistry.addOptimisticUserMessage(sessionId, text, clientMessageId);
+        if (originatingChild && originatingChildPath) sessionRegistry.addSubagentOptimisticUserMessage(sessionId, originatingChildPath, text, clientMessageId, submittedImages);
+        else sessionRegistry.addOptimisticUserMessage(sessionId, text, clientMessageId, submittedImages);
       }
       clearSubmittedComposer(sessionId);
       const dropOptimistic = () => {

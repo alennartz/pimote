@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { IMAGE_TOO_LARGE_PLACEHOLDER, MAX_IMAGE_BASE64_LENGTH } from '../../shared/dist/index.js';
 import {
   mapAgentMessage,
   mapAgentMessages,
@@ -22,6 +23,16 @@ describe('mapAgentMessage', () => {
       expect(result.content).toEqual([{ type: 'text', text: 'Hello' }]);
     });
 
+    it('preserves inline images in user messages', () => {
+      const result = m({ role: 'user', content: [{ type: 'image', data: 'AQIDBA==', mimeType: 'image/png' }] });
+      expect(result).toMatchObject({ role: 'user', content: [{ type: 'image', image: { data: 'AQIDBA==', mimeType: 'image/png' } }] });
+    });
+
+    it('replaces images above the transcript limit with a readable placeholder', () => {
+      const result = m({ role: 'user', content: [{ type: 'image', data: 'A'.repeat(MAX_IMAGE_BASE64_LENGTH + 1), mimeType: 'image/png' }] });
+      expect(result).toMatchObject({ role: 'user', content: [{ type: 'text', text: IMAGE_TOO_LARGE_PLACEHOLDER }] });
+    });
+
     it('maps assistant message text content', () => {
       const result = m({ role: 'assistant', content: [{ type: 'text', text: 'Hi there' }] });
       expect(result.role).toBe('assistant');
@@ -39,6 +50,23 @@ describe('mapAgentMessage', () => {
       const result = m({ role: 'toolResult', toolCallId: 'tc-1', toolName: 'read', content: [{ type: 'text', text: 'file contents' }] });
       expect(result.role).toBe('toolResult');
       expect(result.content).toEqual([{ type: 'tool_result', toolCallId: 'tc-1', toolName: 'read', result: 'file contents', isError: undefined }]);
+    });
+
+    it('keeps image content on a read tool result for transcript replay', () => {
+      const result = m({
+        role: 'toolResult',
+        toolCallId: 'read-image',
+        toolName: 'read',
+        content: [
+          { type: 'text', text: 'Read image file [image/webp]' },
+          { type: 'image', data: 'AQIDBA==', mimeType: 'image/webp' },
+        ],
+      });
+      expect(result.content[0]).toMatchObject({
+        type: 'tool_result',
+        result: 'Read image file [image/webp]',
+        images: [{ data: 'AQIDBA==', mimeType: 'image/webp' }],
+      });
     });
 
     it('joins every text block of a multi-block tool result', () => {

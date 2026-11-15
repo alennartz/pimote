@@ -12,6 +12,7 @@ import type {
   PimoteResponse,
   PimoteAgentMessage,
   PimoteMessageContent,
+  PimoteImageContent,
   PimoteUsage,
   PimoteUsageBreakdown,
   StreamingMessage,
@@ -63,6 +64,7 @@ import type {
 } from '@pimote/shared';
 
 import { connection, isSessionNotFoundError } from './connection.svelte.js';
+import { imageContentBlocksFromDataUrls } from '../image-content.js';
 import { commandStore } from './command-store.svelte.js';
 import { setEditorText } from './input-bar.svelte.js';
 import { panelStore } from './panel-store.svelte.js';
@@ -147,10 +149,7 @@ export interface SubagentAttachmentState {
   draftText: string;
   closed: boolean;
   closeReason?: SubagentAttachmentCloseReason;
-  toolExecutions: Record<
-    string,
-    { name: string; args: unknown; partialResult: string; status: 'running' | 'completed'; result?: unknown; data?: unknown; isError?: boolean; durationMs?: number }
-  >;
+  toolExecutions: Record<string, ToolExecutionRecord>;
 }
 
 export interface SubagentRootState {
@@ -291,8 +290,8 @@ function appendBoundedBashOutput(current: string, delta: string, maxBytes: numbe
 function reduceEndEventResult(result: unknown): { text: unknown; data: unknown } {
   if (result !== null && typeof result === 'object' && Array.isArray((result as { content?: unknown }).content)) {
     const wrapper = result as { content: Array<{ type: string; text?: string }>; details?: unknown; structuredContent?: unknown };
-    const textBlock = wrapper.content.find((block) => block.type === 'text');
-    return { text: textBlock?.text, data: wrapper.structuredContent ?? wrapper.details };
+    const texts = wrapper.content.flatMap((block) => (block.type === 'text' && block.text !== undefined ? [block.text] : []));
+    return { text: texts.length > 0 ? texts.join('\n') : undefined, data: wrapper.structuredContent ?? wrapper.details };
   }
   return { text: result, data: undefined };
 }
@@ -304,6 +303,7 @@ type ToolExecutionRecord = {
   status: 'running' | 'completed';
   result?: unknown;
   data?: unknown;
+  images?: PimoteImageContent[];
   isError?: boolean;
   durationMs?: number;
 };
@@ -330,6 +330,7 @@ function rebuildToolExecutionsFromMessages(messages: readonly PimoteAgentMessage
         status: 'completed',
         result: block.result,
         data: block.data,
+        images: block.images,
         isError: block.isError,
         ...(block.durationMs !== undefined ? { durationMs: block.durationMs } : {}),
       };
@@ -650,10 +651,7 @@ export interface PerSessionState {
   /** Client-only terminal partials keyed by the stable transcript message key. */
   assistantUsageOverrides: Record<string, PimoteUsage>;
   messageKeys: string[];
-  toolExecutions: Record<
-    string,
-    { name: string; args: unknown; partialResult: string; status: 'running' | 'completed'; result?: unknown; data?: unknown; isError?: boolean; durationMs?: number }
-  >;
+  toolExecutions: Record<string, ToolExecutionRecord>;
   /** Transient native bash executions keyed by caller-owned command ID. */
   bashExecutions: Record<string, BashExecutionState>;
   autoCompactionEnabled: boolean;
@@ -998,10 +996,12 @@ export class SessionRegistry {
     attachment.bashExecutions = { ...attachment.bashExecutions, [id]: { ...execution, status: 'error', error } };
   }
 
-  addSubagentOptimisticUserMessage(rootSessionId: string, path: AgentPath, text: string, clientMessageId?: string): void {
+  addSubagentOptimisticUserMessage(rootSessionId: string, path: AgentPath, text: string, clientMessageId?: string, images: readonly string[] = []): void {
     const attachment = this.getSubagentAttachment(rootSessionId, path);
     if (!attachment || attachment.closed) return;
-    const message: PimoteAgentMessage = { role: 'user', content: text ? [{ type: 'text', text }] : [] };
+    const content: PimoteMessageContent[] = text ? [{ type: 'text', text }] : [];
+    content.push(...imageContentBlocksFromDataUrls(images));
+    const message: PimoteAgentMessage = { role: 'user', content };
     const key = `child-${rootSessionId}-${JSON.stringify(path)}-${attachment.messages.length}`;
     attachment.messages = [...attachment.messages, message];
     attachment.transcript = attachment.messages;
@@ -1156,7 +1156,7 @@ export class SessionRegistry {
 
   /** Add an optimistic user message so it renders immediately before the server round-trip.
    *  `clientMessageId` must match the prompt command's id. */
-  addOptimisticUserMessage(sessionId: string, text: string, clientMessageId: string): void {
+  addOptimisticUserMessage(sessionId: string, text: string, clientMessageId: string, images: readonly string[] = []): void {
     const session = this.sessions[sessionId];
     if (!session) return;
 
@@ -1164,6 +1164,7 @@ export class SessionRegistry {
     if (text) {
       content.push({ type: 'text', text });
     }
+    content.push(...imageContentBlocksFromDataUrls(images));
 
     const message: PimoteAgentMessage = { role: 'user', content };
     const key = 'msg-' + this._nextMessageKey++;
@@ -2156,6 +2157,7 @@ export class SessionRegistry {
           existing.status = 'completed';
           existing.result = block.result;
           existing.data = block.data;
+          existing.images = block.images;
           existing.isError = block.isError;
         } else {
           // Rehydration: no prior execution state, create from the result
@@ -2166,6 +2168,7 @@ export class SessionRegistry {
             status: 'completed',
             result: block.result,
             data: block.data,
+            images: block.images,
             isError: block.isError,
           };
         }

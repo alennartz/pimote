@@ -858,6 +858,30 @@ describe('SessionRegistry', () => {
       expect(exec.data).toEqual({ slug: 'demo' });
     });
 
+    it('tool_execution_end keeps read image data for live rendering', () => {
+      registry.addSession('s1', '/path', 'proj');
+      const image = { data: 'AQIDBA==', mimeType: 'image/png' };
+      registry.handleEvent(makeSessionEvent('tool_execution_start', 's1', { toolCallId: 'read-image', toolName: 'read', args: { path: '/image.png' } }));
+      registry.handleEvent(
+        makeSessionEvent('tool_execution_end', 's1', {
+          toolCallId: 'read-image',
+          result: {
+            content: [
+              { type: 'text', text: 'Read image file [image/png]' },
+              { type: 'image', ...image },
+            ],
+            structuredContent: { type: 'image', ...image, note: 'Read image file [image/png]' },
+          },
+        }),
+      );
+
+      expect(registry.sessions['s1'].toolExecutions['read-image']).toMatchObject({
+        status: 'completed',
+        result: 'Read image file [image/png]',
+        data: { type: 'image', ...image, note: 'Read image file [image/png]' },
+      });
+    });
+
     it('toolResult message_end overwrites execution result with canonical data', () => {
       registry.addSession('s1', '/path', 'proj');
       registry.handleEvent(
@@ -878,13 +902,14 @@ describe('SessionRegistry', () => {
         makeSessionEvent('message_end', 's1', {
           message: {
             role: 'toolResult',
-            content: [{ type: 'tool_result', toolCallId: 'tc1', toolName: 'read', result: 'canonical result' }],
+            content: [{ type: 'tool_result', toolCallId: 'tc1', toolName: 'read', result: 'canonical result', images: [{ data: 'AQIDBA==', mimeType: 'image/png' }] }],
           },
         }),
       );
       const exec = registry.sessions['s1'].toolExecutions['tc1'];
       expect(exec.status).toBe('completed');
       expect(exec.result).toBe('canonical result');
+      expect(exec.images).toEqual([{ data: 'AQIDBA==', mimeType: 'image/png' }]);
     });
 
     it('rebuildToolExecutions populates from message history', () => {
@@ -894,7 +919,10 @@ describe('SessionRegistry', () => {
         { role: 'assistant', content: [{ type: 'tool_call', toolCallId: 'tc1', toolName: 'bash', args: {} }] },
         { role: 'toolResult', content: [{ type: 'tool_result', toolCallId: 'tc1', toolName: 'bash', result: 'output' }] },
         { role: 'assistant', content: [{ type: 'tool_call', toolCallId: 'tc2', toolName: 'read', args: { path: '/x' } }] },
-        { role: 'toolResult', content: [{ type: 'tool_result', toolCallId: 'tc2', toolName: 'read', result: 'file content' }] },
+        {
+          role: 'toolResult',
+          content: [{ type: 'tool_result', toolCallId: 'tc2', toolName: 'read', result: 'file content', images: [{ data: 'AQIDBA==', mimeType: 'image/webp' }] }],
+        },
       ];
       registry.rebuildToolExecutions(session);
       expect(session.toolExecutions['tc1']).toBeDefined();
@@ -902,6 +930,7 @@ describe('SessionRegistry', () => {
       expect(session.toolExecutions['tc1'].result).toBe('output');
       expect(session.toolExecutions['tc2']).toBeDefined();
       expect(session.toolExecutions['tc2'].result).toBe('file content');
+      expect(session.toolExecutions['tc2'].images).toEqual([{ data: 'AQIDBA==', mimeType: 'image/webp' }]);
     });
   });
 

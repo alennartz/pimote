@@ -180,6 +180,18 @@ export type PimoteActiveSubagentContent = {
   data: PimoteSubagentStartData;
 };
 
+/** Maximum base64 image payload included in transcript content. */
+export const MAX_IMAGE_BASE64_LENGTH = 4 * 1024 * 1024;
+
+/** Display text used when an image exceeds the transcript payload limit. */
+export const IMAGE_TOO_LARGE_PLACEHOLDER = '[Image omitted: exceeds the 4 MiB display limit]';
+
+/** Inline image data carried in a projected transcript message. */
+export interface PimoteImageContent {
+  data: string;
+  mimeType: string;
+}
+
 /** Common fields for projected message content. */
 interface PimoteMessageContentBase {
   text?: string;
@@ -208,7 +220,9 @@ interface PimoteMessageContentBase {
 
 export type PimoteMessageContent = PimoteMessageContentBase &
   (
-    | { type: 'text' | 'thinking' | 'tool_call' | 'tool_result'; data?: unknown }
+    | { type: 'text' | 'thinking' | 'tool_call'; data?: unknown }
+    | { type: 'tool_result'; data?: unknown; images?: PimoteImageContent[] }
+    | { type: 'image'; image: PimoteImageContent }
     | {
         type: 'subagent';
         operationId: string;
