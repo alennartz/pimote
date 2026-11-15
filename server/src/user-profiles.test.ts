@@ -304,6 +304,181 @@ describe('UserProfiles — summaries', () => {
   });
 });
 
+describe('UserProfiles — order', () => {
+  it('orders sessions as they were linked and appends a new one at the end', async () => {
+    const profiles = new UserProfiles(storePath());
+    await profiles.load();
+    await profiles.link('alice', S1);
+    await profiles.link('alice', S2);
+
+    expect(profiles.order('alice')).toEqual(['s1', 's2']);
+
+    await profiles.link('alice', { sessionId: 's3', folderPath: '/home/user/project-c' });
+    expect(profiles.order('alice')).toEqual(['s1', 's2', 's3']);
+  });
+
+  it('seeds the order from the stored set for a document written before order existed', async () => {
+    const path = storePath();
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        users: {
+          alice: {
+            sessions: [
+              { sessionId: 's2', folderPath: '/home/user/project-b' },
+              { sessionId: 's1', folderPath: '/home/user/project-a' },
+            ],
+          },
+        },
+      }),
+      'utf-8',
+    );
+
+    const profiles = new UserProfiles(path);
+    await profiles.load();
+
+    expect(profiles.order('alice')).toEqual(['s2', 's1']);
+    expect(profiles.selection('alice')).toBeNull();
+    expect(profiles.orderVersion('alice')).toBe(0);
+  });
+
+  it('stores a pushed whole order and bumps the version', async () => {
+    const profiles = new UserProfiles(storePath());
+    await profiles.load();
+    await profiles.link('alice', S1);
+    await profiles.link('alice', S2);
+
+    expect(await profiles.reorder('alice', ['s2', 's1'], 0)).toEqual({ accepted: true, version: 1 });
+    expect(profiles.order('alice')).toEqual(['s2', 's1']);
+    expect(profiles.orderVersion('alice')).toBe(1);
+  });
+
+  it('refuses a write computed against a superseded order and keeps the stored one', async () => {
+    const profiles = new UserProfiles(storePath());
+    await profiles.load();
+    await profiles.link('alice', S1);
+    await profiles.link('alice', S2);
+    await profiles.reorder('alice', ['s2', 's1'], 0);
+
+    expect(await profiles.reorder('alice', ['s1', 's2'], 0)).toEqual({ accepted: false, version: 1 });
+    expect(profiles.order('alice')).toEqual(['s2', 's1']);
+  });
+
+  it('never changes the open set: unknown ids drop and omitted members append', async () => {
+    const profiles = new UserProfiles(storePath());
+    await profiles.load();
+    await profiles.link('alice', S1);
+    await profiles.link('alice', S2);
+
+    await profiles.reorder('alice', ['ghost', 's2'], 0);
+
+    expect(profiles.order('alice')).toEqual(['s2', 's1']);
+    expect(profiles.get('alice').map((ref) => ref.sessionId)).toEqual(['s1', 's2']);
+  });
+
+  it('prunes the order when a session leaves every profile', async () => {
+    const profiles = new UserProfiles(storePath());
+    await profiles.load();
+    await profiles.link('alice', S1);
+    await profiles.link('alice', S2);
+
+    expect(await profiles.unlinkAll('s1')).toEqual(['alice']);
+    expect(profiles.order('alice')).toEqual(['s2']);
+  });
+
+  it('prunes the order when gc drops a session that no longer exists', async () => {
+    const profiles = new UserProfiles(storePath());
+    await profiles.load();
+    await profiles.link('alice', S1);
+    await profiles.link('alice', S2);
+
+    await profiles.gc(new Set(['s2']));
+    expect(profiles.order('alice')).toEqual(['s2']);
+  });
+
+  it('survives a reload', async () => {
+    const path = storePath();
+    const profiles = new UserProfiles(path);
+    await profiles.load();
+    await profiles.link('alice', S1);
+    await profiles.link('alice', S2);
+    await profiles.reorder('alice', ['s2', 's1'], 0);
+
+    const reloaded = new UserProfiles(path);
+    await reloaded.load();
+    expect(reloaded.order('alice')).toEqual(['s2', 's1']);
+    expect(reloaded.orderVersion('alice')).toBe(1);
+  });
+});
+
+describe('UserProfiles — selection', () => {
+  it('selects a session the user holds and reports the change once', async () => {
+    const profiles = new UserProfiles(storePath());
+    await profiles.load();
+    await profiles.link('alice', S1);
+    await profiles.link('alice', S2);
+
+    expect(await profiles.select('alice', 's2')).toBe(true);
+    expect(profiles.selection('alice')).toBe('s2');
+    expect(await profiles.select('alice', 's2')).toBe(false);
+  });
+
+  it('refuses a session outside the user set', async () => {
+    const profiles = new UserProfiles(storePath());
+    await profiles.load();
+    await profiles.link('alice', S1);
+
+    expect(await profiles.select('alice', 's2')).toBe(false);
+    expect(profiles.selection('alice')).toBeNull();
+  });
+
+  it('clears the selection when the selected session leaves the set', async () => {
+    const profiles = new UserProfiles(storePath());
+    await profiles.load();
+    await profiles.link('alice', S1);
+    await profiles.link('alice', S2);
+    await profiles.select('alice', 's2');
+
+    await profiles.unlinkAll('s2');
+    expect(profiles.selection('alice')).toBeNull();
+  });
+
+  it('clears the selection when gc drops the selected session', async () => {
+    const profiles = new UserProfiles(storePath());
+    await profiles.load();
+    await profiles.link('alice', S1);
+    await profiles.select('alice', 's1');
+
+    await profiles.gc(new Set<string>());
+    expect(profiles.selection('alice')).toBeNull();
+  });
+
+  it('never serves a selection that a hand-edited document left stale', async () => {
+    const path = storePath();
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        users: {
+          alice: {
+            sessions: [{ sessionId: 's1', folderPath: '/home/user/project-a' }],
+            order: ['ghost', 's1'],
+            selectedSessionId: 'ghost',
+            orderVersion: 4,
+          },
+        },
+      }),
+      'utf-8',
+    );
+
+    const profiles = new UserProfiles(path);
+    await profiles.load();
+    expect(profiles.order('alice')).toEqual(['s1']);
+    expect(profiles.selection('alice')).toBeNull();
+  });
+});
+
 describe('UserProfiles — persistence failures', () => {
   it('keeps unlinkAll tolerating a failed write while gc aborts the boot sweep', async () => {
     // A file where the store's directory belongs makes every write fail.

@@ -199,7 +199,14 @@ function findResponse(sent: Array<any>, id: string): PimoteResponse | undefined 
   return sent.find((m) => 'id' in m && m.id === id);
 }
 
+/** The set-and-freshness view of profile events — what the set flows assert.
+ *  Order and selection have their own assertions below. */
 function userSessionsEvents(sent: Array<any>): Array<{ type: string; sessions: SessionRef[]; fresh: boolean }> {
+  return sent.filter((m) => m.type === 'user_sessions_changed').map((m) => ({ type: m.type, sessions: m.sessions, fresh: m.fresh }));
+}
+
+/** The whole profile event, order and selection included. */
+function profileEvents(sent: Array<any>): Array<any> {
   return sent.filter((m) => m.type === 'user_sessions_changed');
 }
 
@@ -512,6 +519,95 @@ describe('user profile wire flows', () => {
     expect(reloaded.get('alice')).toEqual([S1]);
     expect(reloaded.get('bob')).toEqual([S1]);
     expect(reloaded.isFresh('alice')).toBe(false);
+  });
+});
+
+describe('chip order wire flows', () => {
+  function aliceTeam() {
+    const store = new UserProfiles(storePath());
+    return store;
+  }
+
+  async function openTwo(store: UserProfiles) {
+    const sessions = new Map([
+      ['session-1', createMockSlot('session-1')],
+      ['session-2', createMockSlot('session-2')],
+    ]);
+    const clientRegistry: ClientRegistry = new Map();
+    const aliceA = createTestHandler('alice-a', { user: 'alice', userProfiles: store, sessions, clientRegistry });
+    const aliceB = createTestHandler('alice-b', { user: 'alice', userProfiles: store, sessions, clientRegistry });
+    const bob = createTestHandler('bob', { user: 'bob', userProfiles: store, sessions, clientRegistry });
+    await open(aliceA, 'session-1', 'open-1');
+    await open(aliceA, 'session-2', 'open-2');
+    return { store, sessions, aliceA, aliceB, bob };
+  }
+
+  it("stores a whole order and pushes it to the same user's other connections only", async () => {
+    const store = aliceTeam();
+    await store.load();
+    const { aliceA, aliceB, bob } = await openTwo(store);
+    expect(store.order('alice')).toEqual(['session-1', 'session-2']);
+
+    await aliceA.handler.handleMessage(JSON.stringify({ type: 'reorder_sessions', order: ['session-2', 'session-1'], baseVersion: 0, id: 'reorder-1' }));
+
+    expect(findResponse(aliceA.sent, 'reorder-1')).toMatchObject({ success: true, data: { accepted: true, orderVersion: 1 } });
+    expect(store.order('alice')).toEqual(['session-2', 'session-1']);
+    expect(profileEvents(aliceA.sent)).toEqual([]);
+    expect(profileEvents(aliceB.sent).at(-1)).toMatchObject({
+      order: ['session-2', 'session-1'],
+      selectedSessionId: null,
+      orderVersion: 1,
+    });
+    expect(profileEvents(bob.sent)).toEqual([]);
+  });
+
+  it('refuses a reorder computed against a superseded order and hands the actor the current facts', async () => {
+    const store = aliceTeam();
+    await store.load();
+    const { aliceA, aliceB } = await openTwo(store);
+
+    await aliceA.handler.handleMessage(JSON.stringify({ type: 'reorder_sessions', order: ['session-2', 'session-1'], baseVersion: 0, id: 'reorder-1' }));
+    await aliceB.handler.handleMessage(JSON.stringify({ type: 'reorder_sessions', order: ['session-1', 'session-2'], baseVersion: 0, id: 'reorder-2' }));
+
+    expect(findResponse(aliceB.sent, 'reorder-2')).toMatchObject({ success: true, data: { accepted: false, orderVersion: 1 } });
+    expect(store.order('alice')).toEqual(['session-2', 'session-1']);
+    expect(profileEvents(aliceB.sent).at(-1)).toMatchObject({ order: ['session-2', 'session-1'], orderVersion: 1 });
+  });
+
+  it('selects the viewed session for the whole user, clears its attention, and pushes it to the other connections', async () => {
+    const store = aliceTeam();
+    await store.load();
+    const { sessions, aliceA, aliceB } = await openTwo(store);
+    sessions.get('session-2')!.sessionState.needsAttention = true;
+
+    await aliceA.handler.handleMessage(JSON.stringify({ type: 'view_session', sessionId: 'session-2', id: 'view-1' }));
+
+    expect(store.selection('alice')).toBe('session-2');
+    expect(sessions.get('session-2')!.sessionState.needsAttention).toBe(false);
+    expect(profileEvents(aliceA.sent)).toEqual([]);
+    expect(profileEvents(aliceB.sent).at(-1)).toMatchObject({ selectedSessionId: 'session-2' });
+
+    // Re-viewing the same session changes nothing, so nothing is pushed.
+    const before = profileEvents(aliceB.sent).length;
+    await aliceA.handler.handleMessage(JSON.stringify({ type: 'view_session', sessionId: 'session-2', id: 'view-2' }));
+    expect(profileEvents(aliceB.sent)).toHaveLength(before);
+  });
+
+  it('links a viewed session the profile does not hold, so selection never names a session outside the set', async () => {
+    const store = aliceTeam();
+    await store.load();
+    const sessionRecords = {
+      listSessionRecords: async () => [],
+      resolveSessionPath: async (folderPath: string, sessionId: string) => `${folderPath}/sessions/${sessionId}.jsonl`,
+    } as unknown as SessionRecords;
+    const sessions = new Map([['session-1', createMockSlot('session-1')]]);
+    const clientRegistry: ClientRegistry = new Map();
+    const aliceA = createTestHandler('alice-a', { user: 'alice', userProfiles: store, sessions, clientRegistry, sessionRecords });
+
+    await aliceA.handler.handleMessage(JSON.stringify({ type: 'view_session', sessionId: 'session-1', folderPath: '/home/user/project', id: 'view-1' }));
+
+    expect(store.get('alice')).toEqual([{ sessionId: 'session-1', folderPath: '/home/user/project' }]);
+    expect(store.selection('alice')).toBe('session-1');
   });
 });
 

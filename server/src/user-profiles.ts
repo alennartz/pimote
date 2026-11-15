@@ -10,14 +10,30 @@ export interface SessionRef {
 
 const DOCUMENT_VERSION = 1;
 
+/** One user's persisted profile. `order` is always the same members as
+ *  `sessions`; `selectedSessionId` is always one of them or null. */
+interface UserProfile {
+  sessions: SessionRef[];
+  /** Session ids in chip order — the client owns the order, this stores it. */
+  order: string[];
+  selectedSessionId: string | null;
+  /** Epoch of `order`, bumped on every accepted whole-order write. */
+  orderVersion: number;
+}
+
 /** The user-profile JSON document at `PIMOTE_STATE_DIR/user-profiles.json`. */
 interface ProfileDocument {
   version: number;
-  users: { [name: string]: { sessions: SessionRef[] } };
+  users: { [name: string]: UserProfile };
 }
 
 /** A persisted document as handed to the parser. */
-type PersistedDocument = Partial<ProfileDocument>;
+type PersistedDocument = {
+  version?: number;
+  users?: {
+    [name: string]: { sessions?: SessionRef[]; order?: string[]; selectedSessionId?: string | null; orderVersion?: number };
+  };
+};
 
 /** The users map is null-prototype so user names colliding with Object
  *  prototype members (`constructor`, `__proto__`, ...) stay ordinary keys. */
@@ -25,18 +41,55 @@ function emptyDocument(): ProfileDocument {
   return { version: DOCUMENT_VERSION, users: Object.create(null) as ProfileDocument['users'] };
 }
 
-/** Parse a persisted document; a corrupt or malformed file degrades to empty. */
+/** Parse a persisted document; a corrupt or malformed file degrades to empty.
+ *  Documents written before this store carried order and selection load with
+ *  the order seeded from the stored set — the adoption order. */
 function parseDocument(raw: string): ProfileDocument {
   try {
     const parsed = JSON.parse(raw) as PersistedDocument;
     if (typeof parsed.users !== 'object' || parsed.users === null) return emptyDocument();
-    for (const profile of Object.values(parsed.users)) {
+    const users = Object.create(null) as ProfileDocument['users'];
+    for (const [name, profile] of Object.entries(parsed.users)) {
       if (!profile || typeof profile !== 'object' || !Array.isArray(profile.sessions)) return emptyDocument();
+      const sessions = profile.sessions;
+      users[name] = {
+        sessions,
+        order: normalizeOrder(sessions, profile.order),
+        selectedSessionId: normalizeSelection(sessions, profile.selectedSessionId),
+        orderVersion: typeof profile.orderVersion === 'number' && profile.orderVersion >= 0 ? profile.orderVersion : 0,
+      };
     }
-    return { version: DOCUMENT_VERSION, users: Object.assign(Object.create(null), parsed.users) as ProfileDocument['users'] };
+    return { version: DOCUMENT_VERSION, users };
   } catch {
     return emptyDocument();
   }
+}
+
+/** Keep `order` exactly the members of `sessions`: unknown and duplicate ids
+ *  drop, and members the order omits append in set order. A reorder can never
+ *  add or remove an open session, and a new session appends at the end. */
+function normalizeOrder(sessions: readonly SessionRef[], order: readonly string[] | undefined): string[] {
+  const members = new Set(sessions.map((session) => session.sessionId));
+  const kept: string[] = [];
+  const seen = new Set<string>();
+  for (const id of order ?? []) {
+    if (typeof id !== 'string' || !members.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    kept.push(id);
+  }
+  for (const session of sessions) {
+    if (!seen.has(session.sessionId)) {
+      seen.add(session.sessionId);
+      kept.push(session.sessionId);
+    }
+  }
+  return kept;
+}
+
+/** Selection is either an open session or nothing — never a stale id. */
+function normalizeSelection(sessions: readonly SessionRef[], selected: unknown): string | null {
+  if (typeof selected !== 'string') return null;
+  return sessions.some((session) => session.sessionId === selected) ? selected : null;
 }
 
 /** Longest client-presented user name honored before capping. */
@@ -80,7 +133,9 @@ export class UserProfiles {
     for (const [name, profile] of Object.entries(this.document.users)) {
       const kept = profile.sessions.filter((ref) => validSessionIds.has(ref.sessionId));
       if (kept.length !== profile.sessions.length) {
-        this.document.users[name] = { sessions: kept };
+        const order = normalizeOrder(kept, profile.order);
+        const selectedSessionId = normalizeSelection(kept, profile.selectedSessionId);
+        this.document.users[name] = { ...profile, sessions: kept, order, selectedSessionId };
         pruned = true;
       }
     }
@@ -90,6 +145,21 @@ export class UserProfiles {
   /** The user's full open-session set; empty for an unknown user. */
   get(user: string): SessionRef[] {
     return (this.document.users[user]?.sessions ?? []).map((s) => ({ ...s }));
+  }
+
+  /** Every open session id in chip order; empty for an unknown user. */
+  order(user: string): string[] {
+    return [...(this.document.users[user]?.order ?? [])];
+  }
+
+  /** The user's selected session, or null. Always a member of the set. */
+  selection(user: string): string | null {
+    return this.document.users[user]?.selectedSessionId ?? null;
+  }
+
+  /** Epoch of the stored order, for the client's `baseVersion`. */
+  orderVersion(user: string): number {
+    return this.document.users[user]?.orderVersion ?? 0;
   }
 
   /** True when no profile exists for this user yet. */
@@ -107,6 +177,8 @@ export class UserProfiles {
     } else {
       profile.sessions.push({ ...ref });
     }
+    // A new session appends to the persisted order; the order is never re-sorted.
+    profile.order = normalizeOrder(profile.sessions, profile.order);
     await this.persistOrLog();
     return true;
   }
@@ -118,6 +190,8 @@ export class UserProfiles {
     const kept = profile.sessions.filter((s) => s.sessionId !== sessionId);
     if (kept.length === profile.sessions.length) return false;
     profile.sessions = kept;
+    profile.order = normalizeOrder(kept, profile.order);
+    profile.selectedSessionId = normalizeSelection(kept, profile.selectedSessionId);
     await this.persistOrLog();
     return true;
   }
@@ -129,11 +203,40 @@ export class UserProfiles {
       const kept = profile.sessions.filter((s) => s.sessionId !== sessionId);
       if (kept.length !== profile.sessions.length) {
         profile.sessions = kept;
+        profile.order = normalizeOrder(kept, profile.order);
+        profile.selectedSessionId = normalizeSelection(kept, profile.selectedSessionId);
         affected.push(name);
       }
     }
     if (affected.length > 0) await this.persistOrLog();
     return affected;
+  }
+
+  /** Replace the user's whole chip order. Whole-order writes do not commute,
+   *  so `baseVersion` must still be current: a write computed against a
+   *  superseded order is refused and the caller re-reads the truth. Ids the
+   *  set does not hold drop, and members the list omits append, so a reorder
+   *  can never change which sessions are open. */
+  async reorder(user: string, nextOrder: readonly string[], baseVersion: number): Promise<{ accepted: boolean; version: number }> {
+    const profile = this.document.users[user];
+    if (!profile) return { accepted: false, version: 0 };
+    if (profile.orderVersion !== baseVersion) return { accepted: false, version: profile.orderVersion };
+    profile.order = normalizeOrder(profile.sessions, nextOrder);
+    profile.orderVersion += 1;
+    await this.persistOrLog();
+    return { accepted: true, version: profile.orderVersion };
+  }
+
+  /** Select one of the user's open sessions. Returns true when the selection
+   *  changed. A session outside the set is ignored — the caller links first. */
+  async select(user: string, sessionId: string): Promise<boolean> {
+    const profile = this.document.users[user];
+    if (!profile) return false;
+    if (profile.selectedSessionId === sessionId) return false;
+    if (!profile.sessions.some((session) => session.sessionId === sessionId)) return false;
+    profile.selectedSessionId = sessionId;
+    await this.persistOrLog();
+    return true;
   }
 
   /** Alphabetical names with counts, for listusers. */
@@ -143,10 +246,10 @@ export class UserProfiles {
       .map((name) => ({ name, sessionCount: this.document.users[name].sessions.length }));
   }
 
-  private ensureProfile(user: string): { sessions: SessionRef[] } {
+  private ensureProfile(user: string): UserProfile {
     let profile = this.document.users[user];
     if (!profile) {
-      profile = { sessions: [] };
+      profile = { sessions: [], order: [], selectedSessionId: null, orderVersion: 0 };
       this.document.users[user] = profile;
     }
     return profile;

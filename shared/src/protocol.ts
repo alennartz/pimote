@@ -823,6 +823,28 @@ export interface TakeoverFolderCommand extends CommandBase {
 export interface ViewSessionCommand extends CommandBase {
   type: 'view_session';
   sessionId: string;
+  /** Folder the client believes holds the session. Lets the server link a
+   *  session the user's profile does not hold yet without scanning every
+   *  folder. Omitted, the server resolves it by search. */
+  folderPath?: string;
+}
+
+/** Replace the user's chip order with a whole ordered id list — the client
+ *  owns the order, the server persists it. Whole-order writes do not commute,
+ *  so the list is versioned: a write based on a superseded version is
+ *  rejected and the actor is handed the current facts. */
+export interface ReorderSessionsCommand extends CommandBase {
+  type: 'reorder_sessions';
+  /** Session ids in chip order. Ids outside the user's set are dropped, and
+   *  set members missing from the list append in set order. */
+  order: string[];
+  /** The `orderVersion` this order was computed against. */
+  baseVersion: number;
+}
+
+export interface ReorderSessionsResponseData {
+  accepted: boolean;
+  orderVersion: number;
 }
 
 export interface GlobalSettingsFile {
@@ -1201,6 +1223,7 @@ export type PimoteCommand =
   | ArchiveSessionCommand
   | TakeoverFolderCommand
   | ViewSessionCommand
+  | ReorderSessionsCommand
   | GetGlobalSettingsCommand
   | FileGetCommand
   | FilePutCommand
@@ -1635,6 +1658,17 @@ export interface UserSessionsChangedEvent {
   type: 'user_sessions_changed';
   /** The user's full open-session set — server truth, not a delta. */
   sessions: { sessionId: string; folderPath: string }[];
+  /** Every open session id in chip order — always the same members as
+   *  `sessions`. */
+  order: string[];
+  /** The user's selected session: shared across their connections, so every
+   *  one of them highlights it and navigates to it. Null when nothing is
+   *  selected, and never an id outside `sessions`. */
+  selectedSessionId: string | null;
+  /** Epoch of `order`, bumped on every accepted reorder. Clients send it back
+   *  as `baseVersion` so a whole-order write computed against a superseded
+   *  order is refused instead of silently clobbering it. */
+  orderVersion: number;
   /** True when this user has no server profile yet (never linked).
    *  Gates migration: only a fresh profile adopts a connection's
    *  pre-existing local set. */

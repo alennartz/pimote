@@ -19,7 +19,7 @@ import { applyAppNameToHtml, applyAppNameToManifest, resolveAppName } from './br
 import { serveFileDownloadRoute, type DownloadManager } from './file-download/index.js';
 import type { UserProfiles } from './user-profiles.js';
 import crypto from 'node:crypto';
-import type { UpdateAvailableEvent, VersionMismatchEvent, ServerCapabilitiesEvent, UserSessionsChangedEvent } from '../../shared/dist/index.js';
+import type { UpdateAvailableEvent, VersionMismatchEvent, ServerCapabilitiesEvent } from '../../shared/dist/index.js';
 import type { UpdateChecker } from './update-check.js';
 import { resolveUserName } from './user-profiles.js';
 
@@ -336,16 +336,12 @@ export async function createServer(
     };
     handler.sendToClient(capabilities);
 
-    // Connect burst: the user's current open-session set with the derived
-    // freshness flag. `fresh` gates the client's one-time migration of its
-    // pre-existing local set.
+    // Connect burst: the user's profile — open-session set, chip order, and
+    // selected session — with the derived freshness flag. `fresh` gates the
+    // client's one-time migration of its pre-existing local set; a reconnecting
+    // client lands on `selectedSessionId` without replaying missed follows.
     if (userProfiles) {
-      const userSessions: UserSessionsChangedEvent = {
-        type: 'user_sessions_changed',
-        sessions: userProfiles.get(user),
-        fresh: userProfiles.isFresh(user),
-      };
-      handler.sendToClient(userSessions);
+      handler.sendToClient(WsHandler.userSessionsEvent(userProfiles, user));
     }
 
     ws.on('message', (data) => {

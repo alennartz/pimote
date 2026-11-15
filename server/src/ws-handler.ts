@@ -27,6 +27,8 @@ import type {
   SubagentViewSnapshot,
   SubagentViewEvent,
   SubagentViewClosedEvent,
+  UserSessionsChangedEvent,
+  ReorderSessionsResponseData,
 } from '../../shared/dist/index.js';
 import type { PimoteSessionManager, ManagedSlot, SessionResetOutcome, SessionObserver, EventSocket } from './session-manager.js';
 import {
@@ -974,7 +976,25 @@ export class WsHandler {
             this.sendEvent({ type: 'panel_update', sessionId: command.sessionId, cards: getMergedPanelCards(viewedSlot.sessionState.panelState) });
             this.sendSilentDownloadSnapshot(viewedSlot);
           }
+          await this.selectSessionForUser(command.sessionId, command.folderPath);
           this.sendResponse(id, true);
+          break;
+        }
+
+        case 'reorder_sessions': {
+          if (!this.userProfiles) {
+            this.sendResponse(id, false, undefined, 'user profiles unavailable');
+            break;
+          }
+          const reorder = await this.userProfiles.reorder(this.user, command.order, command.baseVersion);
+          if (reorder.accepted) {
+            // The acting connection applied its own order — no echo.
+            WsHandler.broadcastUserSessionsChanged(this.userProfiles, this.clientRegistry, this.user, this.clientId);
+          } else {
+            // A superseded order loses whole; hand the actor the current facts.
+            this.sendToClient(WsHandler.userSessionsEvent(this.userProfiles, this.user));
+          }
+          this.sendResponse(id, true, { accepted: reorder.accepted, orderVersion: reorder.version } satisfies ReorderSessionsResponseData);
           break;
         }
 
@@ -2205,6 +2225,26 @@ export class WsHandler {
     }
   }
 
+  /** Selection is one fact per user, so a view on one connection moves every
+   *  connection of that user (highlight plus follow) and clears the session's
+   *  attention for all of them. Selecting a session the profile does not hold
+   *  links it first — selection is never outside the set. The acting
+   *  connection applied its own navigation, so it is not echoed. */
+  private async selectSessionForUser(sessionId: string, folderPath?: string): Promise<void> {
+    if (!this.userProfiles) return;
+    let changed = false;
+    const held = this.userProfiles.get(this.user).some((ref) => ref.sessionId === sessionId);
+    if (!held) {
+      const record = folderPath ? await this.findSessionRecord(sessionId, folderPath) : await this.findSessionRecord(sessionId);
+      if (!record) return;
+      changed = await this.userProfiles.link(this.user, { sessionId, folderPath: record.folderPath });
+    }
+    if (await this.userProfiles.select(this.user, sessionId)) changed = true;
+    if (changed) {
+      WsHandler.broadcastUserSessionsChanged(this.userProfiles, this.clientRegistry, this.user, this.clientId);
+    }
+  }
+
   /** Move every holder's profile link across a session rekey, then push each
    *  changed set to that user's connections. A rekey is shared — holders with
    *  no live observer follow too. Connections in `excludeClientIds` applied
@@ -2703,12 +2743,22 @@ export class WsHandler {
     for (const handler of clientRegistry.values()) {
       if (handler.user !== user) continue;
       if (typeof except === 'function' ? except(handler.clientId) : handler.clientId === except) continue;
-      handler.sendToClient({
-        type: 'user_sessions_changed',
-        sessions: userProfiles.get(user),
-        fresh: userProfiles.isFresh(user),
-      });
+      handler.sendToClient(WsHandler.userSessionsEvent(userProfiles, user));
     }
+  }
+
+  /** The user's profile as one wire event: the set, the order, the selection,
+   *  and the order epoch travel together so a client reconciles them in one
+   *  pass. */
+  static userSessionsEvent(userProfiles: UserProfiles, user: string): UserSessionsChangedEvent {
+    return {
+      type: 'user_sessions_changed',
+      sessions: userProfiles.get(user),
+      order: userProfiles.order(user),
+      selectedSessionId: userProfiles.selection(user),
+      orderVersion: userProfiles.orderVersion(user),
+      fresh: userProfiles.isFresh(user),
+    };
   }
 
   static broadcastSidebarUpdate(sessionId: string, folderPath: string, sessionManager: PimoteSessionManager, clientRegistry: ClientRegistry): void {
