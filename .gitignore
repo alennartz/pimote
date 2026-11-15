@@ -4,6 +4,9 @@ tsconfig.tsbuildinfo
 .artifacts/
 pimote-*.tgz
 
+# Local manual-test scratch drivers
+tools/manual-test/**/cdp-drive-tmp.mjs
+
 # OS / editor hygiene
 .DS_Store
 Thumbs.db
