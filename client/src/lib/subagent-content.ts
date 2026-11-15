@@ -37,6 +37,10 @@ function parentIndex(messages: readonly PimoteAgentMessage[], parentMessageId: s
   return -1;
 }
 
+function operationMessageIndex(messages: readonly PimoteAgentMessage[], operationId: string): number {
+  return messages.findIndex((message) => operationBlock(message, operationId) >= 0);
+}
+
 function ensureParent(messages: PimoteAgentMessage[], event: SubagentContentEvent): number {
   const existing = parentIndex(messages, event.parentMessageId);
   if (existing >= 0) return existing;
@@ -109,9 +113,11 @@ export function applySubagentContentToStreaming(streaming: StreamingMessage, eve
 export function applySubagentContentEvent(state: SubagentContentState, event: SubagentContentEvent): SubagentContentState {
   const messages = cloneMessages(state.messages);
   const active = [...state.active];
-  const messageIndex = ensureParent(messages, event);
+  const existingParent = operationMessageIndex(messages, event.operationId);
+  const messageIndex = existingParent >= 0 ? existingParent : ensureParent(messages, event);
   const message = messages[messageIndex];
   if (!message) return state;
+  const parentMessageId = message.entryId ?? `message-${messageIndex}`;
   const content = [...message.content];
   const existing = operationBlock(message, event.operationId);
 
@@ -120,7 +126,7 @@ export function applySubagentContentEvent(state: SubagentContentState, event: Su
     if (existing >= 0) content[existing] = block;
     else content.splice(Math.min(event.contentIndex, content.length), 0, block);
     messages[messageIndex] = { ...message, content };
-    const next = activeFromBlock(messages[messageIndex], event.parentMessageId, existing >= 0 ? existing : Math.min(event.contentIndex, content.length - 1));
+    const next = activeFromBlock(messages[messageIndex], parentMessageId, existing >= 0 ? existing : Math.min(event.contentIndex, content.length - 1));
     return { messages, active: next ? replaceActive(active, next) : active };
   }
 
@@ -133,7 +139,7 @@ export function applySubagentContentEvent(state: SubagentContentState, event: Su
     content[blockIndex] = nextBlock;
     messages[messageIndex] = { ...message, content };
     const nextActive: ActiveSubagentContent = {
-      parentMessageId: event.parentMessageId,
+      parentMessageId,
       contentIndex: blockIndex,
       operationId: event.operationId,
       kind: event.kind,

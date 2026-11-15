@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { PimoteAgentMessage, PimoteSessionEvent, SubagentContentStartEvent } from '@pimote/shared';
+import type { PimoteAgentMessage, PimoteSessionEvent, SubagentContentEndEvent, SubagentContentStartEvent } from '@pimote/shared';
 import { SessionRegistry } from './session-registry.svelte.js';
 
 const sessionId = 'transcript';
@@ -102,6 +102,65 @@ function echo(view: Transcript): void {
 }
 
 describe.each(['root', 'child'] as const)('%s transcript preservation during subagent projection', (kind) => {
+  it('keeps a streamed spawn in place when an intervening row shifts its synthetic parent index', () => {
+    const view = transcript(kind);
+    streamMessage(view, { role: 'assistant', content: [{ type: 'text', text: answer }] });
+    view.dispatch(event('message_start', { role: 'assistant' }));
+    const start: SubagentContentStartEvent = {
+      type: 'subagent_content_start',
+      sessionId,
+      cursor: 1,
+      parentMessageId: 'message-1',
+      contentIndex: 0,
+      operationId: 'spawn-call',
+      kind: 'delegation',
+      placement: { toolCallId: 'spawn-call', contentIndex: 0 },
+      content: {
+        type: 'subagent',
+        operationId: 'spawn-call',
+        subagentKind: 'delegation',
+        subagentState: 'active',
+        data: { operation: 'delegation', parameters: { agents: [] }, result: { children: [{ path: ['tree'], task: '' }] } },
+      },
+    };
+    view.dispatch(start);
+    view.dispatch(event('custom_entry', { message: { role: 'custom', customType: 'notice', content: [{ type: 'text', text: 'Intervening notice.' }] } }));
+
+    const end: SubagentContentEndEvent = {
+      type: 'subagent_content_end',
+      sessionId,
+      cursor: 2,
+      parentMessageId: start.parentMessageId,
+      contentIndex: start.contentIndex,
+      operationId: start.operationId,
+      kind: start.kind,
+      state: 'complete',
+      content: {
+        type: 'subagent',
+        operationId: start.operationId,
+        subagentKind: 'delegation',
+        subagentState: 'complete',
+        data: {
+          operation: 'delegation',
+          parameters: { agents: [] },
+          result: {
+            children: [
+              { path: ['tree-watcher'], task: 'Sleep.' },
+              { path: ['tree-delegator'], task: 'Spawn a child.' },
+            ],
+          },
+        },
+      },
+    };
+    view.dispatch(end);
+
+    const transcriptCards = view.surface.messages.flatMap((message) => message.content.filter((block) => block.type === 'subagent' && block.operationId === 'spawn-call'));
+    const streamingCards = view.surface.streamingMessage?.content.filter((block) => block.type === 'subagent' && block.operationId === 'spawn-call') ?? [];
+    expect(transcriptCards).toEqual([]);
+    expect(streamingCards).toHaveLength(1);
+    expect(streamingCards[0]).toMatchObject({ subagentState: 'complete', data: { result: { children: [{ path: ['tree-watcher'] }, { path: ['tree-delegator'] }] } } });
+  });
+
   it('keeps every assistant row readable after a projected row and a new user echo', () => {
     const view = transcript(kind);
     streamMessage(view, { role: 'user', content: [{ type: 'text', text: 'Initial question.' }] });

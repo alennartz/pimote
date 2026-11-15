@@ -396,9 +396,11 @@ function streamingParentTargetsFutureRow(parentMessageId: string, transcript: Pr
 }
 
 function applyProjectedEventToStreaming(transcript: ProjectedTranscript & Pick<PerSessionState, 'streamingMessage'>, event: SubagentContentEvent): boolean {
-  if (!transcript.streamingMessage || transcript.streamingMessage.role !== 'assistant') return false;
-  if (!streamingParentTargetsFutureRow(event.parentMessageId, transcript)) return false;
-  transcript.streamingMessage = applySubagentContentToStreaming(transcript.streamingMessage, event);
+  const streaming = transcript.streamingMessage;
+  if (!streaming || streaming.role !== 'assistant') return false;
+  const operationIsStreaming = streaming.content.some((content) => content.type === 'subagent' && content.operationId === event.operationId);
+  if (!operationIsStreaming && !streamingParentTargetsFutureRow(event.parentMessageId, transcript)) return false;
+  transcript.streamingMessage = applySubagentContentToStreaming(streaming, event);
   return true;
 }
 

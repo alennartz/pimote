@@ -159,6 +159,61 @@ describe('projected subagent content', () => {
     expect(state.active).toEqual([]);
   });
 
+  it('updates a streamed spawn in its saved row when the synthetic parent index no longer matches', () => {
+    const operationId = 'tree-spawn';
+    const streamedMessage: PimoteAgentMessage = {
+      role: 'assistant',
+      entryId: 'saved-assistant',
+      content: [
+        { type: 'text', text: 'I will start the agents.' },
+        {
+          type: 'subagent',
+          operationId,
+          subagentKind: 'delegation',
+          subagentState: 'active',
+          data: { operation: 'delegation', parameters: { agents: [] }, result: { children: [{ path: ['tree'], task: '' }] } },
+        },
+      ],
+    };
+    const finished: SubagentContentEndEvent = {
+      sessionId: 'root-session',
+      parentMessageId: 'message-197',
+      contentIndex: 1,
+      operationId,
+      kind: 'delegation',
+      type: 'subagent_content_end',
+      cursor: 8,
+      state: 'complete',
+      content: {
+        type: 'subagent',
+        operationId,
+        subagentKind: 'delegation',
+        subagentState: 'complete',
+        data: {
+          operation: 'delegation',
+          parameters: { agents: [] },
+          result: {
+            children: [
+              { path: ['tree-watcher'], task: 'Sleep.' },
+              { path: ['tree-delegator'], task: 'Spawn a child.' },
+            ],
+          },
+        },
+      },
+    };
+
+    const state = applySubagentContentEvent(hydrateSubagentContent([streamedMessage]), finished);
+    const cards = state.messages.flatMap((message) => message.content.filter((block) => block.type === 'subagent'));
+
+    expect(state.messages).toHaveLength(1);
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toMatchObject({
+      operationId,
+      subagentState: 'complete',
+      data: { operation: 'delegation', result: { children: [{ path: ['tree-watcher'] }, { path: ['tree-delegator'] }] } },
+    });
+  });
+
   it('keeps a visible protocol error in the replacement slot', () => {
     const state = applySubagentContentEvent(hydrateSubagentContent([assistant]), start);
     const error: SubagentContentEndEvent = {
