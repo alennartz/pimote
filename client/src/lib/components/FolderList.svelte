@@ -12,6 +12,7 @@
   import HubMembersDialog from './HubMembersDialog.svelte';
   import FolderNatureIcon, { folderIconKind } from './FolderNatureIcon.svelte';
   import Archive from '@lucide/svelte/icons/archive';
+  import ArchiveRestore from '@lucide/svelte/icons/archive-restore';
   import EllipsisVertical from '@lucide/svelte/icons/ellipsis-vertical';
   import FilePen from '@lucide/svelte/icons/file-pen';
   import Loader2 from '@lucide/svelte/icons/loader-2';
@@ -400,7 +401,7 @@
                 <Undo2 class="size-4" />
                 Hide archived
               {:else}
-                <Archive class="size-4" />
+                <ArchiveRestore class="size-4" />
                 Show archived
               {/if}
             </DropdownMenuItem>

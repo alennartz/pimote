@@ -308,6 +308,47 @@ describe('FolderStore', () => {
       await flush();
       expect(store.sessions.get('/r/a')).toEqual([]);
     });
+
+    it('an unarchive event resets the archived filter and refetches without it', async () => {
+      const storage = new Map<string, string>();
+      vi.stubGlobal('localStorage', {
+        getItem: (key: string) => storage.get(key) ?? null,
+        setItem: (key: string, value: string) => void storage.set(key, value),
+      });
+      try {
+        const store = new FolderStore();
+        const s1 = makeSession('s1', '2024-01-01T00:00:00Z');
+        store.sessions.set('/r/a', [s1]);
+        const sends: any[] = [];
+        fakeConnection.send.mockImplementation((cmd: any) => {
+          sends.push(cmd);
+          return Promise.resolve({ success: true, data: { sessions: cmd.includeArchived ? [s1] : [] } });
+        });
+
+        store.setShowArchived(true);
+        await flush();
+        expect(store.showArchived).toBe(true);
+
+        store.applySessionArchived({ type: 'session_archived', folderPath: '/r/a', sessionId: 's1', archived: false });
+        await flush();
+
+        expect(store.showArchived).toBe(false);
+        expect(new FolderStore().showArchived).toBe(false);
+        const refetch = sends.filter((c: any) => c.type === 'list_sessions');
+        expect(refetch.length).toBeGreaterThan(0);
+        expect(refetch.at(-1)).toMatchObject({ folderPath: '/r/a', includeArchived: false });
+        expect(store.sessions.get('/r/a')).toEqual([]);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('an archive event leaves the archived filter alone', () => {
+      const store = new FolderStore();
+      store.showArchived = true;
+      store.applySessionArchived({ type: 'session_archived', folderPath: '/r/a', sessionId: 's1', archived: true });
+      expect(store.showArchived).toBe(true);
+    });
   });
 
   describe('visibleFolders', () => {

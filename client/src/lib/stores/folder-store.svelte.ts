@@ -558,6 +558,10 @@ export class FolderStore {
 
   applySessionArchived(event: SessionArchivedEvent): void {
     this.bumpStructuralEpoch(event.folderPath);
+    // Unarchiving ends the reason for the archived filter — drop it so the
+    // revived session shows in the normal list. setShowArchived reloads every
+    // loaded session list against the new filter.
+    if (!event.archived && this.showArchived) this.setShowArchived(false);
     if (this.sessions.has(event.folderPath)) {
       // Any same-filter request already in flight predates the archive-filter
       // transition; its structural epoch is stale, so its result gets discarded
