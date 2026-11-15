@@ -1,0 +1,709 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Client Performance Audit — Pimote Web Client</title>
+    <style>
+      :root {
+        --accent: #4f6df5;
+        --bg: #ffffff;
+        --bg-soft: #f6f7f9;
+        --text: #1c2430;
+        --text-muted: #5b6675;
+        --border: #e3e7ec;
+        --code-bg: #f2f4f7;
+        --crit: #d64545;
+        --high: #e07018;
+        --med: #c9971a;
+        --low: #5b8a3c;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --accent: #8fa2ff;
+          --bg: #14171c;
+          --bg-soft: #1b2027;
+          --text: #e4e8ee;
+          --text-muted: #9aa4b1;
+          --border: #2a313a;
+          --code-bg: #1e242c;
+          --crit: #ff7b7b;
+          --high: #ffa45c;
+          --med: #ffd166;
+          --low: #9fd07c;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          16.5px/1.65 system-ui,
+          -apple-system,
+          'Segoe UI',
+          Roboto,
+          sans-serif;
+      }
+      .wrap {
+        max-width: 76ch;
+        margin: 0 auto;
+        padding: 2.5rem 1.25rem 5rem;
+      }
+      header h1 {
+        font-size: 1.7rem;
+        line-height: 1.25;
+        margin: 0 0 0.35rem;
+      }
+      .dek {
+        color: var(--text-muted);
+        margin: 0 0 0.3rem;
+      }
+      .meta {
+        color: var(--text-muted);
+        font-size: 0.85rem;
+        margin-bottom: 1.8rem;
+      }
+      h2 {
+        font-size: 1.22rem;
+        margin: 2.6rem 0 0.7rem;
+        padding-bottom: 0.3rem;
+        border-bottom: 1px solid var(--border);
+        scroll-margin-top: 1rem;
+      }
+      h3 {
+        font-size: 1.02rem;
+        margin: 1.9rem 0 0.4rem;
+        scroll-margin-top: 1rem;
+      }
+      p {
+        margin: 0.6rem 0;
+      }
+      .takeaways {
+        background: var(--bg-soft);
+        border: 1px solid var(--border);
+        border-left: 4px solid var(--accent);
+        border-radius: 8px;
+        padding: 1rem 1.2rem;
+        margin: 1.4rem 0;
+      }
+      .takeaways ul {
+        margin: 0.4rem 0 0.2rem;
+        padding-left: 1.2rem;
+      }
+      .takeaways li {
+        margin: 0.35rem 0;
+      }
+      nav.toc {
+        background: var(--bg-soft);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.9rem 1.2rem;
+        margin: 1.2rem 0;
+      }
+      nav.toc strong {
+        display: block;
+        margin-bottom: 0.35rem;
+      }
+      nav.toc ul {
+        margin: 0;
+        padding-left: 1.2rem;
+        columns: 2;
+        column-gap: 2rem;
+      }
+      nav.toc li {
+        margin: 0.2rem 0;
+        break-inside: avoid;
+      }
+      @media (max-width: 640px) {
+        nav.toc ul {
+          columns: 1;
+        }
+      }
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      .sev {
+        display: inline-block;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        padding: 0.12rem 0.5rem;
+        border-radius: 999px;
+        color: #fff;
+        vertical-align: 2px;
+        margin-right: 0.45rem;
+        white-space: nowrap;
+      }
+      .sev.critical,
+      .sev.high {
+        background: var(--crit);
+      }
+      .sev.medium {
+        background: var(--high);
+      }
+      .sev.low,
+      .sev.info {
+        background: var(--text-muted);
+      }
+      @media (prefers-color-scheme: dark) {
+        .sev.critical,
+        .sev.high {
+          color: #14171c;
+        }
+        .sev.medium {
+          color: #14171c;
+        }
+        .sev.low,
+        .sev.info {
+          color: #14171c;
+        }
+      }
+      .loc {
+        font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+        font-size: 0.82rem;
+        color: var(--text-muted);
+        display: block;
+        margin: 0.1rem 0 0.45rem;
+        word-break: break-all;
+      }
+      pre {
+        background: var(--code-bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 0.7rem 0.9rem;
+        overflow-x: auto;
+        font-size: 0.84rem;
+        line-height: 1.5;
+        margin: 0.5rem 0;
+      }
+      code {
+        font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+      }
+      p code,
+      li code,
+      td code {
+        background: var(--code-bg);
+        border-radius: 4px;
+        padding: 0.05rem 0.3rem;
+        font-size: 0.85em;
+      }
+      .fix {
+        border-left: 3px solid var(--low);
+        padding: 0.35rem 0.8rem;
+        margin: 0.6rem 0;
+        background: var(--bg-soft);
+        border-radius: 0 6px 6px 0;
+        font-size: 0.95rem;
+      }
+      .fix strong {
+        color: var(--low);
+      }
+      .callout {
+        border: 1px solid var(--border);
+        border-left: 4px solid var(--high);
+        background: var(--bg-soft);
+        border-radius: 8px;
+        padding: 0.9rem 1.1rem;
+        margin: 1rem 0;
+        font-size: 0.96rem;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 0.88rem;
+        margin: 0.8rem 0;
+      }
+      .table-scroll {
+        overflow-x: auto;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 0.5rem 0.7rem;
+        border-bottom: 1px solid var(--border);
+        vertical-align: top;
+      }
+      th {
+        background: var(--bg-soft);
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      tbody tr:nth-child(even) {
+        background: var(--bg-soft);
+      }
+      ul.clean {
+        padding-left: 1.2rem;
+      }
+      ul.clean li {
+        margin: 0.3rem 0;
+      }
+      .muted {
+        color: var(--text-muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>Client Performance Audit</h1>
+        <p class="dek">Svelte 5 + SvelteKit PWA — algorithmic complexity, streaming hot paths, main-thread saturation, network timing, bundle weight.</p>
+        <p class="meta">Scope: <code>client/src</code> at v0.16.0-rc.7 · static analysis + production build measurement</p>
+      </header>
+
+      <div class="takeaways">
+        <strong>Key takeaways</strong>
+        <ul>
+          <li>
+            <strong>Two hot paths scale quadratically with transcript size:</strong> live subagent deltas deep-clone the whole transcript per delta, and live tool output
+            re-converts its full buffer through ANSI-to-HTML per delta. Both sit on the main thread and degrade exactly when the app is busiest — mid-run.
+          </li>
+          <li><strong>The bash output path re-encodes its entire accumulated buffer per delta</strong> to recompute a byte count the store already tracks.</li>
+          <li>
+            <strong>Message content blocks are keyed by array index</strong> while the subagent projection splices blocks into the middle, so each insertion rebuilds the DOM tail
+            of the message (markdown re-parse, highlight reset).
+          </li>
+          <li>
+            <strong>~120&nbsp;KB (gzip) of rarely-needed code ships eagerly:</strong> the voice-call stack and highlight.js core load at startup on every route; CodeMirror is
+            correctly lazy.
+          </li>
+          <li>
+            <strong>The async discipline is otherwise strong:</strong> restores run in parallel, the composer is optimistic, search is debounced and epoch-guarded, and
+            timers/observers are cleaned up consistently. The defects are concentrated in per-event work, not in orchestration.
+          </li>
+        </ul>
+      </div>
+
+      <nav class="toc">
+        <strong>Contents</strong>
+        <ul>
+          <li><a href="#method">Scope and method</a></li>
+          <li><a href="#streaming">Streaming hot paths</a></li>
+          <li><a href="#rendering">Rendering and main thread</a></li>
+          <li><a href="#network">Network and async</a></li>
+          <li><a href="#lists">Lists, dashboard, folder store</a></li>
+          <li><a href="#bundle">Bundle and load</a></li>
+          <li><a href="#priority">Priority table</a></li>
+          <li><a href="#clean">Checked clean</a></li>
+        </ul>
+      </nav>
+
+      <h2 id="method">Scope and method</h2>
+      <p>
+        The audit reads every non-test file under <code>client/src</code> with focus on the four requested classes: algorithmic complexity, missed batching, awaited network calls
+        between UI transitions, and main-thread saturation. It adds bundle measurement from a production <code>vite build</code> (chunk sizes quoted below are from that build).
+        Costs are stated in terms of transcript length <em>n</em>, content blocks per message <em>b</em>, delta count <em>d</em>, and folder/session counts <em>f</em>/<em>s</em>.
+      </p>
+
+      <h2 id="streaming">Streaming hot paths</h2>
+
+      <h3><span class="sev high">High</span>S1 — Each subagent content delta deep-clones the whole transcript</h3>
+      <span class="loc">client/src/lib/subagent-content.ts:114 → client/src/lib/stores/session-registry.svelte.ts:388</span>
+      <p>When a subagent streams live content, the delta lands in <code>applyProjectedEventToTranscript</code>, which runs per event:</p>
+      <pre><code>// session-registry.svelte.ts:384
+const { confirmed, pending } = confirmedTranscriptRows(transcript);
+const projected = applySubagentContentEvent({ messages: confirmed.map((row) =&gt; row.message), ... }, event);
+transcript.messages = [...projected.messages, ...pending.map((row) =&gt; row.message)];
+transcript.messageKeys = [...confirmed.map((row) =&gt; row.key), ...addedKeys, ...pending.map((row) =&gt; row.key)];
+
+// subagent-content.ts:114
+const messages = cloneMessages(state.messages);   // {...m, content: m.content.map({...c})} for EVERY message</code></pre>
+      <p>
+        Per delta this maps and filters all <em>n</em> messages twice, deep-clones every message and every content block (<code>cloneMessages</code>), locates the operation with a
+        nested <code>findIndex</code> scan (<em>O</em>(<em>n·b</em>)), and rebuilds both the messages and keys arrays. The common case routes here: the parent assistant message
+        finalizes (its <code>message_end</code> arrives) before the child starts streaming, so <code>streamingMessage</code> is null and
+        <code>applyProjectedEventToStreaming</code> declines. A run with <em>d</em> deltas therefore performs <em>O</em>(<em>n·d</em>) allocations plus a full
+        <code>displayEntries</code> re-diff and a full <code>toolResultUsageIndex</code> re-index per delta (each sees a new <code>messages</code> array identity). With a
+        1000-message transcript and thousands of deltas, this is hundreds of MB of short-lived allocations, GC pressure, and main-thread stall — the audit's worst finding.
+      </p>
+      <div class="fix">
+        <strong>Fix:</strong> apply the delta in place — clone only the target message and its block, replace that one slot in <code>messages</code>/<code>messageKeys</code>, and
+        keep row identities stable so the keyed each and downstream deriveds diff O(1) instead of O(n).
+      </div>
+
+      <h3><span class="sev high">High</span>S2 — Live tool output: full ANSI→HTML conversion and full DOM replace per delta, uncapped buffer</h3>
+      <span class="loc"
+        >client/src/lib/components/BoundedOutput.svelte:60, 47 · client/src/lib/components/ToolCall.svelte:393 · client/src/lib/stores/session-registry.svelte.ts:1866</span
+      >
+      <pre><code>// BoundedOutput.svelte
+let lines = $derived(text.split('\n'));                       // O(n) per delta
+&lt;pre ...&gt;{@html ansiToHtml(displayText)}&lt;/pre&gt;               // full convert + innerHTML replace per delta
+
+// session-registry.svelte.ts:1866 — no cap, unlike bash output's 256 KB bound
+call.partialResult += upd.content;</code></pre>
+      <p>
+        Every <code>tool_execution_update</code> appends to an unbounded string, then BoundedOutput re-splits all lines, runs the full buffer through <code>ansi-to-html</code>, and
+        replaces the <code>&lt;pre&gt;</code> contents. Total work is <em>O</em>(<em>n²</em>) in final output size with no throttle — unlike code fences, which are throttled to
+        100&nbsp;ms (see S7). A verbose tool streaming 1&nbsp;MB across 2000 deltas converts ≈1&nbsp;GB of text cumulatively and forces 2000 full DOM rebuilds, plus a per-delta
+        <code>scrollHeight</code> read in the auto-scroll effect (forced layout). Bash executions take the same render path with the buffer capped at 256&nbsp;KB — still
+        ≈128&nbsp;MB of cumulative conversion at the cap.
+      </p>
+      <div class="fix">
+        <strong>Fix:</strong> cap <code>partialResult</code> like bash output; render ANSI through a throttled incremental highlighter (trailing 100&nbsp;ms, flush on
+        <code>tool_execution_end</code>); append text nodes instead of replacing <code>innerHTML</code>.
+      </div>
+
+      <h3><span class="sev medium">Medium</span>S3 — Bash live output re-encodes the whole buffer per delta to recompute a tracked number</h3>
+      <span class="loc">client/src/lib/stores/session-registry.svelte.ts:257, 2342</span>
+      <pre><code>// appendBoundedBashOutput, run per delta:
+const currentBytes = utf8ByteLength(current);   // TextEncoder().encode(current) — full buffer, every delta
+...
+this.bashOutputBytes.set(outputKey, bounded.bytes);   // the count is tracked right here</code></pre>
+      <p>
+        <code>utf8ByteLength</code> encodes the entire accumulated output on every <code>bash_execution_update</code>, up to the 256&nbsp;KB cap — <em>O</em>(<em>n²</em>) bytes of
+        UTF-8 encoding per execution, while <code>bashOutputBytes</code> already carries the exact count from the previous delta. A chatty command emitting 1000 deltas encodes
+        ≈128&nbsp;MB cumulatively.
+      </p>
+      <div class="fix"><strong>Fix:</strong> pass the stored byte count into <code>appendBoundedBashOutput</code> and add only the delta's encoded length.</div>
+
+      <h3><span class="sev medium">Medium</span>S4 — Child-view streaming deltas copy every content block of the streaming message</h3>
+      <span class="loc">client/src/lib/stores/session-registry.svelte.ts:497</span>
+      <pre><code>const content = streaming.content.map((block) =&gt; ({ ...block }));   // per delta, all b blocks
+...
+attachment.streamingMessage = { ...streaming, content, ... };</code></pre>
+      <p>
+        The root-path <code>message_update</code> handler mutates one block in place; the child-view reducer copies all <em>b</em> blocks and rebuilds the message object per delta
+        — <em>O</em>(<em>b·d</em>) allocations where <em>O</em>(<em>d</em>) suffices. Cheap when a message has few blocks; noticeable for tool-heavy child messages with many blocks
+        and frequent deltas.
+      </p>
+      <div class="fix"><strong>Fix:</strong> copy only <code>content[update.contentIndex]</code>; reuse the other block references.</div>
+
+      <h3><span class="sev medium">Medium</span>S5 — Every finalized message rescans and deep-clones the transcript for subagent projection</h3>
+      <span class="loc">client/src/lib/stores/session-registry.svelte.ts:1725–1734, 1840–1843 · client/src/lib/subagent-content.ts:160–179</span>
+      <pre><code>session.projectedSubagentContent = hydrateSubagentContent(session.messages, session.projectedSubagentContent.active);
+session.messages = [...session.projectedSubagentContent.messages];</code></pre>
+      <p>
+        <code>hydrateSubagentContent</code> clones every message and content block, then walks all <em>n</em>·<em>b</em> blocks hunting for active subagent entries — on every
+        <code>message_end</code> and <code>custom_entry</code>, plus two full-array copies. Per finalized message this is <em>O</em>(<em>n</em>), so a session accumulates
+        <em>O</em>(<em>n²</em>) copy volume over its lifetime. Constants are small and events are per-message rather than per-delta, so it stays Medium — but removing it also
+        removes most of the remaining allocation pressure around S1.
+      </p>
+      <div class="fix">
+        <strong>Fix:</strong> scan only the newly arrived message (projection is append-driven; existing active entries are already in <code>active</code>) and clone just the
+        affected row.
+      </div>
+
+      <h3><span class="sev medium">Medium</span>S6 — Content blocks are keyed by array index while the projection splices into the middle</h3>
+      <span class="loc">client/src/lib/components/Message.svelte:316 · client/src/lib/subagent-content.ts:127</span>
+      <pre><code>{#each visibleContent as block, i (`native-${i}`)}
+
+// subagent-content.ts:127 — insertion, not append:
+else content.splice(Math.min(event.contentIndex, content.length), 0, block);</code></pre>
+      <p>
+        Keys are <code>native-0, native-1, …</code>. When <code>subagent_content_start</code> splices a block in at index <em>k</em>, every block after it inherits a shifted key,
+        so Svelte destroys and recreates that whole tail: TextBlock re-runs its markdown parser from zero, ThinkingBlock/ToolCall reset, and the DOM churns. This compounds with S1
+        (insertions typically accompany a starting subagent run).
+      </p>
+      <div class="fix">
+        <strong>Fix:</strong> key blocks by stable identity — <code>toolCallId</code>/<code>operationId</code> where present, otherwise an insertion-ordered id minted once per
+        block.
+      </div>
+
+      <h2 id="rendering">Rendering and main thread</h2>
+
+      <h3><span class="sev medium">Medium</span>R1 — Find-in-conversation rescans the entire transcript on every keystroke</h3>
+      <span class="loc">client/src/lib/components/MessageList.svelte:206 · client/src/lib/conversation-find.ts</span>
+      <pre><code>const findMatches = $derived.by(() =&gt; {
+  if (!findQuery.trim() || !session) return [];
+  return findInConversation(session.messages, findQuery.trim());   // toLowerCase() over every text block
+});</code></pre>
+      <p>
+        While find is open, each keystroke lowercases and scans every text block of every message — <em>O</em>(transcript bytes) per keystroke, on the input handler's task. A
+        500&nbsp;KB transcript at typing speed means multiple MB of scanning per second, plus re-runs whenever any message mutates mid-run. Matches are also unbounded: a common
+        query can allocate tens of thousands of match objects.
+      </p>
+      <div class="fix"><strong>Fix:</strong> debounce ~150&nbsp;ms, cache the lowercased text per block (invalidate on message identity), and cap matches per block.</div>
+
+      <h3><span class="sev low">Low</span>R2 — Sticky-target tracking reads layout for every user row, every frame, during streaming</h3>
+      <span class="loc">client/src/lib/components/MessageList.svelte:222–236, 317–320</span>
+      <p>
+        <code>updateStickyTargets</code> is rAF-coalesced, but each tick calls <code>getBoundingClientRect()</code> on every user-message row (<code>transcriptPositions</code>),
+        and it is triggered by a per-row <code>ResizeObserver</code> plus a <code>tick().then(...)</code> effect that fires whenever <code>displayEntries</code> changes — i.e.
+        continuously during streaming. Reads are batched per frame, so cost is <em>O</em>(user rows) per frame rather than a thrash spiral; on long transcripts with hundreds of
+        user rows this is measurable scroll-jank alongside the streaming render itself.
+      </p>
+      <div class="fix">
+        <strong>Fix:</strong> compute the sticky row from scroll offsets and cached row heights (the virtualizer/list inner already knows them) instead of per-row
+        <code>getBoundingClientRect</code>, or restrict measurement to rows near the viewport top.
+      </div>
+
+      <h3><span class="sev low">Low</span>R3 — Stick-to-bottom reads computed style on every scroll write</h3>
+      <span class="loc">client/src/lib/stick-to-bottom.svelte.ts:199</span>
+      <pre><code>const { scrollBehavior } = getComputedStyle(scrollElement);</code></pre>
+      <p>
+        The follow animation writes <code>scrollTop</code> every frame while content grows; each write first reads <code>getComputedStyle</code>, forcing style recalculation. One
+        read per frame is tolerable, but the value changes only when CSS changes.
+      </p>
+      <div class="fix"><strong>Fix:</strong> cache <code>scroll-behavior</code> per scroll element and invalidate on <code>ResizeObserver</code>/media changes.</div>
+
+      <h3><span class="sev low">Low</span>R4 — Duplicate derived text joins in Message</h3>
+      <span class="loc">client/src/lib/components/Message.svelte:120, 139–141</span>
+      <pre><code>let textContent = $derived(visibleContent.filter(...).map(...).join('\n\n'));
+let userText  = $derived(getUserText(message));
+let customText = $derived(getUserText(message));   // identical computation, again</code></pre>
+      <p>
+        <code>userText</code> and <code>customText</code> are the same fold over all text blocks, recomputed (alongside <code>textContent</code>) on every content mutation — so a
+        streaming assistant row joins its full text three times per delta. Constants are small (V8 string concat is fast) but it is pure duplicate work on the hottest component.
+      </p>
+      <div class="fix"><strong>Fix:</strong> compute one <code>joinedText</code> derived and slice the three consumers off it.</div>
+
+      <h2 id="network">Network and async</h2>
+
+      <h3><span class="sev medium">Medium</span>N1 — Stale autocomplete responses can overwrite fresh ones</h3>
+      <span class="loc">client/src/lib/components/CommandAutocomplete.svelte:42–48</span>
+      <pre><code>const seq = ++serverRequestSeq;
+if (currentMode === 'fileRefs' &amp;&amp; completeFileRefs) {
+  serverItems = await completeFileRefs(currentQuery);   // ← returns BEFORE the seq guard
+  return;
+}
+if (currentMode === 'args' &amp;&amp; completeArgs) {
+  serverItems = await completeArgs(currentCommandName, currentQuery);   // ← same
+  return;
+}
+...
+if (seq !== serverRequestSeq) return;   // guard exists only on the fallback path</code></pre>
+      <p>
+        The two injected-callback paths await and assign without the staleness check that the direct <code>connection.send</code> path applies. A slow earlier request (e.g.
+        <code>fd</code> scan on a large repo) resolves last and replaces the list for the newer prefix — a visible correctness/perf hybrid: wrong suggestions plus wasted work.
+      </p>
+      <div class="fix"><strong>Fix:</strong> check <code>seq !== serverRequestSeq</code> before both early-return assignments.</div>
+
+      <h3><span class="sev low">Low</span>N2 — Reconnect backoff has no jitter</h3>
+      <span class="loc">client/src/lib/stores/connection.svelte.ts:687–698</span>
+      <pre><code>this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000);</code></pre>
+      <p>
+        Exponential backoff caps at 30&nbsp;s but is deterministic: after a server restart, every tab and device retries in lockstep, and each attempt triggers a full restore
+        fan-out (replay buffers, profile reconcile). With a handful of clients this is minor; with many it is a synchronized herd against a server that is re-attaching sessions.
+      </p>
+      <div class="fix"><strong>Fix:</strong> multiply the computed delay by <code>0.5 + Math.random()</code> (full jitter).</div>
+
+      <h3><span class="sev low">Low</span>N3 — Session selection waits on two extra round-trips</h3>
+      <span class="loc">client/src/lib/stores/session-registry.svelte.ts:2845</span>
+      <pre><code>await refreshSessionMetaAndCommands(sessionId);
+if (shouldSwitch) sessionRegistry.selectSession(sessionId);</code></pre>
+      <p>
+        <code>switchTo</code> already runs optimistically before the awaits (good), but final selection — and anything keyed to it — waits for <code>open_session</code> +
+        <code>get_session_meta</code> + <code>get_commands</code>. Other paths already fire this refresh without awaiting (line 3144).
+      </p>
+      <div class="fix"><strong>Fix:</strong> drop the await; select immediately and let the meta refresh land in the background.</div>
+
+      <div class="callout">
+        Verified clean in this area: reconnect restores fan out with <code>Promise.all</code>, not serially (connection.svelte.ts:469–479); prompt, steer, and bang-bash all render
+        optimistic state before the await and restore the draft on failure; dashboard search is server-authoritative, debounced (folder-store.svelte.ts:184–187), and
+        generation-guarded; autocomplete requests are debounced at 200&nbsp;ms with timer cleanup.
+      </div>
+
+      <h2 id="lists">Lists, dashboard, folder store</h2>
+
+      <h3><span class="sev low">Low</span>L1 — <code>visibleFolders</code> is an uncached getter doing O(total sessions) work per read</h3>
+      <span class="loc">client/src/lib/stores/folder-store.svelte.ts:119–133</span>
+      <pre><code>get visibleFolders(): FolderInfo[] {
+  const list = this.folders.filter(...);
+  const recency = (folder) =&gt; Math.max(0,
+    ...(this.sessions.get(folder.path) ?? []).map((s) =&gt; toTimestamp(s.modified)),
+    ...openActivity.filter(...).map(...),
+    folder.lastActivity ?? 0);
+  return [...list].sort(...);
+}</code></pre>
+      <p>
+        Every read filters all folders, re-parses ISO timestamps for every session of every folder, and sorts. FolderList caches it in one
+        <code>$derived</code> (FolderList.svelte:168), which bounds the damage — but any additional read (a second consumer, a length check in a template) re-runs the whole fold,
+        and every session event re-triggers it. <code>Date.parse</code> per session per recomputation is avoidable.
+      </p>
+      <div class="fix">
+        <strong>Fix:</strong> convert to a memoized <code>$derived</code> over <code>folders</code>/<code>sessions</code>/<code>showArchived</code>/<code>queryMatchPaths</code>,
+        and cache parsed timestamps on arrival.
+      </div>
+
+      <h3><span class="sev low">Low</span>L2 — Virtualized rows re-measure on every render</h3>
+      <span class="loc">client/src/lib/components/FolderList.svelte:285–293</span>
+      <pre><code>instance.measureElement(node);
+return {
+  update: () =&gt; instance.measureElement(node),   // runs on every props re-run of the row
+  ...
+};</code></pre>
+      <p>
+        The action's <code>update</code> hook re-measures each visible row whenever its parameters object is rebuilt — which is every render pass of the list. ~15 visible rows ×
+        <code>getBoundingClientRect</code> after DOM writes can force repeated layouts per update. TanStack already tracks size via its own observer once
+        <code>measureElement</code> is wired in the action's init.
+      </p>
+      <div class="fix">
+        <strong>Fix:</strong> drop the <code>update</code> hook; keep init-time <code>measureElement</code> and let ResizeObserver handle growth (tags, subtitles, expansion).
+      </div>
+
+      <h3><span class="sev low">Low</span>L3 — Dashboard renders a 210 KB icon at 90 px</h3>
+      <span class="loc">client/src/lib/components/Dashboard.svelte:99</span>
+      <pre><code>&lt;img src="/pwa/icon-512.png" ... class="size-[90px] ..." /&gt;</code></pre>
+      <p>
+        The landing page transfers the 512 px icon (210,404 bytes) to draw a 90 px avatar; <code>icon-192.png</code> (36 KB) is already shipped, and <code>badge-96.png</code> (2.4
+        KB) exists too. First-visit cost on mobile WAN.
+      </p>
+      <div class="fix"><strong>Fix:</strong> use <code>icon-192.png</code> (or export a 180 px WebP, ≈8 KB) with explicit width/height for CLS.</div>
+
+      <h2 id="bundle">Bundle and load</h2>
+
+      <h3><span class="sev medium">Medium</span>B1 — The voice-call stack ships eagerly on every route</h3>
+      <span class="loc">client/src/routes/+layout.svelte:17 · chunk GcOiwt3i.js</span>
+      <pre><code>import '$lib/stores/voice-call-store.js';   // side-effect import at boot, layout level</code></pre>
+      <p>
+        The side-effect import pulls the voice/WebRTC/analyser seam graph statically into the layout chunk: the 155&nbsp;KB (50&nbsp;KB gzip) voice chunk is referenced directly by
+        the layout and session-route nodes. Voice is an occasional feature; its store subscription could attach after first user intent (or after <code>requestIdleCallback</code>)
+        via dynamic import.
+      </p>
+      <div class="fix"><strong>Fix:</strong> lazy-import the voice store on the first voice affordance (mic button render or voice event) instead of at boot.</div>
+
+      <h3><span class="sev low">Low</span>B2 — highlight.js core is in the eager startup graph</h3>
+      <span class="loc">client/src/lib/components/TextBlock.svelte:3 → smd-renderer → code-highlight → syntax-highlighter · chunk 1GF6WFHw.js</span>
+      <p>
+        Every TextBlock statically imports the highlight pipeline, so hljs core (67&nbsp;KB raw, 22&nbsp;KB gzip, shared by all route nodes) loads at startup — needed only when a
+        message actually contains a code fence. The 700&nbsp;KB (241&nbsp;KB gzip) CodeMirror + language chunk, by contrast, is correctly reachable only through the editor dialog's
+        dynamic import (verified in the emitted graph).
+      </p>
+      <div class="fix">
+        <strong>Fix:</strong> dynamic-import <code>smd-renderer</code>/<code>code-highlight</code> on the first fence (or after idle), keeping the smd parser itself static.
+      </div>
+
+      <h3><span class="sev info">Info</span>B3 — Startup weight baseline</h3>
+      <p>
+        Eager JavaScript for a session-route cold load (measured from <code>vite build</code>): layout node 82&nbsp;KB + session node 194&nbsp;KB + shared UI chunk 259&nbsp;KB +
+        voice 155&nbsp;KB + hljs core 67&nbsp;KB + shared runtime 61&nbsp;KB + misc 27&nbsp;KB ≈ <strong>845&nbsp;KB raw / ~210&nbsp;KB gzip</strong>, plus three small woff2
+        subsets. Lazy: CodeMirror chunk 700&nbsp;KB. Applying B1 and B2 removes ≈55–75&nbsp;KB gzip from the critical path. The static-adapter shell is empty (<code
+          >ssr = false</code
+        >), fonts are self-hosted variable subsets with <code>unicode-range</code> (browsers fetch only latin — confirmed three small woff2 files in the build), and the service
+        worker's fetch handler intercepts only <code>/_share</code> POSTs, so it never delays navigation.
+      </p>
+
+      <h2 id="priority">Priority table</h2>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Sev</th>
+              <th>Area</th>
+              <th>One-line fix</th>
+              <th>Effort</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>S1</td>
+              <td>High</td>
+              <td>Subagent deltas</td>
+              <td>In-place per-message update instead of full-clone per delta</td>
+              <td>Medium</td>
+            </tr>
+            <tr>
+              <td>S2</td>
+              <td>High</td>
+              <td>Tool output render</td>
+              <td>Cap buffer + throttle ANSI render + append-only DOM</td>
+              <td>Medium</td>
+            </tr>
+            <tr>
+              <td>S3</td>
+              <td>Medium</td>
+              <td>Bash buffer</td>
+              <td>Reuse tracked byte count instead of re-encoding per delta</td>
+              <td>Trivial</td>
+            </tr>
+            <tr>
+              <td>S4</td>
+              <td>Medium</td>
+              <td>Child streaming</td>
+              <td>Copy only the touched block per delta</td>
+              <td>Trivial</td>
+            </tr>
+            <tr>
+              <td>S5</td>
+              <td>Medium</td>
+              <td>Projection rescan</td>
+              <td>Scan only the new message in <code>hydrateSubagentContent</code></td>
+              <td>Medium</td>
+            </tr>
+            <tr>
+              <td>S6</td>
+              <td>Medium</td>
+              <td>Block keys</td>
+              <td>Stable per-block keys instead of <code>native-${i}</code></td>
+              <td>Small</td>
+            </tr>
+            <tr>
+              <td>R1</td>
+              <td>Medium</td>
+              <td>Find</td>
+              <td>Debounce + cached lowercase + match cap</td>
+              <td>Small</td>
+            </tr>
+            <tr>
+              <td>N1</td>
+              <td>Medium</td>
+              <td>Autocomplete</td>
+              <td>Apply seq guard on callback paths</td>
+              <td>Trivial</td>
+            </tr>
+            <tr>
+              <td>B1</td>
+              <td>Medium</td>
+              <td>Voice bundle</td>
+              <td>Lazy-import voice store on first intent</td>
+              <td>Small</td>
+            </tr>
+            <tr>
+              <td>S3b/B2</td>
+              <td>Low</td>
+              <td>hljs</td>
+              <td>Defer highlight pipeline until first fence</td>
+              <td>Small</td>
+            </tr>
+            <tr>
+              <td>L1–L3, N2–N3, R2–R4</td>
+              <td>Low</td>
+              <td>Misc</td>
+              <td>See individual findings</td>
+              <td>Small each</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2 id="clean">Checked clean</h2>
+      <ul class="clean">
+        <li>
+          <strong>TextBlock streaming</strong> — writes only the slice since the last write, ends the parser once, cancels pending highlight timers on teardown
+          (TextBlock.svelte:27–54).
+        </li>
+        <li><strong>Code-fence highlighting</strong> — throttled to one pass per 100&nbsp;ms with trailing flush; the right pattern S2's ANSI path should copy.</li>
+        <li>
+          <strong>Connection lifecycle</strong> — stale-socket guards everywhere, pending requests rejected on replace/close, restore fan-out parallel, replays cursor-based;
+          duplicate-tab id guard via BroadcastChannel.
+        </li>
+        <li>
+          <strong>Composer flows</strong> — optimistic user message and transient bash UI before the await, draft restore on failure, connection-loss treated as "outcome unknown"
+          rather than double-send.
+        </li>
+        <li><strong>Folder search</strong> — server-authoritative, debounced, epoch/monotonic-token guarded with a bounded stale-retry budget.</li>
+        <li><strong>Virtualization</strong> — stable path keys, overscan 5, per-row ResizeObserver measurement, lazy session-list fetch limited to rendered rows.</li>
+        <li><strong>Transcript DOM</strong> — keyed each at row level with stable message keys; row usage summarization indexed once per snapshot instead of per row.</li>
+        <li><strong>ImagePreview</strong> — <code>loading="lazy"</code> + <code>decoding="async"</code>.</li>
+        <li>
+          <strong>Listener hygiene</strong> — every <code>onMount</code> listener, observer, and timer found in Panel, ActiveSessionBar, BranchExplorer, MessageList, InputBar,
+          SwipeableCard has a matching removal.
+        </li>
+        <li>
+          <strong>Service worker</strong> — no precache (intentional, network-required app), fetch handler scoped to the share-target endpoint, per-client focus map bounded by tab
+          count.
+        </li>
+      </ul>
+    </div>
+  </body>
+</html>
