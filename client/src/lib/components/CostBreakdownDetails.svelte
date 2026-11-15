@@ -3,6 +3,7 @@
   import type { PimoteUsageBreakdown } from '@pimote/shared';
   import { formatCostUsd, summarizeCostDisclosure } from '$lib/cost-disclosure.js';
   import { formatTokenCount } from '$lib/session-summary.js';
+  import { formatCacheHitRate } from '$lib/usage-summary.js';
 
   interface Props {
     totalCostUsd: number | null | undefined;
@@ -47,20 +48,36 @@
 
 {#if rows.length > 0}
   <div class="cost-breakdown-details min-w-0 text-xs" role="group" aria-label="Cost and token breakdown">
+    {#if !collapsible}
+      <div class="text-muted-foreground mb-1 grid grid-cols-[minmax(0,1fr)_auto_auto] gap-x-3 text-[0.65rem] font-medium tracking-wide uppercase">
+        <span>Category</span>
+        <span class="text-right">Tokens</span>
+        <span class="text-right">Cost</span>
+      </div>
+    {/if}
+
     {#if collapsible}
       <button
         type="button"
-        class="cost-breakdown-toggle text-muted-foreground hover:bg-sidebar-accent/60 focus-visible:ring-ring/50 grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-x-3 rounded-sm px-1 py-1 text-left text-[0.65rem] font-medium tracking-wide uppercase outline-none focus-visible:ring-2"
+        class="cost-breakdown-toggle text-muted-foreground hover:bg-sidebar-accent/60 focus-visible:ring-ring/50 grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 rounded-sm px-1 py-1 text-left outline-none focus-visible:ring-2"
         aria-label={expanded ? 'Collapse usage breakdown' : 'Expand usage breakdown'}
         aria-expanded={expanded}
         onclick={() => (expanded = !expanded)}
       >
-        <span>Category</span>
-        <span class="text-right">Tokens</span>
-        <span class="text-right">Cost</span>
+        <span class="cost-breakdown-preview flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 py-1.5 text-xs tabular-nums" aria-label="Usage preview">
+          {#if tokens}
+            {@const cacheRate = formatCacheHitRate(tokens)}
+            <span>↑{formatTokenCount(tokens.input)}</span>
+            <span>↓{formatTokenCount(tokens.output)}</span>
+            {#if cacheRate}<span>cache: {cacheRate}</span>{/if}
+          {/if}
+          <span class="text-foreground font-medium">{totalCostLabel()}</span>
+        </span>
         <span class="cost-breakdown-chevron {expanded ? 'expanded' : ''}"><ChevronRight class="size-3.5" /></span>
       </button>
-    {:else}
+    {/if}
+
+    {#if collapsible && expanded}
       <div class="text-muted-foreground mb-1 grid grid-cols-[minmax(0,1fr)_auto_auto] gap-x-3 text-[0.65rem] font-medium tracking-wide uppercase">
         <span>Category</span>
         <span class="text-right">Tokens</span>
@@ -91,16 +108,6 @@
         </div>
       </dl>
       {#if !breakdown}<p class="text-muted-foreground mt-2 text-[0.7rem]">Category costs unavailable.</p>{/if}
-    {:else}
-      <div class="cost-breakdown-preview text-muted-foreground flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-1 py-1.5 text-xs tabular-nums" aria-label="Usage preview">
-        {#if tokens}
-          {@const cacheTokens = tokens.cacheRead + tokens.cacheWrite}
-          <span>↑{formatTokenCount(tokens.input)}</span>
-          <span>↓{formatTokenCount(tokens.output)}</span>
-          {#if cacheTokens > 0}<span>cache {formatTokenCount(cacheTokens)}</span>{/if}
-        {/if}
-        <span class="text-foreground font-medium">{totalCostLabel()}</span>
-      </div>
     {/if}
   </div>
 {:else}

@@ -2,7 +2,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
 import { fromStore, writable } from 'svelte/store';
-import type { AgentPath, PimoteAgentMessage, PimoteMessageContent, PimoteSubagentFinalData, PimoteSubagentStartData } from '@pimote/shared';
+import type { AgentPath, PimoteAgentMessage, PimoteMessageContent, PimoteSubagentFinalData, PimoteSubagentStartData, SubagentNodeSnapshot } from '@pimote/shared';
+import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
 import Message from './Message.svelte';
 
 type SubagentContent = Extract<PimoteMessageContent, { type: 'subagent' }>;
@@ -10,9 +11,14 @@ type SubagentKind = SubagentContent['subagentKind'];
 type SubagentState = SubagentContent['subagentState'];
 let component: ReturnType<typeof mount> | undefined;
 
+const chipStateRoot = 'chip-state-root';
+
 afterEach(async () => {
   if (component) await unmount(component);
   component = undefined;
+  sessionRegistry.clearSubagentRoot(chipStateRoot);
+  delete sessionRegistry.sessions[chipStateRoot];
+  sessionRegistry.viewedSessionId = null;
   document.body.replaceChildren();
 });
 
@@ -300,7 +306,51 @@ describe('subagent transcript cards', () => {
     const completionCard = card(target, 'completion');
     expect(completionCard.querySelector('[data-agent-path="team"]')).not.toBeNull();
     expect(section(completionCard, 'Output').querySelector('strong')?.textContent).toBe('deploy');
+    expect(completionCard.textContent).toContain('cache: 37.5%');
     expect(completionCard.textContent).toContain('$0.1250');
+  });
+
+  it('uses current hierarchy state for transcript chips and turns removed agents gray', async () => {
+    const path: AgentPath = ['team', 'worker'];
+    const liveNode: SubagentNodeSnapshot = {
+      path,
+      incarnation: 'live-incarnation',
+      sessionId: 'live-child-session',
+      state: 'running',
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
+      channels: [],
+      waitingFor: [],
+      hasSubgroup: false,
+    };
+    sessionRegistry.addSession(chipStateRoot, '/workspace', 'workspace');
+    sessionRegistry.handleEvent({
+      type: 'subagent_snapshot',
+      sessionId: chipStateRoot,
+      cursor: { epoch: 'chip-state-epoch', sequence: 1 },
+      manifest: { hiddenToolNames: [], hiddenCustomTypes: [] },
+      activeOperations: [],
+      nodes: [liveNode],
+    });
+
+    const awaited = operation({ operation: 'await', parameters: { agents: [path] }, result: { statuses: [{ path, state: 'idle' }] } });
+    const { target } = await render(awaited, { rootSessionId: chipStateRoot });
+    const chips = [...target.querySelectorAll<HTMLElement>('[data-agent-path="team/worker"]')];
+    expect(chips.length).toBeGreaterThan(0);
+    expect(chips.every((chip) => chip.dataset.agentState === 'running')).toBe(true);
+
+    sessionRegistry.handleEvent({
+      type: 'subagent_event',
+      sessionId: chipStateRoot,
+      cursor: 2,
+      eventId: 'remove-live-child',
+      path,
+      kind: 'node_removed',
+      data: { node: { ...liveNode, state: 'idle' }, reason: 'manual' },
+      relatedPiEvents: [],
+    });
+    await tick();
+
+    expect(chips.every((chip) => chip.dataset.agentState === 'unknown')).toBe(true);
   });
 
   it('renders interrupt outcomes as agent rows with bounded error content', async () => {

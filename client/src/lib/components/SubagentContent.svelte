@@ -1,6 +1,7 @@
 <script lang="ts">
-  import type { AgentPath, PimoteMessageContent, PimoteSubagentAwaitResult, SubagentNodeSnapshot, SubagentUsage } from '@pimote/shared';
+  import type { AgentPath, PimoteMessageContent, SubagentUsage } from '@pimote/shared';
   import { formatTokenCount } from '$lib/session-summary.js';
+  import { formatCacheHitRate } from '$lib/usage-summary.js';
   import { observeFullyOffscreen } from '$lib/auto-collapse.js';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { panelStore } from '$lib/stores/panel-store.svelte.js';
@@ -14,13 +15,10 @@
   import XCircle from '@lucide/svelte/icons/x-circle';
 
   type SubagentContent = Extract<PimoteMessageContent, { type: 'subagent' }>;
-  type AgentState = PimoteSubagentAwaitResult['statuses'][number]['state'] | SubagentNodeSnapshot['state'];
   type AgentReference = Readonly<{
     path: AgentPath;
-    state?: AgentState;
     persona?: string;
     personaIcon?: string;
-    resolveLiveState?: boolean;
   }>;
 
   let {
@@ -127,7 +125,7 @@
       return from ? [{ path: from }] : [];
     }
     if (data.operation === 'delegation') {
-      return data.result.children.map((child) => ({ path: child.path, ...(child.persona !== undefined ? { persona: child.persona } : {}), resolveLiveState: false }));
+      return data.result.children.map((child) => ({ path: child.path, ...(child.persona !== undefined ? { persona: child.persona } : {}) }));
     }
     if (data.operation === 'send') {
       const parameters = 'parameters' in data ? data.parameters : undefined;
@@ -136,21 +134,17 @@
     }
     if (data.operation === 'respond') return block.subagentPath && block.subagentPath.length > 0 ? [{ path: block.subagentPath }] : [];
     if (data.operation === 'await') {
-      if (data.result.statuses.length > 0) return data.result.statuses.map((status) => ({ path: status.path, state: status.state }));
+      if (data.result.statuses.length > 0) return data.result.statuses.map(({ path }) => ({ path }));
       return pathsFrom(data.parameters.agents);
     }
     if (data.operation === 'completion') {
-      return block.subagentPath && block.subagentPath.length > 0 ? [{ path: block.subagentPath, state: data.result.state }] : [];
+      return block.subagentPath && block.subagentPath.length > 0 ? [{ path: block.subagentPath }] : [];
     }
     if (data.operation === 'interrupt') {
-      return [
-        ...data.result.interrupted.map((agent) => ({ path: agent.path, state: 'stopped' as const })),
-        ...data.result.pending.map((agent) => ({ path: agent.path })),
-        ...data.result.failed.map((agent) => ({ path: agent.path, state: 'dead' as const })),
-      ];
+      return [...data.result.interrupted.map(({ path }) => ({ path })), ...data.result.pending.map(({ path }) => ({ path })), ...data.result.failed.map(({ path }) => ({ path }))];
     }
     if (data.operation === 'teardown' || data.operation === 'resurrect') {
-      return data.result.affectedAgents.map((agent) => ({ path: agent.path, state: agent.state }));
+      return data.result.affectedAgents.map(({ path }) => ({ path }));
     }
     return [];
   }
@@ -223,8 +217,8 @@
   }
 
   function usageLabel(usage: SubagentUsage): string {
-    const cache = usage.cacheRead + usage.cacheWrite;
-    const cacheText = cache > 0 ? ` · cache ${formatTokenCount(cache)}` : '';
+    const cacheRate = formatCacheHitRate(usage);
+    const cacheText = cacheRate ? ` · cache: ${cacheRate}` : '';
     return `↑${formatTokenCount(usage.input)} ↓${formatTokenCount(usage.output)}${cacheText} · $${usage.cost.toFixed(4)} · ${usage.turns} ${usage.turns === 1 ? 'turn' : 'turns'}`;
   }
 
@@ -259,14 +253,7 @@
     <span class="subagent-name">{title}</span>
     <span class="subagent-detail" title={detail.replace(/\s+/g, ' ').trim()}>
       {#each headerReferences as reference, index (`${reference.path.join('/')}:${index}`)}
-        <AgentChip
-          path={reference.path}
-          {rootSessionId}
-          persona={reference.persona}
-          personaIcon={reference.personaIcon}
-          state={reference.state}
-          resolveLiveState={reference.resolveLiveState}
-        />
+        <AgentChip path={reference.path} {rootSessionId} persona={reference.persona} personaIcon={reference.personaIcon} />
       {/each}
       {#if extraReferenceCount > 0}<span class="subagent-more-agents">+{extraReferenceCount}</span>{/if}
       {#if detail}<span class="subagent-detail-text">{detail.replace(/\s+/g, ' ').trim()}</span>{/if}
@@ -280,7 +267,7 @@
         {#each content.data.result.children as child (child.path.join('/'))}
           <div class="subagent-child">
             <div class="subagent-agent-row">
-              <AgentChip path={child.path} {rootSessionId} persona={child.persona} resolveLiveState={false} />
+              <AgentChip path={child.path} {rootSessionId} persona={child.persona} />
               {#if rootSessionId && child.path.length > 0}
                 <button
                   type="button"
@@ -322,7 +309,7 @@
         {#if content.data.result.statuses.length > 0}
           {#each content.data.result.statuses as agent (agent.path.join('/'))}
             <div class="subagent-agent-block">
-              <div class="subagent-agent-row"><AgentChip path={agent.path} {rootSessionId} state={agent.state} /></div>
+              <div class="subagent-agent-row"><AgentChip path={agent.path} {rootSessionId} /></div>
               <SubagentMarkdown label="Output" text={agent.output} streaming={active} />
               <SubagentMarkdown label="Error" text={agent.error} />
               {#if agent.sessionId}<div class="subagent-meta">Session {agent.sessionId}</div>{/if}
@@ -343,7 +330,7 @@
       {:else if content.data.operation === 'interrupt'}
         {#each content.data.result.interrupted as agent (agent.path.join('/'))}
           <div class="subagent-agent-block">
-            <div class="subagent-agent-row"><AgentChip path={agent.path} {rootSessionId} state="stopped" /><span class="subagent-row-status">Interrupted</span></div>
+            <div class="subagent-agent-row"><AgentChip path={agent.path} {rootSessionId} /><span class="subagent-row-status">Interrupted</span></div>
             <SubagentMarkdown label="Output" text={agent.output} />
             <SubagentMarkdown label="Error" text={agent.error} />
           </div>
@@ -356,14 +343,14 @@
         {/each}
         {#each content.data.result.failed as agent (agent.path.join('/'))}
           <div class="subagent-agent-block">
-            <div class="subagent-agent-row"><AgentChip path={agent.path} {rootSessionId} state="dead" /><span class="subagent-row-status">Failed</span></div>
+            <div class="subagent-agent-row"><AgentChip path={agent.path} {rootSessionId} /><span class="subagent-row-status">Failed</span></div>
             <SubagentMarkdown label="Error" text={agent.error} />
           </div>
         {/each}
       {:else if content.data.operation === 'teardown'}
         {#each content.data.result.affectedAgents as agent (agent.path.join('/'))}
           <div class="subagent-agent-row subagent-lifecycle-row">
-            <AgentChip path={agent.path} {rootSessionId} state={agent.state} />
+            <AgentChip path={agent.path} {rootSessionId} />
             <span class="subagent-usage">{usageLabel(agent.usage)}</span>
           </div>
         {/each}
@@ -371,7 +358,7 @@
         {#each content.data.result.affectedAgents as agent (agent.path.join('/'))}
           <div class="subagent-agent-block">
             <div class="subagent-agent-row">
-              <AgentChip path={agent.path} {rootSessionId} state={agent.state} />
+              <AgentChip path={agent.path} {rootSessionId} />
               {#if rootSessionId && agent.path.length > 0}
                 <button
                   type="button"

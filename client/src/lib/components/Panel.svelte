@@ -21,6 +21,7 @@
 
   let { onClose }: Props = $props();
   let inspectedPath = $state<AgentPath | null>(null);
+  let collapsedInspectorPath = $state<AgentPath | null>(null);
   let notice = $state<SubagentViewClosedNotice | null>(null);
   let teardownConfirmation = $state<SubagentTeardownConfirmation | null>(null);
   let resurrectOpen = $state(false);
@@ -76,7 +77,10 @@
   });
   const rows = $derived(rootState ? projectSubagentPanelRows({ nodes: rootState.nodes }, panelState) : ([] as readonly SubagentPanelRow[]));
   const inspectedNode = $derived(rootState && inspectedPath ? (rootState.nodes.find((node) => samePath(node.path, inspectedPath)) ?? null) : null);
-  const inspectorNode = $derived(inspectedNode ?? (selectedPath && rootState ? (rootState.nodes.find((node) => samePath(node.path, selectedPath)) ?? null) : null));
+  const selectedInspectorNode = $derived(
+    rootState && selectedPath && !samePath(selectedPath, collapsedInspectorPath) ? (rootState.nodes.find((node) => samePath(node.path, selectedPath)) ?? null) : null,
+  );
+  const inspectorNode = $derived(inspectedNode ?? selectedInspectorNode);
   const inspectorViewOpen = $derived(rows.some((row) => row.viewOpen && samePath(row.path, inspectorNode?.path)));
   const openCount = $derived(openChildPaths.length);
   const hasHierarchy = $derived((rootState?.nodes.length ?? 0) > 0);
@@ -126,7 +130,13 @@
   }
 
   function inspect(path: AgentPath): void {
-    inspectedPath = [...path];
+    if (samePath(path, inspectorNode?.path)) {
+      inspectedPath = null;
+      collapsedInspectorPath = [...path];
+    } else {
+      inspectedPath = [...path];
+      collapsedInspectorPath = null;
+    }
     clearNoticeExpiry();
     notice = null;
   }
@@ -135,6 +145,7 @@
     const rootId = rootSessionId;
     if (!rootId) return;
     inspectedPath = null;
+    collapsedInspectorPath = null;
     sessionRegistry.selectSubagentView(rootId, null);
     if (panelStore.isDrawer) panelStore.closePanel();
   }
@@ -142,6 +153,7 @@
   async function openView(path: AgentPath): Promise<void> {
     const rootId = rootSessionId;
     if (!rootId || path.length === 0) return;
+    collapsedInspectorPath = null;
     busy = true;
     if (panelStore.isDrawer) panelStore.closePanel();
     try {
@@ -156,6 +168,7 @@
     if (!rootId) return;
     const attachment = sessionRegistry.getSubagentAttachment(rootId, path);
     if (attachment && !attachment.closed) {
+      collapsedInspectorPath = null;
       sessionRegistry.selectSubagentView(rootId, path);
       if (panelStore.isDrawer) panelStore.closePanel();
       return;
@@ -377,7 +390,8 @@
         <div class="space-y-0.5">
           {#each rows as row (pathLabel(row.path))}
             <div
-              class="tree-row grid min-w-0 items-center gap-x-1 gap-y-0.5 rounded-md border border-transparent py-0.5 pr-1 transition-colors {row.inspected
+              class="tree-row hover:bg-sidebar-accent/60 grid min-w-0 items-center gap-x-1 gap-y-0.5 rounded-md border border-transparent py-0.5 pr-1 transition-colors {row.inspected ||
+              samePath(inspectorNode?.path, row.path)
                 ? 'border-ring/60 bg-sidebar-accent'
                 : ''}"
               data-node={pathLabel(row.path)}
@@ -385,22 +399,16 @@
             >
               <button
                 type="button"
-                class="tree-row-select hover:bg-sidebar-accent/60 focus-visible:ring-ring/50 flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 text-left outline-none focus-visible:ring-2 max-md:min-h-11 max-md:py-2.5"
-                class:selected={row.inspected}
+                class="tree-row-select focus-visible:ring-ring/50 flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 text-left outline-none focus-visible:ring-2 max-md:min-h-11 max-md:py-2.5"
+                class:selected={row.inspected || samePath(inspectorNode?.path, row.path)}
                 aria-current={row.viewOpen && selectedPath && samePath(selectedPath, row.path) ? 'page' : undefined}
+                aria-expanded={samePath(inspectorNode?.path, row.path)}
                 aria-label={`Inspect ${pathLabel(row.path)}`}
                 onclick={() => inspect(row.path)}
               >
                 <span class="min-w-0 flex-1">
                   <span class="block min-w-0 truncate">
-                    <AgentChip
-                      path={row.path}
-                      rootSessionId={rootSessionId ?? ''}
-                      name={row.label}
-                      persona={row.metadata.persona}
-                      personaIcon={row.metadata.personaIcon}
-                      state={row.metadata.state}
-                    />
+                    <AgentChip path={row.path} rootSessionId={rootSessionId ?? ''} name={row.label} persona={row.metadata.persona} personaIcon={row.metadata.personaIcon} />
                   </span>
                   <span class="text-muted-foreground block truncate text-[11px]">{row.metadata.state}</span>
                 </span>
@@ -422,101 +430,96 @@
                 <ExternalLink class="size-3.5" />
                 <span class="hidden max-md:inline">{row.viewOpen ? 'View' : 'Open'}</span>
               </Button>
-              {#if row.metadata.activity}
+              {#if row.metadata.activity && !samePath(inspectorNode?.path, row.path)}
                 <dl class="tree-row-command">
                   <dt>Last command</dt>
                   <dd><code title={row.metadata.activity}>{row.metadata.activity}</code></dd>
                 </dl>
               {/if}
+              {#if inspectorNode && samePath(inspectorNode.path, row.path)}
+                <section class="agent-inspector border-sidebar-border/70 border-t pt-3 pb-3" aria-label="Selected subagent details">
+                  <div class="flex items-center gap-2">
+                    <AgentChip path={inspectorNode.path} rootSessionId={rootSessionId ?? ''} persona={inspectorNode.persona} personaIcon={inspectorNode.personaIcon} />
+                    <span class="text-muted-foreground ml-auto rounded-full border px-1.5 py-0.5 text-[10px]">{inspectorViewOpen ? 'View open' : 'View closed'}</span>
+                  </div>
+                  <div class="mt-3 grid grid-cols-2 gap-x-3 gap-y-2">
+                    <div>
+                      <span class="metadata-label">Model</span><span>{inspectorNode.model ?? '—'}{inspectorNode.thinkingLevel ? ` · ${inspectorNode.thinkingLevel}` : ''}</span>
+                    </div>
+                    <div><span class="metadata-label">Turns</span><span>{inspectorNode.usage?.turns ?? '—'}</span></div>
+                    <div><span class="metadata-label">Channels</span><span>{inspectorNode.channels?.join(' · ') || '—'}</span></div>
+                    {#if inspectorNode.waitingFor && inspectorNode.waitingFor.length > 0}
+                      <div><span class="metadata-label">Waits</span><span>{inspectorNode.waitingFor.map(pathLabel).join(' · ')}</span></div>
+                    {/if}
+                  </div>
+                  {#if inspectorNode.usage}
+                    {@const usage = inspectorNode.usage}
+                    {@const breakdown = usageBreakdownForNode(usage)}
+                    {@const tokenBreakdown = usageTokensForNode(usage)}
+                    <div class="agent-inspector-usage" aria-label="Subagent usage">
+                      {#key pathLabel(inspectorNode.path)}
+                        <CostBreakdownDetails totalCostUsd={usage.cost} {breakdown} {tokenBreakdown} collapsible />
+                      {/key}
+                    </div>
+                  {/if}
+                  {#if inspectorNode.activity}
+                    <dl class="agent-inspector-command">
+                      <dt class="metadata-label">Last command</dt>
+                      <dd><code title={inspectorNode.activity}>{inspectorNode.activity}</code></dd>
+                    </dl>
+                  {/if}
+                  {#if inspectorNode.lastError}<p class="text-destructive mt-2 truncate text-xs">Error: {inspectorNode.lastError}</p>{:else if inspectorNode.lastOutput}<p
+                      class="text-muted-foreground mt-2 truncate text-xs"
+                    >
+                      Last output: {inspectorNode.lastOutput}
+                    </p>{/if}
+                  <div class="agent-inspector-actions mt-3 flex flex-wrap items-center gap-1.5">
+                    {#if selectedPath && samePath(selectedPath, inspectorNode.path)}
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        class="open-action text-muted-foreground hover:text-foreground max-md:min-h-11 max-md:min-w-[4.5rem] max-md:justify-center"
+                        aria-label="Close child view"
+                        title="Close child view"
+                        disabled={busy}
+                        onclick={() => void closeChildView()}
+                      >
+                        <X class="size-3.5" />
+                        <span class="hidden max-md:inline">Close</span>
+                      </Button>
+                    {/if}
+                    {#if isInterruptible(inspectorNode.state)}
+                      <Button
+                        variant="destructive"
+                        size="xs"
+                        class="mb-1 gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors max-md:min-h-11"
+                        aria-label={`Interrupt ${pathLabel(inspectorNode.path)}`}
+                        title="Interrupt agent"
+                        disabled={busy}
+                        onclick={() => void interruptSubagent(inspectorNode!.path)}
+                      >
+                        <OctagonX class="size-4" />
+                        <span>Interrupt</span>
+                      </Button>
+                    {/if}
+                    {#if inspectorNode.state !== 'errored' && inspectorNode.state !== 'dead'}
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        class="row-teardown text-muted-foreground hover:text-destructive hover:bg-destructive/10 ml-auto max-md:size-11"
+                        aria-label={`Teardown ${pathLabel(inspectorNode.path)}`}
+                        title={`Teardown ${pathLabel(inspectorNode.path)}`}
+                        disabled={busy}
+                        onclick={() => requestTeardown(inspectorNode.path)}
+                      >
+                        <Trash2 class="size-3" />
+                      </Button>
+                    {/if}
+                  </div>
+                </section>
+              {/if}
             </div>
           {/each}
-        </div>
-      </section>
-    {/if}
-
-    {#if inspectorNode}
-      <section class="agent-inspector border-sidebar-border/70 border-b px-2.5 py-3" aria-label="Selected subagent details">
-        <div class="flex items-center gap-2">
-          <AgentChip
-            path={inspectorNode.path}
-            rootSessionId={rootSessionId ?? ''}
-            persona={inspectorNode.persona}
-            personaIcon={inspectorNode.personaIcon}
-            state={inspectorNode.state}
-          />
-          <span class="text-muted-foreground ml-auto rounded-full border px-1.5 py-0.5 text-[10px]">{inspectorViewOpen ? 'View open' : 'View closed'}</span>
-        </div>
-        <div class="mt-3 grid grid-cols-2 gap-x-3 gap-y-2">
-          <div><span class="metadata-label">Model</span><span>{inspectorNode.model ?? '—'}{inspectorNode.thinkingLevel ? ` · ${inspectorNode.thinkingLevel}` : ''}</span></div>
-          <div><span class="metadata-label">Turns</span><span>{inspectorNode.usage?.turns ?? '—'}</span></div>
-          <div><span class="metadata-label">Channels</span><span>{inspectorNode.channels?.join(' · ') || '—'}</span></div>
-          {#if inspectorNode.waitingFor && inspectorNode.waitingFor.length > 0}
-            <div><span class="metadata-label">Waits</span><span>{inspectorNode.waitingFor.map(pathLabel).join(' · ')}</span></div>
-          {/if}
-        </div>
-        {#if inspectorNode.usage}
-          {@const usage = inspectorNode.usage}
-          {@const breakdown = usageBreakdownForNode(usage)}
-          {@const tokenBreakdown = usageTokensForNode(usage)}
-          <div class="agent-inspector-usage" aria-label="Subagent usage">
-            {#key pathLabel(inspectorNode.path)}
-              <CostBreakdownDetails totalCostUsd={usage.cost} {breakdown} {tokenBreakdown} collapsible />
-            {/key}
-          </div>
-        {/if}
-        {#if inspectorNode.activity}
-          <dl class="agent-inspector-command">
-            <dt class="metadata-label">Last command</dt>
-            <dd><code title={inspectorNode.activity}>{inspectorNode.activity}</code></dd>
-          </dl>
-        {/if}
-        {#if inspectorNode.lastError}<p class="text-destructive mt-2 truncate text-xs">Error: {inspectorNode.lastError}</p>{:else if inspectorNode.lastOutput}<p
-            class="text-muted-foreground mt-2 truncate text-xs"
-          >
-            Last output: {inspectorNode.lastOutput}
-          </p>{/if}
-        <div class="agent-inspector-actions mt-3 flex flex-wrap items-center gap-1.5">
-          {#if selectedPath && samePath(selectedPath, inspectorNode.path)}
-            <Button
-              variant="ghost"
-              size="xs"
-              class="open-action text-muted-foreground hover:text-foreground max-md:min-h-11 max-md:min-w-[4.5rem] max-md:justify-center"
-              aria-label="Close child view"
-              title="Close child view"
-              disabled={busy}
-              onclick={() => void closeChildView()}
-            >
-              <X class="size-3.5" />
-              <span class="hidden max-md:inline">Close</span>
-            </Button>
-          {/if}
-          {#if isInterruptible(inspectorNode.state)}
-            <Button
-              variant="destructive"
-              size="xs"
-              class="mb-1 gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors max-md:min-h-11"
-              aria-label={`Interrupt ${pathLabel(inspectorNode.path)}`}
-              title="Interrupt agent"
-              disabled={busy}
-              onclick={() => void interruptSubagent(inspectorNode!.path)}
-            >
-              <OctagonX class="size-4" />
-              <span>Interrupt</span>
-            </Button>
-          {/if}
-          {#if inspectorNode.state !== 'errored' && inspectorNode.state !== 'dead'}
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              class="row-teardown text-muted-foreground hover:text-destructive hover:bg-destructive/10 ml-auto max-md:size-11"
-              aria-label={`Teardown ${pathLabel(inspectorNode.path)}`}
-              title={`Teardown ${pathLabel(inspectorNode.path)}`}
-              disabled={busy}
-              onclick={() => requestTeardown(inspectorNode.path)}
-            >
-              <Trash2 class="size-3" />
-            </Button>
-          {/if}
         </div>
       </section>
     {/if}
@@ -600,6 +603,12 @@
   }
   .tree-row {
     grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+  .agent-inspector {
+    grid-column: 1 / -1;
+    min-width: 0;
+    padding-inline-start: calc(0.5rem + var(--tree-indent));
+    padding-inline-end: 0.5rem;
   }
   .tree-row-select {
     padding-inline-start: calc(0.5rem + var(--tree-indent));

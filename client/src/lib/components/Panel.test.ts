@@ -153,6 +153,7 @@ describe('Panel hierarchy navigation', () => {
     expect(mainCommand?.parentElement).toBe(mainRow);
     expect(mainRow?.querySelector('[data-folder-icon="persona"]')).not.toBeNull();
     const mainRowButton = mainRow?.querySelector<HTMLButtonElement>('button[aria-label="Inspect worker"]');
+    expect(mainRowButton?.getAttribute('aria-expanded')).toBe('false');
     expect(mainRowButton?.textContent?.match(/worker/g)).toHaveLength(1);
     expect(mainRowButton?.textContent).toContain('waiting');
     const mainContext = mainRow?.querySelector('.tree-row-meta');
@@ -160,17 +161,22 @@ describe('Panel hierarchy navigation', () => {
     expect(mainContext?.textContent).toContain('31%');
     expect(mainOpenButton).not.toBeNull();
     expect(mainContext!.compareDocumentPosition(mainOpenButton!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(mainRow?.classList.contains('hover:bg-sidebar-accent/60')).toBe(true);
+    expect(mainRowButton?.classList.contains('hover:bg-sidebar-accent/60')).toBe(false);
 
     target.querySelector<HTMLButtonElement>('button[aria-label="Inspect worker"]')!.click();
     await tick();
 
     const hierarchy = target.querySelector('[aria-label="Subagents"]')!;
     const details = target.querySelector('[aria-label="Selected subagent details"]')!;
+    const nestedRow = target.querySelector<HTMLElement>('[data-node="worker/scout"]')!;
+    expect(mainRowButton?.getAttribute('aria-expanded')).toBe('true');
     expect(details).not.toBeNull();
-    expect(hierarchy.contains(details)).toBe(false);
-    expect(hierarchy.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(mainRow?.contains(details)).toBe(true);
+    expect(mainRow!.compareDocumentPosition(nestedRow) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(hierarchy.querySelector('button[aria-label="Inspect worker/scout"]')).not.toBeNull();
     expect(target.querySelectorAll('[aria-label="Selected subagent details"]')).toHaveLength(1);
+    expect(mainRow?.querySelector('dl.tree-row-command')).toBeNull();
     expect(details.textContent).not.toContain(initialTask);
     expect(details.textContent).toContain('reviewer');
     expect(details.textContent).not.toContain('Persona');
@@ -190,8 +196,18 @@ describe('Panel hierarchy navigation', () => {
     const expand = breakdown?.querySelector<HTMLButtonElement>('button[aria-label="Expand usage breakdown"]');
     expect(expand?.getAttribute('aria-expanded')).toBe('false');
     expect(breakdown?.querySelector('dl')).toBeNull();
+    expect(breakdown?.textContent).not.toContain('Category');
+    expect(breakdown?.textContent).not.toContain('Tokens');
+    expect(breakdown?.textContent).not.toContain('Cost');
+    const collapsedSummary = expand?.querySelector('[aria-label="Usage preview"]');
+    const collapsedChevron = expand?.querySelector('.cost-breakdown-chevron');
+    expect(collapsedSummary).not.toBeNull();
+    expect(collapsedChevron).not.toBeNull();
+    expect(collapsedSummary!.compareDocumentPosition(collapsedChevron!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(breakdown?.querySelector('[aria-label="Usage preview"]')?.textContent).toContain('↑500');
     expect(breakdown?.querySelector('[aria-label="Usage preview"]')?.textContent).toContain('↓200');
+    expect(breakdown?.querySelector('[aria-label="Usage preview"]')?.textContent).toContain('cache: 7.7%');
+    expect(breakdown?.querySelector('[aria-label="Usage preview"]')?.textContent).not.toContain('150');
     expect(breakdown?.querySelector('[aria-label="Usage preview"]')?.textContent).toContain('4.00¢');
     expand?.click();
     await tick();
@@ -210,7 +226,32 @@ describe('Panel hierarchy navigation', () => {
     await tick();
     expect(breakdown?.querySelector('dl')).toBeNull();
     expect(sessionRegistry.viewedSurface?.kind).toBe('root');
+
+    mainRowButton?.click();
+    await tick();
+    expect(target.querySelector('[aria-label="Selected subagent details"]')).toBeNull();
+    expect(mainRowButton?.getAttribute('aria-expanded')).toBe('false');
+    expect(mainRow?.querySelector('dl.tree-row-command')).not.toBeNull();
     expect(sessionRegistry.getSubagentAttachment('root', ['worker'])?.messages[0].content[0]).toMatchObject({ type: 'text', text: initialTask });
+  });
+
+  it('collapses details for a child whose view is already selected without closing that view', async () => {
+    sessionRegistry.selectSubagentView('root', ['worker']);
+    const target = render();
+    await tick();
+
+    const row = target.querySelector<HTMLElement>('[data-node="worker"]')!;
+    const inspectButton = row.querySelector<HTMLButtonElement>('button[aria-label="Inspect worker"]')!;
+    expect(inspectButton.getAttribute('aria-expanded')).toBe('true');
+    expect(row.querySelector('[aria-label="Selected subagent details"]')).not.toBeNull();
+
+    inspectButton.click();
+    await tick();
+
+    expect(row.querySelector('[aria-label="Selected subagent details"]')).toBeNull();
+    expect(inspectButton.getAttribute('aria-expanded')).toBe('false');
+    expect(sessionRegistry.viewedSurface?.kind).toBe('child');
+    expect(sessionRegistry.getSelectedSubagentPath('root')).toEqual(['worker']);
   });
 
   it('previews tokens when collapsed and shows their rows when category costs are missing', async () => {
@@ -243,6 +284,7 @@ describe('Panel hierarchy navigation', () => {
     const preview = breakdown?.querySelector('[aria-label="Usage preview"]');
     expect(preview?.textContent).toContain('↑500');
     expect(preview?.textContent).toContain('↓200');
+    expect(preview?.textContent).toContain('cache: 7.7%');
     expect(preview?.textContent).toContain('4.00¢');
     const expand = breakdown?.querySelector<HTMLButtonElement>('button[aria-label="Expand usage breakdown"]');
     expand?.click();

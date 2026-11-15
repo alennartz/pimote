@@ -1,9 +1,7 @@
 <script lang="ts">
-  import type { AgentPath, PimoteSubagentAwaitResult, SubagentNodeSnapshot } from '@pimote/shared';
+  import type { AgentPath } from '@pimote/shared';
   import FolderNatureIcon from './FolderNatureIcon.svelte';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
-
-  type AgentState = PimoteSubagentAwaitResult['statuses'][number]['state'] | SubagentNodeSnapshot['state'];
 
   let {
     path,
@@ -11,17 +9,12 @@
     name = undefined,
     persona = undefined,
     personaIcon = undefined,
-    state = undefined,
-    resolveLiveState = true,
   }: {
     path: AgentPath;
     rootSessionId?: string;
     name?: string;
     persona?: string;
     personaIcon?: string;
-    state?: AgentState;
-    /** Use the latest known state from the hierarchy when no snapshot state is supplied. */
-    resolveLiveState?: boolean;
   } = $props();
 
   let node = $derived(rootSessionId && path.length > 0 ? sessionRegistry.getSubagentNode(rootSessionId, path) : null);
@@ -29,7 +22,7 @@
   let displayName = $derived(name ?? path.at(-1) ?? 'root');
   let displayPersona = $derived(persona ?? node?.persona ?? closedNode?.persona);
   let displayPersonaIcon = $derived(personaIcon ?? node?.personaIcon ?? closedNode?.personaIcon);
-  let displayState = $derived(state ?? (resolveLiveState ? (node?.state ?? closedNode?.state) : undefined));
+  let displayState = $derived(node?.state);
   let label = $derived(displayPersona ? `${displayPersona}:${displayName}` : displayName);
   let fullPath = $derived(path.length > 0 ? path.join('/') : 'root');
 </script>
