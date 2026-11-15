@@ -20,10 +20,16 @@
     return { value: raw, label: text.trim() };
   }
 
+  // A question appears without user action, so a tap already traveling toward
+  // the panel must not answer it.
+  const TAP_GUARD_MS = 400;
+
   const uiQueue = getExtensionUiQueue();
   let highlightIndex = $state(-1);
   let collapsed = $state(false);
   let panelEl: HTMLDivElement | undefined = $state();
+  let tapGuardUntil = 0;
+  let guardedRequestKey: string | null = null;
 
   // Filter to only show dialogs for the currently viewed session
   let current = $derived.by(() => {
@@ -31,12 +37,15 @@
     return uiQueue.all.find((r) => INLINE_METHODS.has(r.method) && r.sessionId === viewedId) ?? null;
   });
 
-  // Reset highlight + expand when a new request appears
+  // Reset highlight + expand, and re-arm the tap guard, when a new request appears
   $effect(() => {
-    if (current) {
-      highlightIndex = -1;
-      collapsed = false;
-    }
+    if (!current) return;
+    const key = `${current.sessionId}\u0000${current.requestId}`;
+    if (key === guardedRequestKey) return;
+    guardedRequestKey = key;
+    highlightIndex = -1;
+    collapsed = false;
+    tapGuardUntil = Date.now() + TAP_GUARD_MS;
   });
 
   // Focus the first answer unless the user is composing a non-empty draft.
@@ -94,11 +103,27 @@
     uiQueue.sendResponse(current.requestId, current.sessionId, data);
   }
 
-  function handleSelect(value: string) {
+  // A pointer activation inside the window is a stray tap. Key and assistive
+  // activations report detail 0 and stay deliberate.
+  function guarded(event: MouseEvent): boolean {
+    return event.detail > 0 && Date.now() < tapGuardUntil;
+  }
+
+  function handleSelect(event: MouseEvent, value: string) {
+    if (guarded(event)) return;
+    respondSelect(value);
+  }
+
+  function handleConfirm(event: MouseEvent, confirmed: boolean) {
+    if (guarded(event)) return;
+    respondConfirm(confirmed);
+  }
+
+  function respondSelect(value: string) {
     sendResponse({ value });
   }
 
-  function handleConfirm(confirmed: boolean) {
+  function respondConfirm(confirmed: boolean) {
     sendResponse({ confirmed });
   }
 
@@ -114,7 +139,7 @@
         const idx = parseInt(event.key) - 1;
         if (idx < normalizedOptions.length) {
           event.preventDefault();
-          handleSelect(normalizedOptions[idx]!.value);
+          respondSelect(normalizedOptions[idx]!.value);
           return;
         }
       }
@@ -131,7 +156,7 @@
 
       if (event.key === 'Enter' && event.target === panelEl && highlightIndex >= 0 && highlightIndex < normalizedOptions.length) {
         event.preventDefault();
-        handleSelect(normalizedOptions[highlightIndex]!.value);
+        respondSelect(normalizedOptions[highlightIndex]!.value);
         return;
       }
     }
@@ -139,12 +164,12 @@
     if (current?.method === 'confirm') {
       if (event.key === 'y' || event.key === 'Y') {
         event.preventDefault();
-        handleConfirm(true);
+        respondConfirm(true);
         return;
       }
       if (event.key === 'n' || event.key === 'N') {
         event.preventDefault();
-        handleConfirm(false);
+        respondConfirm(false);
         return;
       }
     }
@@ -198,7 +223,7 @@
               class="select-option"
               data-inline-answer
               class:highlighted={i === highlightIndex}
-              onclick={() => handleSelect(option.value)}
+              onclick={(event) => handleSelect(event, option.value)}
               onmouseenter={() => (highlightIndex = i)}
               onfocus={() => (highlightIndex = i)}
             >
@@ -239,8 +264,8 @@
           <div class="panel-description">{current.message}</div>
         {/if}
         <div class="confirm-actions">
-          <Button variant="outline" data-inline-answer onclick={() => handleConfirm(false)}>No</Button>
-          <Button data-inline-answer onclick={() => handleConfirm(true)}>Yes</Button>
+          <Button variant="outline" data-inline-answer onclick={(event) => handleConfirm(event, false)}>No</Button>
+          <Button data-inline-answer onclick={(event) => handleConfirm(event, true)}>Yes</Button>
         </div>
         <div class="panel-hint">
           <span><kbd>Y</kbd> yes</span>

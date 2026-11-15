@@ -75,6 +75,14 @@ function pressEnter(element: HTMLButtonElement): void {
   if (element.dispatchEvent(event)) element.click(); // jsdom does not synthesize native button activation.
 }
 
+// A pointer tap reports a click count; keyboard and scripted clicks report 0.
+function tap(element: HTMLButtonElement): void {
+  element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
+}
+
+// Longer than the tap guard window.
+const WAIT_OUT_GUARD = 450;
+
 beforeEach(async () => {
   sessionRegistry.addSession('s1', '/workspace/project', 'project');
   sessionRegistry.switchTo('s1');
@@ -273,5 +281,49 @@ describe('InlineSelect keyboard focus', () => {
     await tick();
     expect(document.activeElement).toBe(collapse);
     expect(collapse.getAttribute('aria-expanded')).toBe('false');
+  });
+});
+
+describe('InlineSelect tap guard', () => {
+  it('ignores a tap that lands as the question appears', async () => {
+    enqueue(selectRequest);
+    await tick();
+    tap(button('Option A'));
+    expect(fakeQueue.sendResponse).not.toHaveBeenCalled();
+  });
+
+  it('ignores a tap on a confirmation button that lands as it appears', async () => {
+    enqueue({ requestId: 'confirm', sessionId: 's1', method: 'confirm', title: 'Confirm' });
+    await tick();
+    tap(button('Yes'));
+    expect(fakeQueue.sendResponse).not.toHaveBeenCalled();
+  });
+
+  it('answers a tap after the guard window', async () => {
+    enqueue(selectRequest);
+    await tick();
+    await new Promise((resolve) => setTimeout(resolve, WAIT_OUT_GUARD));
+    tap(button('Option B'));
+    expect(fakeQueue.sendResponse).toHaveBeenCalledWith('r1', 's1', { value: 'b' });
+  });
+
+  it('arms the guard again for the next question', async () => {
+    enqueue(selectRequest);
+    enqueue({ ...selectRequest, requestId: 'r2', options: [{ label: 'Next answer', value: 'next' }] });
+    await tick();
+    await new Promise((resolve) => setTimeout(resolve, WAIT_OUT_GUARD));
+    tap(button('Option A'));
+    await tick();
+    tap(button('Next answer'));
+    expect(fakeQueue.sendResponse).toHaveBeenCalledTimes(1);
+    expect(fakeQueue.sendResponse).toHaveBeenCalledWith('r1', 's1', { value: 'a' });
+  });
+
+  it('keeps keyboard answers available during the guard', async () => {
+    enqueue(selectRequest);
+    await tick();
+    const first = button('Option A');
+    first.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true, cancelable: true }));
+    expect(fakeQueue.sendResponse).toHaveBeenCalledWith('r1', 's1', { value: 'a' });
   });
 });
