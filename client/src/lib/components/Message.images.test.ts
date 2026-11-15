@@ -34,10 +34,10 @@ describe('transcript image content', () => {
     expect(image?.getAttribute('src')).toBe('data:image/png;base64,AQIDBA==');
     expect(image?.getAttribute('alt')).toBe('User attachment 1');
 
-    const preview = target.querySelector<HTMLButtonElement>('.user-message button[aria-label="Enlarge image"]');
+    const preview = target.querySelector<HTMLButtonElement>('.user-message button[aria-label="Open image full screen"]');
     preview?.click();
     await tick();
-    expect(target.querySelector('.user-message button[aria-label="Shrink image"]')?.getAttribute('aria-expanded')).toBe('true');
+    expect(document.body.querySelector('[role="dialog"][aria-modal="true"] img')?.getAttribute('src')).toBe('data:image/png;base64,AQIDBA==');
   });
 
   it('renders image blocks in assistant messages', async () => {

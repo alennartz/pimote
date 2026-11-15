@@ -93,6 +93,25 @@ describe('tool results', () => {
     expect(target.querySelector('.tool-image-indicator')).toBeNull();
   });
 
+  it('opens a read result image in the full-screen viewer', async () => {
+    const target = document.createElement('div');
+    const component = mount(ToolCall, {
+      target,
+      props: {
+        content: { type: 'tool_call', toolName: 'read', toolCallId: 'read-viewer', args: { path: 'image.png' } },
+        result: 'Read image file [image/png]',
+        images: [{ data: 'AQIDBA==', mimeType: 'image/png' }],
+      },
+    });
+    destroy = () => unmount(component);
+    await tick();
+
+    target.querySelector<HTMLButtonElement>('.tool-image-body [aria-label="Open image full screen"]')?.click();
+    await tick();
+
+    expect(target.querySelector('.image-viewer-overlay .image-viewer-image')?.getAttribute('src')).toBe('data:image/png;base64,AQIDBA==');
+  });
+
   it('renders ANSI colors in agent bash results and escapes markup', async () => {
     const target = document.createElement('div');
     const result = '\u001b[31mred\u001b[0m <img src=x onerror=alert(1)>';
