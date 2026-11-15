@@ -192,6 +192,17 @@ describe('Panel hierarchy navigation', () => {
     expect(breakdown?.textContent).toContain('850 tok');
     expect(breakdown?.textContent).toContain('4.00¢');
     expect(details.querySelector('button.cost-disclosure-trigger')).toBeNull();
+    const collapse = breakdown?.querySelector<HTMLButtonElement>('button[aria-label="Collapse usage breakdown"]');
+    expect(collapse?.getAttribute('aria-expanded')).toBe('true');
+    collapse?.click();
+    await tick();
+    expect(breakdown?.querySelector('dl')).toBeNull();
+    expect(breakdown?.querySelector('[aria-label="Usage preview"]')?.textContent).toContain('↑500');
+    expect(breakdown?.querySelector('[aria-label="Usage preview"]')?.textContent).toContain('↓200');
+    expect(breakdown?.querySelector('[aria-label="Usage preview"]')?.textContent).toContain('4.00¢');
+    breakdown?.querySelector<HTMLButtonElement>('button[aria-label="Expand usage breakdown"]')?.click();
+    await tick();
+    expect(breakdown?.querySelector('dl')).not.toBeNull();
     expect(sessionRegistry.viewedSurface?.kind).toBe('root');
     expect(sessionRegistry.getSubagentAttachment('root', ['worker'])?.messages[0].content[0]).toMatchObject({ type: 'text', text: initialTask });
   });

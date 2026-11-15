@@ -459,7 +459,9 @@
           {@const breakdown = usageBreakdownForNode(usage)}
           {@const tokenBreakdown = usageTokensForNode(usage)}
           <div class="agent-inspector-usage" aria-label="Subagent usage">
-            <CostBreakdownDetails totalCostUsd={usage.cost} {breakdown} {tokenBreakdown} />
+            {#key pathLabel(inspectorNode.path)}
+              <CostBreakdownDetails totalCostUsd={usage.cost} {breakdown} {tokenBreakdown} collapsible />
+            {/key}
           </div>
         {/if}
         {#if inspectorNode.activity}
