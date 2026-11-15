@@ -528,6 +528,18 @@ describe('EventBuffer', () => {
       expect(JSON.stringify(live)).not.toContain('hidden');
     });
 
+    it('carries the display flag of a custom message_start so clients can hide it', () => {
+      const buffer = new EventBuffer(10);
+      const live: PimoteSessionEvent[] = [];
+      buffer.onEvent(
+        makeSdkEvent('message_start', { message: { role: 'custom', customType: 'session-resumed', display: false, content: [] } }) as IncomingSdkEvent,
+        SESSION_ID,
+        (event) => live.push(event),
+      );
+
+      expect(live[0]).toMatchObject({ type: 'message_start', role: 'custom', customType: 'session-resumed', display: false });
+    });
+
     it('maps agent lifecycle events correctly', () => {
       const buffer = new EventBuffer(10);
       const liveEvents: PimoteSessionEvent[] = [];

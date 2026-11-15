@@ -314,3 +314,38 @@ describe('MessageList scroll pin', () => {
     expect(target.querySelector('.scroll-to-bottom')).toBeNull();
   });
 });
+
+describe('MessageList hidden messages', () => {
+  it('renders no row for a display:false message, saved or streaming', async () => {
+    const session = sessionRegistry.viewed!;
+    session.messages = [
+      { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+      { role: 'custom', customType: 'session-resumed', display: false, content: [{ type: 'text', text: '[session resumed]' }] } as never,
+    ];
+    session.messageKeys = ['m1', 'm2'];
+    session.isStreaming = true;
+    session.streamingKey = 'm3';
+    session.streamingMessage = {
+      role: 'custom',
+      customType: 'session-resumed',
+      display: false,
+      content: [{ type: 'text', text: '[session resumed]' }],
+    } as never;
+    flushSync();
+    await settle();
+
+    const text = target.textContent ?? '';
+    expect(text).not.toContain('[session resumed]');
+    expect(text).not.toContain('session-resumed');
+  });
+
+  it('still renders a custom message whose display is true', async () => {
+    const session = sessionRegistry.viewed!;
+    session.messages = [{ role: 'custom', customType: 'agent-complete', display: true, content: [{ type: 'text', text: 'worker finished' }] } as never];
+    session.messageKeys = ['m1'];
+    flushSync();
+    await settle();
+
+    expect(target.textContent).toContain('worker finished');
+  });
+});

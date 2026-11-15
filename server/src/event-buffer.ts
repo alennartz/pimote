@@ -193,11 +193,13 @@ export class EventBuffer {
 
       case 'message_start': {
         const usage = sdkEvent.message.role === 'assistant' ? mapAgentMessageUsage(sdkEvent.message) : undefined;
+        const custom = sdkEvent.message.role === 'custom' ? sdkEvent.message : undefined;
         return {
           ...base,
           type: 'message_start',
           role: sdkEvent.message.role,
           ...(usage ? { usage } : {}),
+          ...(custom ? { customType: custom.customType, ...(custom.display !== undefined ? { display: custom.display } : {}) } : {}),
           ...(sdkEvent.message.role === 'user' && this.pendingPromptEcho !== undefined ? { clientMessageId: this.pendingPromptEcho } : {}),
         };
       }

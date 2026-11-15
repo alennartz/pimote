@@ -457,6 +457,26 @@ describe('SessionSurface', () => {
     expect(live.find((event) => event.type === 'message_end')).toBeUndefined();
   });
 
+  it('carries the display flag of a streaming custom message into the snapshot', async () => {
+    const f = fixture();
+    f.data.streaming = true;
+    f.native.state.streamingMessage = {
+      role: 'custom',
+      customType: 'session-resumed',
+      display: false,
+      content: [{ type: 'text', text: '[session resumed]' }],
+    } as never;
+    const surface = createSessionSurface({
+      sessionId: 'plain-session',
+      session: f.native,
+      kind: 'root',
+      capabilities: f.capabilities,
+    });
+    const snapshot = await surface.initialize();
+
+    expect(snapshot.streamingMessage).toMatchObject({ role: 'custom', customType: 'session-resumed', display: false });
+  });
+
   it('keeps projected active content in the streaming snapshot row', async () => {
     const f = fixture();
     const hidden = { type: 'toolCall', id: 'send-call', name: 'send', arguments: { message: 'secret' } };

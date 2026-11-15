@@ -375,13 +375,15 @@
     const entries: DisplayEntry[] = [...savedDisplayEntries];
     if (!session) return entries;
     if (session.streamingMessage && session.streamingKey) {
-      entries.push({
-        kind: 'message',
-        key: session.streamingKey,
-        message: session.streamingMessage,
-        streaming: true,
-        messageIndex: null,
-      });
+      if (session.streamingMessage.display !== false) {
+        entries.push({
+          kind: 'message',
+          key: session.streamingKey,
+          message: session.streamingMessage,
+          streaming: true,
+          messageIndex: null,
+        });
+      }
     }
     for (const execution of Object.values(session.bashExecutions ?? {})) {
       entries.push({ kind: 'bash', key: `bash-${execution.id}`, execution });

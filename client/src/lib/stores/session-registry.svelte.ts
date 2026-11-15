@@ -464,7 +464,13 @@ function applyChildNativeEvent(attachment: SubagentAttachmentState, event: Pimot
     case 'message_start': {
       const start = event as MessageStartEvent;
       attachment.streamingKey = `child-stream-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${attachment.childSessionId}`;
-      attachment.streamingMessage = { role: start.role, content: [], ...(start.usage ? { usage: start.usage } : {}) };
+      attachment.streamingMessage = {
+        role: start.role,
+        content: [],
+        ...(start.usage ? { usage: start.usage } : {}),
+        ...(start.customType ? { customType: start.customType } : {}),
+        ...(start.display !== undefined ? { display: start.display } : {}),
+      };
       break;
     }
     case 'message_update': {
@@ -1625,7 +1631,12 @@ export class SessionRegistry {
         const previousPositiveUsage = session.lastPositiveStreamingUsage;
         this.resetAssistantUsageTracking(session);
         session.streamingKey = 'msg-' + this._nextMessageKey++;
-        session.streamingMessage = { role: start.role, content: [] };
+        session.streamingMessage = {
+          role: start.role,
+          content: [],
+          ...(start.customType ? { customType: start.customType } : {}),
+          ...(start.display !== undefined ? { display: start.display } : {}),
+        };
         if (start.role === 'assistant' && previousPositiveUsage && isZeroUsage(start.usage)) {
           session.lastPositiveStreamingUsage = previousPositiveUsage;
         }

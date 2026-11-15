@@ -1317,6 +1317,10 @@ export interface MessageStartEvent extends SessionEventBase {
   role: string;
   /** Cumulative usage snapshot for the in-flight assistant message, when available. */
   usage?: PimoteUsage;
+  /** Extension-defined type, present when role is `custom`. */
+  customType?: string;
+  /** Display flag of the started message. Clients hide `false` placeholder rows. */
+  display?: boolean;
   /** Present on the user message that a `started` prompt echoes. */
   clientMessageId?: string;
 }
@@ -1379,6 +1383,8 @@ export interface StreamingMessage {
   customType?: string;
   /** Structured metadata carried by a live custom-message projection. */
   details?: unknown;
+  /** Display flag of the in-flight message. Clients hide `false` rows. */
+  display?: boolean;
 }
 
 export interface MessageEndEvent extends SessionEventBase {
