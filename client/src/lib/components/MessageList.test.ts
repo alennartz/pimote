@@ -339,6 +339,23 @@ describe('MessageList hidden messages', () => {
     expect(text).not.toContain('session-resumed');
   });
 
+  it('keeps the streaming indicator while the in-flight message is hidden', async () => {
+    const session = sessionRegistry.viewed!;
+    session.isStreaming = true;
+    session.streamingKey = 'm2';
+    session.streamingMessage = {
+      role: 'custom',
+      customType: 'session-resumed',
+      display: false,
+      content: [{ type: 'text', text: '[session resumed]' }],
+    } as never;
+    flushSync();
+    await settle();
+
+    expect(target.querySelector('.streaming-indicator-row')).not.toBeNull();
+    expect(target.textContent).not.toContain('[session resumed]');
+  });
+
   it('still renders a custom message whose display is true', async () => {
     const session = sessionRegistry.viewed!;
     session.messages = [{ role: 'custom', customType: 'agent-complete', display: true, content: [{ type: 'text', text: 'worker finished' }] } as never];

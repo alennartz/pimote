@@ -402,10 +402,12 @@
     return sessionRegistry.getAssistantRowUsage(session.sessionId, entry.messageIndex, toolResultUsageIndex);
   }
 
-  // Show streaming indicator when streaming but no content yet
+  // Show streaming indicator when streaming but nothing visible has arrived yet.
   let showStreamingIndicator = $derived.by(() => {
     if (!(childSurface?.state.isStreaming ?? session?.isStreaming)) return false;
     const streamingMessage = childSurface?.streamingMessage ?? session?.streamingMessage;
+    // A hidden in-flight message renders no row, so the turn must still show as running.
+    if (streamingMessage?.display === false) return true;
     return !streamingMessage || streamingMessage.content.length === 0;
   });
 
