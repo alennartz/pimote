@@ -8,7 +8,6 @@
   import AgentChip from './AgentChip.svelte';
   import CostBreakdownPopover from './CostBreakdownPopover.svelte';
   import { formatCostUsd } from '$lib/cost-disclosure.js';
-  import { formatTokenCount } from '$lib/session-summary.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
   import Bot from '@lucide/svelte/icons/bot';
@@ -440,12 +439,8 @@
         </div>
         {#if inspectorNode.usage}
           {@const usage = inspectorNode.usage}
-          {@const cacheTokens = usage.cacheRead + usage.cacheWrite}
           {@const breakdown = usageBreakdownForNode(usage)}
           <div class="agent-inspector-usage" aria-label="Subagent usage">
-            <span title="Input tokens">↑{formatTokenCount(usage.input)}</span>
-            <span title="Output tokens">↓{formatTokenCount(usage.output)}</span>
-            {#if cacheTokens > 0}<span title="Cache tokens">cache {formatTokenCount(cacheTokens)}</span>{/if}
             {#if usage.cost > 0 && breakdown}
               <CostBreakdownPopover totalCostUsd={usage.cost} {breakdown} contextLabel={`Subagent ${pathLabel(inspectorNode.path)}`} />
             {:else}
