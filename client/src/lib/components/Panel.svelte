@@ -6,8 +6,7 @@
   import { projectSubagentPanelRows, type AgentPath, type SubagentPanelState, type SubagentPanelRow, type SubagentTeardownConfirmation } from '$lib/subagent-view-state.js';
   import CardList from './CardList.svelte';
   import AgentChip from './AgentChip.svelte';
-  import CostBreakdownPopover from './CostBreakdownPopover.svelte';
-  import { formatCostUsd } from '$lib/cost-disclosure.js';
+  import CostBreakdownDetails from './CostBreakdownDetails.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
   import Bot from '@lucide/svelte/icons/bot';
@@ -102,17 +101,21 @@
     return percent === undefined ? '' : `${Math.max(0, Math.min(100, Math.round(percent)))}%`;
   }
 
+  function usageTokensForNode(usage: SubagentNodeSnapshot['usage']): PimoteUsageBreakdown['tokens'] {
+    return {
+      input: usage.input,
+      output: usage.output,
+      cacheRead: usage.cacheRead,
+      cacheWrite: usage.cacheWrite,
+      total: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
+    };
+  }
+
   function usageBreakdownForNode(usage: SubagentNodeSnapshot['usage']): PimoteUsageBreakdown | undefined {
     const costs = usage.costBreakdown;
     if (!costs) return undefined;
     return {
-      tokens: {
-        input: usage.input,
-        output: usage.output,
-        cacheRead: usage.cacheRead,
-        cacheWrite: usage.cacheWrite,
-        total: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
-      },
+      tokens: usageTokensForNode(usage),
       cost: {
         input: costs.input,
         output: costs.output,
@@ -432,21 +435,18 @@
         </div>
         <div class="mt-3 grid grid-cols-2 gap-x-3 gap-y-2">
           <div><span class="metadata-label">Model</span><span>{inspectorNode.model ?? '—'}{inspectorNode.thinkingLevel ? ` · ${inspectorNode.thinkingLevel}` : ''}</span></div>
-          <div><span class="metadata-label">State</span><span>{inspectorNode.state}</span></div>
+          <div><span class="metadata-label">Turns</span><span>{inspectorNode.usage?.turns ?? '—'}</span></div>
           <div><span class="metadata-label">Channels</span><span>{inspectorNode.channels?.join(' · ') || '—'}</span></div>
-          <div><span class="metadata-label">Waits</span><span>{inspectorNode.waitingFor?.map(pathLabel).join(' · ') || '—'}</span></div>
-          <div><span class="metadata-label">Context</span><span>{inspectorNode.contextFill ?? '—'}{inspectorNode.contextFill !== undefined ? '%' : ''}</span></div>
+          {#if inspectorNode.waitingFor && inspectorNode.waitingFor.length > 0}
+            <div><span class="metadata-label">Waits</span><span>{inspectorNode.waitingFor.map(pathLabel).join(' · ')}</span></div>
+          {/if}
         </div>
         {#if inspectorNode.usage}
           {@const usage = inspectorNode.usage}
           {@const breakdown = usageBreakdownForNode(usage)}
+          {@const tokenBreakdown = usageTokensForNode(usage)}
           <div class="agent-inspector-usage" aria-label="Subagent usage">
-            {#if usage.cost > 0 && breakdown}
-              <CostBreakdownPopover totalCostUsd={usage.cost} {breakdown} contextLabel={`Subagent ${pathLabel(inspectorNode.path)}`} />
-            {:else}
-              <span title={breakdown ? 'Cost' : 'Detailed cost breakdown unavailable'}>{formatCostUsd(usage.cost) ?? '—'}</span>
-            {/if}
-            <span title="Turns">{usage.turns} {usage.turns === 1 ? 'turn' : 'turns'}</span>
+            <CostBreakdownDetails totalCostUsd={usage.cost} {breakdown} {tokenBreakdown} />
           </div>
         {/if}
         {#if inspectorNode.activity}
@@ -653,20 +653,10 @@
     font-size: 0.75rem;
   }
   .agent-inspector-usage {
-    display: flex;
     min-width: 0;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.35rem 0.65rem;
     margin-top: 0.65rem;
     padding-top: 0.55rem;
     border-top: 1px solid color-mix(in oklch, var(--sidebar-border) 60%, transparent);
-    color: var(--muted-foreground);
-    font-size: 0.75rem;
-    font-variant-numeric: tabular-nums;
-  }
-  .agent-inspector-usage > span {
-    white-space: nowrap;
   }
   .agent-inspector-command {
     min-width: 0;

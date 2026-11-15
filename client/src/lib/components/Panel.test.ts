@@ -176,17 +176,11 @@ describe('Panel hierarchy navigation', () => {
     expect(detailCommand?.querySelector('dd')?.textContent).toContain('checking callback ownership');
     expect(details.textContent).toContain('parent');
     expect(details.textContent).toContain('worker/scout');
-    const usage = details.querySelector('[aria-label="Subagent usage"]');
-    expect(usage?.textContent).not.toContain('500');
-    expect(usage?.textContent).not.toContain('200');
-    expect(usage?.textContent).not.toContain('150');
-    expect(usage?.textContent).toContain('2 turns');
-    const costTrigger = usage?.querySelector<HTMLButtonElement>('button.cost-disclosure-trigger');
-    expect(costTrigger?.textContent?.trim()).toBe('4.00¢');
-    costTrigger?.click();
-    await tick();
-    await tick();
-    const breakdown = document.body.querySelector('[role="dialog"]');
+    expect(details.textContent).not.toContain('State');
+    expect(details.textContent).not.toContain('Context');
+    expect(details.textContent).toContain('Turns');
+    expect(details.textContent).toContain('2');
+    const breakdown = details.querySelector('[aria-label="Cost and token breakdown"]');
     expect(breakdown?.textContent).toContain('Input');
     expect(breakdown?.textContent).toContain('500 tok');
     expect(breakdown?.textContent).toContain('Output');
@@ -196,8 +190,64 @@ describe('Panel hierarchy navigation', () => {
     expect(breakdown?.textContent).toContain('Cache write');
     expect(breakdown?.textContent).toContain('100 tok');
     expect(breakdown?.textContent).toContain('850 tok');
+    expect(breakdown?.textContent).toContain('4.00¢');
+    expect(details.querySelector('button.cost-disclosure-trigger')).toBeNull();
     expect(sessionRegistry.viewedSurface?.kind).toBe('root');
     expect(sessionRegistry.getSubagentAttachment('root', ['worker'])?.messages[0].content[0]).toMatchObject({ type: 'text', text: initialTask });
+  });
+
+  it('shows token details inline when category costs are missing', async () => {
+    const worker = node(['worker']);
+    const workerWithoutCostBreakdown: SubagentNodeSnapshot = {
+      ...worker,
+      usage: {
+        input: worker.usage.input,
+        output: worker.usage.output,
+        cacheRead: worker.usage.cacheRead,
+        cacheWrite: worker.usage.cacheWrite,
+        cost: worker.usage.cost,
+        turns: worker.usage.turns,
+      },
+    };
+    sessionRegistry.handleEvent({
+      type: 'subagent_snapshot',
+      sessionId: 'root',
+      cursor: { epoch: 'epoch-1', sequence: 2 },
+      manifest: { hiddenToolNames: [], hiddenCustomTypes: [] },
+      activeOperations: [],
+      nodes: [workerWithoutCostBreakdown, node(['worker', 'scout'])],
+    });
+    const target = render();
+    await tick();
+    target.querySelector<HTMLButtonElement>('button[aria-label="Inspect worker"]')!.click();
+    await tick();
+
+    const breakdown = target.querySelector('[aria-label="Cost and token breakdown"]');
+    expect(breakdown?.textContent).toContain('500 tok');
+    expect(breakdown?.textContent).toContain('200 tok');
+    expect(breakdown?.textContent).toContain('50 tok');
+    expect(breakdown?.textContent).toContain('100 tok');
+    expect(breakdown?.textContent).toContain('Category costs unavailable');
+    expect(target.querySelector('button.cost-disclosure-trigger')).toBeNull();
+  });
+
+  it('hides the waits field when the agent has no wait targets', async () => {
+    const worker = node(['worker']);
+    sessionRegistry.handleEvent({
+      type: 'subagent_snapshot',
+      sessionId: 'root',
+      cursor: { epoch: 'epoch-1', sequence: 2 },
+      manifest: { hiddenToolNames: [], hiddenCustomTypes: [] },
+      activeOperations: [],
+      nodes: [{ ...worker, waitingFor: [] }, node(['worker', 'scout'])],
+    });
+    const target = render();
+    await tick();
+    target.querySelector<HTMLButtonElement>('button[aria-label="Inspect worker"]')!.click();
+    await tick();
+
+    const details = target.querySelector('[aria-label="Selected subagent details"]');
+    expect(details?.textContent).not.toContain('Waits');
   });
 
   it('hides the root row and section labels when the hierarchy has no children', async () => {

@@ -2,7 +2,8 @@
   import { onMount } from 'svelte';
   import X from '@lucide/svelte/icons/x';
   import type { PimoteUsageBreakdown } from '@pimote/shared';
-  import { formatCostUsd, summarizeCostDisclosure } from '$lib/cost-disclosure.js';
+  import { summarizeCostDisclosure } from '$lib/cost-disclosure.js';
+  import CostBreakdownDetails from './CostBreakdownDetails.svelte';
   import * as Popover from '$lib/components/ui/popover/index.js';
 
   interface Props {
@@ -10,11 +11,13 @@
     totalCostUsd: number | null | undefined;
     /** Optional category and token totals. Older servers can omit this value. */
     breakdown?: PimoteUsageBreakdown;
+    /** Token totals for surfaces that lack category cost data. */
+    tokenBreakdown?: PimoteUsageBreakdown['tokens'];
     /** Accessible context for this disclosure, such as "Assistant response". */
     contextLabel: string;
   }
 
-  let { totalCostUsd, breakdown, contextLabel }: Props = $props();
+  let { totalCostUsd, breakdown, tokenBreakdown, contextLabel }: Props = $props();
   let open = $state(false);
   const instanceId = `cost-breakdown-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
   const contentId = `${instanceId}-content`;
@@ -22,14 +25,6 @@
   const openEventName = 'pimote:cost-breakdown-open';
 
   let disclosure = $derived(summarizeCostDisclosure(totalCostUsd, breakdown));
-
-  function formatTokens(value: number): string {
-    return Number.isFinite(value) && value >= 0 ? `${value.toLocaleString('en-US')} tok` : '—';
-  }
-
-  function formatCategoryCost(value: number): string {
-    return formatCostUsd(value) ?? '—';
-  }
 
   function handleOpenChange(nextOpen: boolean): void {
     open = nextOpen;
@@ -94,42 +89,7 @@
         </Popover.Close>
       </div>
 
-      {#if breakdown}
-        {@const rows = [
-          { label: 'Input', tokens: breakdown.tokens.input, cost: breakdown.cost.input },
-          { label: 'Output', tokens: breakdown.tokens.output, cost: breakdown.cost.output },
-          { label: 'Cache read', tokens: breakdown.tokens.cacheRead, cost: breakdown.cost.cacheRead },
-          { label: 'Cache write', tokens: breakdown.tokens.cacheWrite, cost: breakdown.cost.cacheWrite },
-        ]}
-        <div class="mt-3 text-xs">
-          <div class="text-muted-foreground mb-1 grid grid-cols-[minmax(0,1fr)_auto_auto] gap-x-3 text-[0.65rem] font-medium tracking-wide uppercase">
-            <span>Category</span>
-            <span class="text-right">Tokens</span>
-            <span class="text-right">Cost</span>
-          </div>
-          <dl class="divide-border/60 divide-y">
-            {#each rows as row (row.label)}
-              <div class="grid grid-cols-[minmax(0,1fr)_auto_auto] items-baseline gap-x-3 py-1.5">
-                <dt>{row.label}</dt>
-                <dd class="text-muted-foreground text-right tabular-nums">{formatTokens(row.tokens)}</dd>
-                <dd class="text-right tabular-nums">{formatCategoryCost(row.cost)}</dd>
-              </div>
-            {/each}
-            {#if disclosure.unknownCostUsd !== null}
-              <div class="grid grid-cols-[minmax(0,1fr)_auto_auto] items-baseline gap-x-3 py-1.5">
-                <dt>Unknown</dt>
-                <dd class="text-muted-foreground text-right tabular-nums">—</dd>
-                <dd class="text-right tabular-nums">{formatCategoryCost(disclosure.unknownCostUsd)}</dd>
-              </div>
-            {/if}
-            <div class="grid grid-cols-[minmax(0,1fr)_auto_auto] items-baseline gap-x-3 pt-2 font-semibold">
-              <dt>Total</dt>
-              <dd class="text-muted-foreground text-right tabular-nums">{formatTokens(breakdown.tokens.total)}</dd>
-              <dd class="text-right tabular-nums">{disclosure.label}</dd>
-            </div>
-          </dl>
-        </div>
-      {/if}
+      <CostBreakdownDetails {totalCostUsd} {breakdown} {tokenBreakdown} />
     </Popover.Content>
   </Popover.Root>
 {/if}
