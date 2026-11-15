@@ -7,6 +7,11 @@ function accepted(orderVersion: number): PimoteResponse {
   return { id: 'reorder', success: true, data: { accepted: true, orderVersion } };
 }
 
+/** What the bar does for one flow gesture: move the chip locally, then push. */
+function moveAndPushChipOrder(registry: SessionRegistry, fromIndex: number, toIndex: number): void {
+  if (registry.moveSession(fromIndex, toIndex)) registry.pushSessionOrder();
+}
+
 describe('SessionRegistry user session facts', () => {
   let registry: SessionRegistry;
 
@@ -50,7 +55,7 @@ describe('SessionRegistry user session facts', () => {
       const send = vi.spyOn(connection, 'send').mockResolvedValue(accepted(4));
       registry.applyUserSessionFacts({ order: ['a', 'b', 'c'], selectedSessionId: null, orderVersion: 3 });
 
-      registry.reorderSessions(0, 2);
+      moveAndPushChipOrder(registry, 0, 2);
 
       expect(ids(registry)).toEqual(['b', 'c', 'a']);
       expect(send).toHaveBeenCalledWith({ type: 'reorder_sessions', order: ['b', 'c', 'a'], baseVersion: 3 });
@@ -60,7 +65,7 @@ describe('SessionRegistry user session facts', () => {
       const send = vi.spyOn(connection, 'send').mockResolvedValue(accepted(1));
       registry.applyUserSessionFacts({ order: ['a', 'b', 'c'], selectedSessionId: null, orderVersion: 1 });
 
-      registry.reorderSessions(1, 1);
+      moveAndPushChipOrder(registry, 1, 1);
 
       expect(send).not.toHaveBeenCalled();
     });
@@ -69,9 +74,9 @@ describe('SessionRegistry user session facts', () => {
       const send = vi.spyOn(connection, 'send').mockResolvedValue(accepted(5));
       registry.applyUserSessionFacts({ order: ['a', 'b', 'c'], selectedSessionId: null, orderVersion: 4 });
 
-      registry.reorderSessions(0, 1);
+      moveAndPushChipOrder(registry, 0, 1);
       await Promise.resolve();
-      registry.reorderSessions(1, 2);
+      moveAndPushChipOrder(registry, 1, 2);
 
       expect(send).toHaveBeenLastCalledWith({ type: 'reorder_sessions', order: ['b', 'c', 'a'], baseVersion: 5 });
     });
@@ -92,7 +97,7 @@ describe('SessionRegistry user session facts', () => {
       vi.spyOn(connection, 'send').mockResolvedValue({ id: 'reorder', success: true, data: { accepted: false, orderVersion: 7 } });
       registry.applyUserSessionFacts({ order: ['a', 'b', 'c'], selectedSessionId: null, orderVersion: 7 });
 
-      registry.reorderSessions(0, 2);
+      moveAndPushChipOrder(registry, 0, 2);
       registry.applyUserSessionFacts({ order: ['a', 'b', 'c'], selectedSessionId: null, orderVersion: 7 });
 
       expect(ids(registry)).toEqual(['a', 'b', 'c']);

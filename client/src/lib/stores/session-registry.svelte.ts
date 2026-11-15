@@ -881,11 +881,6 @@ export class SessionRegistry {
       .catch(() => {});
   }
 
-  /** Move one chip and push the resulting order. */
-  reorderSessions(fromIndex: number, toIndex: number): void {
-    if (this.moveSession(fromIndex, toIndex)) this.pushSessionOrder();
-  }
-
   private createSubagentRoot(rootSessionId: string): SubagentRootState {
     return {
       rootSessionId,
