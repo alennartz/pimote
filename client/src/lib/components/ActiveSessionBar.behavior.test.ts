@@ -35,10 +35,43 @@ const { sessionRegistry } = await import('$lib/stores/session-registry.svelte.js
 
 const id = 'touch-session';
 
-function touchEvent(type: string, touches: Array<{ clientX: number; clientY: number }>) {
-  const event = new Event(type, { bubbles: true, cancelable: true });
-  Object.defineProperty(event, 'touches', { value: touches });
-  return event;
+/** Fake rail geometry: chip `index` sits `gap` past the previous chip. */
+function stubChipGeometry(width: number, gap = 6): void {
+  for (const [index, element] of [...document.querySelectorAll<HTMLElement>('[data-session-chip]')].entries()) {
+    element.getBoundingClientRect = () => ({ left: index * (width + gap), width, height: 24, top: 0, right: 0, bottom: 0, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+  }
+}
+
+function chipPointer(type: string, clientX: number, clientY: number): PointerEvent {
+  return new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, pointerType: 'touch', clientX, clientY });
+}
+
+function railChips(): HTMLElement[] {
+  return [...target.querySelectorAll<HTMLElement>('[data-session-chip]')];
+}
+
+/** The registry is one singleton: give a reorder test exactly its own chips in
+ *  its own order, and leave the shared session behind. */
+function isolateChips(sessionIds: string[]): void {
+  sessionRegistry.removeSession(id);
+  sessionRegistry.applyUserSessionFacts({ order: [], selectedSessionId: null, orderVersion: 0 });
+  for (const sessionId of sessionIds) sessionRegistry.addSession(sessionId, `/w/${sessionId}`, sessionId);
+  sessionRegistry.applyUserSessionFacts({ order: sessionIds, selectedSessionId: null, orderVersion: 0 });
+  sessionRegistry.switchTo(sessionIds[0]);
+}
+
+function releaseChips(sessionIds: string[]): void {
+  for (const sessionId of sessionIds) {
+    sessionRegistry.removeSession(sessionId);
+  }
+  sessionRegistry.applyUserSessionFacts({ order: [], selectedSessionId: null, orderVersion: 0 });
+}
+
+/** The one gesture that opens the tray: a short upward pointer swipe. */
+function swipeUp(element: HTMLElement, fromY = 100, toY = 60): void {
+  element.dispatchEvent(chipPointer('pointerdown', 100, fromY));
+  element.dispatchEvent(chipPointer('pointermove', 100, toY));
+  element.dispatchEvent(chipPointer('pointerup', 100, toY));
 }
 
 let target: HTMLDivElement;
@@ -89,29 +122,12 @@ afterEach(() => {
 });
 
 describe('active session bar behavior', () => {
-  it('cancels upward swipe touches so the browser starts no fling', async () => {
-    render();
-    await tick();
-    const sessionChip = chip();
-
-    sessionChip.dispatchEvent(touchEvent('touchstart', [{ clientX: 100, clientY: 100 }]));
-    const move = touchEvent('touchmove', [{ clientX: 102, clientY: 60 }]);
-    sessionChip.dispatchEvent(move);
-    const end = touchEvent('touchend', []);
-    sessionChip.dispatchEvent(end);
-
-    expect(move.defaultPrevented).toBe(true);
-    expect(end.defaultPrevented).toBe(true);
-  });
-
   it('switches on the first tap after a swipe-opened tray is dismissed', async () => {
     render();
     await tick();
     const sessionChip = chip();
 
-    sessionChip.dispatchEvent(touchEvent('touchstart', [{ clientX: 100, clientY: 100 }]));
-    sessionChip.dispatchEvent(touchEvent('touchmove', [{ clientX: 100, clientY: 60 }]));
-    sessionChip.dispatchEvent(touchEvent('touchend', []));
+    swipeUp(sessionChip);
     await tick();
     expect(target.textContent).toContain('Session actions');
 
@@ -120,22 +136,83 @@ describe('active session bar behavior', () => {
     expect(target.textContent).not.toContain('Session actions');
 
     chip().click();
-    expect(connection.send).toHaveBeenCalledWith({ type: 'view_session', sessionId: id });
+    expect(connection.send).toHaveBeenCalledWith({ type: 'view_session', sessionId: id, folderPath: '/w/alpha' });
   });
 
-  it('leaves horizontal drags to the browser', async () => {
-    render();
-    await tick();
-    const sessionChip = chip();
+  it('lifts a chip on a hold and pushes the whole order after the drag', async () => {
+    const reorderSessions = ['reorder-alpha', 'reorder-beta', 'reorder-gamma'];
+    try {
+      isolateChips(reorderSessions);
+      render();
+      await tick();
+      stubChipGeometry(80);
 
-    sessionChip.dispatchEvent(touchEvent('touchstart', [{ clientX: 100, clientY: 100 }]));
-    const move = touchEvent('touchmove', [{ clientX: 160, clientY: 95 }]);
-    sessionChip.dispatchEvent(move);
-    const end = touchEvent('touchend', []);
-    sessionChip.dispatchEvent(end);
+      const [first, second, third] = railChips();
+      first.dispatchEvent(chipPointer('pointerdown', 40, 100));
+      await vi.advanceTimersByTimeAsync(220);
+      first.dispatchEvent(chipPointer('pointermove', 140, 100));
+      first.dispatchEvent(chipPointer('pointerup', 140, 100));
+      await tick();
 
-    expect(move.defaultPrevented).toBe(false);
-    expect(end.defaultPrevented).toBe(false);
+      expect(connection.send).toHaveBeenCalledWith({
+        type: 'reorder_sessions',
+        order: [second.dataset.sessionChip, first.dataset.sessionChip, third.dataset.sessionChip],
+        baseVersion: 0,
+      });
+    } finally {
+      releaseChips(reorderSessions);
+    }
+  });
+
+  it('flows the row one chip per half width while the tray is open and pushes one order', async () => {
+    const flowSessions = ['flow-alpha', 'flow-beta', 'flow-gamma'];
+    try {
+      isolateChips(flowSessions);
+      render();
+      await tick();
+      stubChipGeometry(80);
+
+      const [first] = railChips();
+      // A sideways swipe with the tray closed scrolls the rail; the tray opens
+      // from an upward swipe on the chip.
+      swipeUp(first);
+      await tick();
+      expect(target.textContent).toContain('Session actions');
+
+      first.dispatchEvent(chipPointer('pointerdown', 40, 100));
+      first.dispatchEvent(chipPointer('pointermove', -60, 100));
+      first.dispatchEvent(chipPointer('pointerup', -60, 100));
+      await tick();
+
+      expect(connection.send).toHaveBeenCalledWith({
+        type: 'reorder_sessions',
+        order: [flowSessions[1], flowSessions[2], flowSessions[0]],
+        baseVersion: 0,
+      });
+    } finally {
+      releaseChips(flowSessions);
+    }
+  });
+
+  it('scrolls instead of reordering on a sideways swipe while the tray is closed', async () => {
+    const scrollSessions = ['scroll-alpha', 'scroll-beta', 'scroll-gamma'];
+    try {
+      isolateChips(scrollSessions);
+      render();
+      await tick();
+      stubChipGeometry(80);
+
+      const [first] = railChips();
+      first.dispatchEvent(chipPointer('pointerdown', 120, 100));
+      first.dispatchEvent(chipPointer('pointermove', 60, 100));
+      first.dispatchEvent(chipPointer('pointerup', 60, 100));
+      await tick();
+
+      expect(connection.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'reorder_sessions' }));
+      expect(railChips().map((element) => element.dataset.sessionChip)).toEqual(scrollSessions);
+    } finally {
+      releaseChips(scrollSessions);
+    }
   });
 
   it('closes a long-press context menu when the same gesture becomes an upward swipe', async () => {
@@ -149,9 +226,7 @@ describe('active session bar behavior', () => {
     expect(document.querySelector('[role="menu"]')).not.toBeNull();
 
     sessionChip.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerType: 'touch', clientX: 100, clientY: 100 }));
-    sessionChip.dispatchEvent(touchEvent('touchstart', [{ clientX: 100, clientY: 100 }]));
-    sessionChip.dispatchEvent(touchEvent('touchmove', [{ clientX: 100, clientY: 60 }]));
-    sessionChip.dispatchEvent(touchEvent('touchend', []));
+    swipeUp(sessionChip);
     await tick();
 
     expect(target.textContent).toContain('Session actions');
@@ -171,9 +246,7 @@ describe('active session bar behavior', () => {
     await tick();
     const sessionChip = chip();
 
-    sessionChip.dispatchEvent(touchEvent('touchstart', [{ clientX: 100, clientY: 100 }]));
-    sessionChip.dispatchEvent(touchEvent('touchmove', [{ clientX: 100, clientY: 60 }]));
-    sessionChip.dispatchEvent(touchEvent('touchend', []));
+    swipeUp(sessionChip);
     await tick();
 
     const archive = [...target.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Archive');

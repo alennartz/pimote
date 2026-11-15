@@ -15,6 +15,7 @@ import type {
 import { SvelteMap } from 'svelte/reactivity';
 import { version } from '$app/environment';
 import { clearActiveSessions, getClientId, getUser, setClientId } from './persistence.js';
+import type { UserSessionFacts } from './user-session-facts.js';
 import { updateStore } from './update.svelte.js';
 
 type EventListener = (event: PimoteEvent) => void;
@@ -205,6 +206,10 @@ export class ConnectionStore {
 
   /** Called after connection restore when a notification-driven adopt should begin. */
   onPendingAdopt: ((sessionId: string, folderPath: string, options: { openDownloads?: boolean }) => void) | null = null;
+
+  /** Called for every `user_sessions_changed`, after its reconcile plan ran,
+   *  with the user's chip order and selection (D4). */
+  onUserSessionFacts: ((facts: UserSessionFacts) => void) | null = null;
 
   /** Disconnect listeners — a set, not a slot, so the next consumer can't
    *  silently assign over an existing listener. Fires on close and on socket
@@ -418,6 +423,13 @@ export class ConnectionStore {
     }
     const current = [...this.subscribedSessions].map(([sessionId, folderPath]) => ({ sessionId, folderPath }));
     this.applyReconcilePlan(reconcileUserSessions(current, event.sessions, event.fresh), ws);
+    // Facts apply after the plan so every adopted session has a registry entry
+    // to navigate to. A server that predates the reorder carries none.
+    this.onUserSessionFacts?.({
+      order: Array.isArray(event.order) ? event.order : [],
+      selectedSessionId: event.selectedSessionId ?? null,
+      orderVersion: typeof event.orderVersion === 'number' ? event.orderVersion : 0,
+    });
   }
 
   /** Registry entry creation for sessions adopted from the user's profile.

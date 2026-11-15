@@ -143,3 +143,70 @@ describe('user_sessions_changed — one-time local mirror clear', () => {
     c.disconnect();
   });
 });
+
+describe('user_sessions_changed — user session facts', () => {
+  it('hands the order, the selection and the epoch to the facts consumer', () => {
+    const c = new ConnectionStore();
+    const seen: { order: readonly string[]; selectedSessionId: string | null; orderVersion: number }[] = [];
+    c.onUserSessionFacts = (facts) => seen.push({ ...facts });
+    c.connect();
+    const ws = instances.at(-1)!;
+    ws.readyState = FakeWebSocket.OPEN;
+    ws.onopen!();
+
+    ws.onmessage!({
+      data: JSON.stringify({
+        type: 'user_sessions_changed',
+        sessions: [server.fresh, server.held],
+        order: [server.held.sessionId, server.fresh.sessionId],
+        selectedSessionId: server.fresh.sessionId,
+        orderVersion: 6,
+        fresh: false,
+      }),
+    });
+
+    expect(seen).toEqual([{ order: ['held', 'fresh'], selectedSessionId: 'fresh', orderVersion: 6 }]);
+    c.disconnect();
+  });
+
+  it('delivers the facts after the reconcile adopted the sessions they name', () => {
+    const c = new ConnectionStore();
+    let subscribedAtDelivery: string[] = [];
+    c.onUserSessionFacts = () => {
+      subscribedAtDelivery = [...c.subscribedSessions.keys()];
+    };
+    c.connect();
+    const ws = instances.at(-1)!;
+    ws.readyState = FakeWebSocket.OPEN;
+    ws.onopen!();
+
+    ws.onmessage!({
+      data: JSON.stringify({
+        type: 'user_sessions_changed',
+        sessions: [server.fresh],
+        order: [server.fresh.sessionId],
+        selectedSessionId: server.fresh.sessionId,
+        orderVersion: 1,
+        fresh: false,
+      }),
+    });
+
+    expect(subscribedAtDelivery).toEqual(['fresh']);
+    c.disconnect();
+  });
+
+  it('tolerates an event from a server that carries no order or selection', () => {
+    const c = new ConnectionStore();
+    const seen: unknown[] = [];
+    c.onUserSessionFacts = (facts) => seen.push({ ...facts });
+    c.connect();
+    const ws = instances.at(-1)!;
+    ws.readyState = FakeWebSocket.OPEN;
+    ws.onopen!();
+
+    ws.onmessage!({ data: JSON.stringify({ type: 'user_sessions_changed', sessions: [server.held], fresh: false }) });
+
+    expect(seen).toEqual([{ order: [], selectedSessionId: null, orderVersion: 0 }]);
+    c.disconnect();
+  });
+});

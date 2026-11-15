@@ -7,6 +7,7 @@
 // with $state() does nothing. The runes must be on the individual fields.
 
 import type {
+  ReorderSessionsResponseData,
   PimoteEvent,
   PimoteCommand,
   PimoteResponse,
@@ -70,6 +71,7 @@ import { setEditorText } from './input-bar.svelte.js';
 import { panelStore } from './panel-store.svelte.js';
 import { downloadUi } from './download-ui.svelte.js';
 import { coordinateDownloadUpdate } from '../download-coordinator.js';
+import { followDecision, moveChipOrder, projectChipOrder, type UserSessionFacts } from './user-session-facts.js';
 import { handleDownloadNotificationIntent, type DownloadNotificationIntent } from '../download-notification-intent.js';
 import { getActiveSessions } from './persistence.js';
 import { summarizeAssistantRowUsage, type ToolResultUsageIndex } from '../assistant-row-usage.js';
@@ -746,6 +748,15 @@ export class SessionRegistry {
 
   sessions: Record<string, PerSessionState> = $state({});
   viewedSessionId: string | null = $state(null);
+  /** The server's chip order. `activeSessions` projects through it, so a new
+   *  session appends without a re-sort (D6). */
+  sessionOrder: string[] = $state([]);
+  /** Epoch of `sessionOrder`, sent back as `baseVersion` on the next
+   *  whole-order write. */
+  orderVersion: number = $state(0);
+  /** The user's selected session — one fact shared across their connections,
+   *  so every one of them highlights it and navigates to it (D1). */
+  selectedSessionId: string | null = $state(null);
   /** Root-scoped hierarchy and child surfaces. Deliberately separate from
    * `sessions`: child paths never become root session tabs or URL targets. */
   subagentRoots: Record<string, SubagentRootState> = $state({});
@@ -793,9 +804,86 @@ export class SessionRegistry {
     return this.sessions[this.viewedSessionId!] ?? null;
   }
 
-  /** List sessions that belong to the server restore set. */
+  /** List sessions that belong to the server restore set, in chip order. */
   get activeSessions(): PerSessionState[] {
-    return Object.values(this.sessions).filter((session) => session.restorable);
+    return projectChipOrder(
+      Object.values(this.sessions).filter((session) => session.restorable),
+      this.sessionOrder,
+    );
+  }
+
+  /**
+   * Apply the order and selection one `user_sessions_changed` carries. A
+   * refused whole-order write is answered with current facts, which land here
+   * and put the server's order back in charge.
+   */
+  applyUserSessionFacts(facts: UserSessionFacts): void {
+    this.sessionOrder = [...facts.order];
+    this.orderVersion = facts.orderVersion;
+    this.selectedSessionId = facts.selectedSessionId;
+    const selected = facts.selectedSessionId ? this.sessions[facts.selectedSessionId] : undefined;
+    if (selected) selected.needsAttention = false;
+    this.followSelection();
+  }
+
+  /**
+   * Move the view to the user's selection when another connection set it.
+   * Nothing goes back over the wire: the server already holds this selection,
+   * and answering with `view_session` is the loop the follow must not close.
+   */
+  private followSelection(): void {
+    const target = this.selectedSessionId;
+    if (!target) return;
+    const decision = followDecision({
+      selectedSessionId: target,
+      viewedSessionId: this.viewedSessionId,
+      knownSessionIds: Object.values(this.sessions)
+        .filter((session) => session.restorable)
+        .map((session) => session.sessionId),
+    });
+    if (decision === 'navigate') this.switchTo(target);
+  }
+
+  /** Record this connection's chosen session as the user's selection. The
+   *  server clears its attention for every connection of the user (D3) and
+   *  turns the others' views to it (D1). */
+  selectSession(sessionId: string): void {
+    this.selectedSessionId = sessionId;
+    const session = this.sessions[sessionId];
+    if (session) session.needsAttention = false;
+    const folderPath = session?.folderPath;
+    connection.send({ type: 'view_session', sessionId, ...(folderPath ? { folderPath } : {}) }).catch(() => {});
+  }
+
+  /** Move a chip in the local projection only. Returns false when the order
+   *  would not change. */
+  moveSession(fromIndex: number, toIndex: number): boolean {
+    const ids = this.activeSessions.map((session) => session.sessionId);
+    const next = moveChipOrder(ids, fromIndex, toIndex);
+    if (next.every((id, index) => id === ids[index])) return false;
+    this.sessionOrder = next;
+    return true;
+  }
+
+  /** Push the local order as a whole-order write. The acting connection keeps
+   *  its own order — the server echoes only to the user's other connections —
+   *  and the response carries the next epoch. */
+  pushSessionOrder(): void {
+    const order = this.activeSessions.map((session) => session.sessionId);
+    connection
+      .send({ type: 'reorder_sessions', order, baseVersion: this.orderVersion })
+      .then((response) => {
+        const data = response.data as ReorderSessionsResponseData | undefined;
+        // A refused write is answered with current facts instead: those arrive
+        // as an event and put the server's order back in charge.
+        if (data?.accepted) this.orderVersion = data.orderVersion;
+      })
+      .catch(() => {});
+  }
+
+  /** Move one chip and push the resulting order. */
+  reorderSessions(fromIndex: number, toIndex: number): void {
+    if (this.moveSession(fromIndex, toIndex)) this.pushSessionOrder();
   }
 
   private createSubagentRoot(rootSessionId: string): SubagentRootState {
@@ -1559,7 +1647,7 @@ export class SessionRegistry {
         session.streamingMessage = null;
         session.streamingKey = null;
         session.lastPositiveStreamingUsage = null;
-        if (sessionId !== this.viewedSessionId) {
+        if (!this.userIsLookingAt(sessionId)) {
           session.needsAttention = true;
         }
         break;
@@ -1583,7 +1671,7 @@ export class SessionRegistry {
         // A user-aborted settle needs no attention flag: the abort came from
         // whoever was engaged with the session.
         const settledAborted = (event as AgentSettledEvent).aborted === true;
-        if (sessionId !== this.viewedSessionId && !settledAborted) {
+        if (!this.userIsLookingAt(sessionId) && !settledAborted) {
           session.needsAttention = true;
         }
         break;
@@ -2016,6 +2104,9 @@ export class SessionRegistry {
     // Reassign rather than delete to reliably trigger Svelte 5 $state reactivity
     const { [sessionId]: _, ...rest } = this.sessions;
     this.sessions = rest;
+    // The actor of a close is not echoed, so the local facts drop the id here.
+    if (this.selectedSessionId === sessionId) this.selectedSessionId = null;
+    if (this.sessionOrder.includes(sessionId)) this.sessionOrder = this.sessionOrder.filter((id) => id !== sessionId);
     return true;
   }
 
@@ -2063,6 +2154,13 @@ export class SessionRegistry {
     rest[newSessionId] = next;
     this.sessions = rest;
 
+    // A rekeyed session keeps its chip slot and its selection: the order names
+    // the identity that replaced the old one.
+    if (this.sessionOrder.includes(oldSessionId)) {
+      this.sessionOrder = this.sessionOrder.map((id) => (id === oldSessionId ? newSessionId : id));
+    }
+    if (this.selectedSessionId === oldSessionId) this.selectedSessionId = newSessionId;
+
     // If the old session was being viewed, view the new one
     if (this.viewedSessionId === oldSessionId) {
       this.viewedSessionId = newSessionId;
@@ -2080,6 +2178,12 @@ export class SessionRegistry {
     }
     this.syncViewedPanelStore();
     this.navigateToViewed(opts?.replace ?? false);
+  }
+
+  /** Attention is user-level (D3): a session this user already looks at from
+   *  any connection needs none. */
+  private userIsLookingAt(sessionId: string): boolean {
+    return sessionId === this.viewedSessionId || sessionId === this.selectedSessionId;
   }
 
   /** Leave the conversation view and return to the dashboard (viewedSessionId = null). */
@@ -2744,7 +2848,7 @@ export async function openExistingSession(sessionId: string, folderPath: string 
     if (data?.folder) sessionRegistry.bindSessionFolder(sessionId, data.folder);
     cancelledNewSessionIds.delete(sessionId);
     await refreshSessionMetaAndCommands(sessionId);
-    if (shouldSwitch) connection.send({ type: 'view_session', sessionId }).catch(() => {});
+    if (shouldSwitch) sessionRegistry.selectSession(sessionId);
     attachedSessionIds.add(sessionId);
     return true;
   } catch (err) {
@@ -2865,7 +2969,7 @@ async function reconcileNewSessionResponse(tempId: string, response: PimoteRespo
   if (placeholder) sessionRegistry.removeSessionQuietly(tempId);
   if (placeholderWasViewed) {
     sessionRegistry.switchTo(realId);
-    connection.send({ type: 'view_session', sessionId: realId }).catch(() => {});
+    sessionRegistry.selectSession(realId);
   }
   return response;
 }
@@ -3015,6 +3119,13 @@ connection.onSessionArchived = (sessionId) => {
   sessionRegistry.setRestorable(sessionId, false);
 };
 
+// Order and selection ride one event: apply both, then let the selection move
+// this connection's view. The connect burst's event decides the landing
+// session, so a reconnect lands where the user last was (D8).
+connection.onUserSessionFacts = (facts) => {
+  sessionRegistry.applyUserSessionFacts(facts);
+};
+
 connection.onPendingAdopt = (sessionId, folderPath, { openDownloads }) => {
   void routeNotificationIntent({
     sessionId,
@@ -3040,7 +3151,7 @@ connection.onReconnected = () => {
   }
   const viewedId = sessionRegistry.viewedSessionId;
   if (viewedId && !viewedId.startsWith('pending-')) {
-    connection.send({ type: 'view_session', sessionId: viewedId }).catch(() => {});
+    sessionRegistry.selectSession(viewedId);
   }
 };
 
@@ -3052,10 +3163,10 @@ for (const { sessionId, folderPath } of persistedSessions) {
   connection.addSubscribedSession(sessionId, folderPath);
 }
 
-// Helper that also sends view_session to server
+// Helper that also makes the session the user's selection
 export function switchToSession(sessionId: string): void {
   sessionRegistry.switchTo(sessionId);
-  connection.send({ type: 'view_session', sessionId }).catch(() => {});
+  sessionRegistry.selectSession(sessionId);
 }
 
 /** Abort a session and recover the queues acknowledged by the server into its draft. */

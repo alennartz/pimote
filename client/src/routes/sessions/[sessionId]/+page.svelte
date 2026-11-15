@@ -82,14 +82,14 @@
 
     if (decision.action === 'adopt') {
       sessionRegistry.adoptRouteView(id);
-      connection.send({ type: 'view_session', sessionId: id }).catch(() => {});
+      sessionRegistry.selectSession(id);
       return;
     }
 
     const fallback = decision.sessionId;
     if (fallback) {
       sessionRegistry.adoptRouteView(fallback);
-      connection.send({ type: 'view_session', sessionId: fallback }).catch(() => {});
+      sessionRegistry.selectSession(fallback);
       // eslint-disable-next-line svelte/no-navigation-without-resolve -- dynamic route param, base path is '/'
       void goto(`/sessions/${encodeURIComponent(fallback)}`, { replaceState: true });
     } else {
