@@ -409,6 +409,19 @@
                 {#if contextLabel(row)}<span>{contextLabel(row)}</span>{/if}
                 {#if costLabel(row)}<span>{costLabel(row)}</span>{/if}
               </div>
+              <Button
+                variant="ghost"
+                size="xs"
+                class={`open-action text-muted-foreground hover:text-foreground max-md:min-h-11 max-md:min-w-[4.5rem] max-md:justify-center ${row.viewOpen ? 'open bg-sidebar-accent text-foreground' : ''}`}
+                data-open-node={pathLabel(row.path)}
+                aria-label={row.viewOpen ? `Show ${pathLabel(row.path)} view` : `Open ${pathLabel(row.path)} view`}
+                title={row.viewOpen ? 'Show open view' : 'Open child view'}
+                disabled={busy}
+                onclick={() => showView(row.path)}
+              >
+                <ExternalLink class="size-3.5" />
+                <span class="hidden max-md:inline">{row.viewOpen ? 'View' : 'Open'}</span>
+              </Button>
               {#if row.metadata.activity}
                 <dl class="tree-row-command">
                   <dt>Last command</dt>
@@ -473,19 +486,6 @@
             >
               <X class="size-3.5" />
               <span class="hidden max-md:inline">Close</span>
-            </Button>
-          {:else}
-            <Button
-              variant="ghost"
-              size="xs"
-              class="open-action text-muted-foreground hover:text-foreground max-md:min-h-11 max-md:min-w-[4.5rem] max-md:justify-center"
-              aria-label={inspectorViewOpen ? `Show ${pathLabel(inspectorNode.path)} view` : `Open ${pathLabel(inspectorNode.path)} view`}
-              title={inspectorViewOpen ? 'Show open view' : 'Open child view'}
-              disabled={busy}
-              onclick={() => showView(inspectorNode.path)}
-            >
-              <ExternalLink class="size-3.5" />
-              <span class="hidden max-md:inline">{inspectorViewOpen ? 'View' : 'Open'}</span>
             </Button>
           {/if}
           {#if isInterruptible(inspectorNode.state)}
@@ -597,7 +597,7 @@
     container-type: inline-size;
   }
   .tree-row {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
   }
   .tree-row-select {
     padding-inline-start: calc(0.5rem + var(--tree-indent));

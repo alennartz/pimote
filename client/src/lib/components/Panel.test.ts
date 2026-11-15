@@ -287,9 +287,7 @@ describe('Panel hierarchy navigation', () => {
     expect(panelStore.open).toBe(presentation === 'sidebar');
 
     if (presentation === 'drawer') panelStore.openPanel();
-    target.querySelector<HTMLButtonElement>('button[aria-label="Inspect worker"]')!.click();
-    await tick();
-    target.querySelector<HTMLButtonElement>('button[aria-label="Show worker view"]')!.click();
+    target.querySelector<HTMLButtonElement>('[data-node="worker"] button[aria-label="Show worker view"]')!.click();
     await tick();
     expect(sessionRegistry.viewedSurface?.kind).toBe('child');
     expect(sessionRegistry.getSubagentDraftText('root', ['worker'])).toBe('Child draft');
@@ -336,11 +334,11 @@ describe('Panel row teardown', () => {
     });
   }
 
-  it('keeps view and teardown actions in the inspected details', async () => {
+  it('keeps view actions in the main row and teardown in inspected details', async () => {
     const target = render();
     await tick();
 
-    expect(target.querySelector('[data-node="worker"] button[aria-label="Show worker view"]')).toBeNull();
+    expect(target.querySelector('[data-node="worker"] button[aria-label="Show worker view"]')).not.toBeNull();
     expect(target.querySelector('[data-node="worker"] button[aria-label="Teardown worker"]')).toBeNull();
     expect(target.querySelector('[aria-label="Selected subagent details"]')).toBeNull();
 
@@ -348,7 +346,7 @@ describe('Panel row teardown', () => {
     await tick();
 
     const details = target.querySelector('[aria-label="Selected subagent details"]');
-    expect(details?.querySelector('button[aria-label="Show worker view"]')).not.toBeNull();
+    expect(details?.querySelector('button[aria-label="Show worker view"]')).toBeNull();
     expect(details?.querySelector('button[aria-label="Teardown worker"]')).not.toBeNull();
   });
 
@@ -385,7 +383,8 @@ describe('Panel row teardown', () => {
     target.querySelector<HTMLButtonElement>('button[aria-label="Inspect worker"]')!.click();
     await tick();
     const details = target.querySelector('[aria-label="Selected subagent details"]');
-    expect(details?.querySelector('button[aria-label="Open worker view"]')).not.toBeNull();
+    expect(target.querySelector('[data-node="worker"] button[aria-label="Open worker view"]')).not.toBeNull();
+    expect(details?.querySelector('button[aria-label="Open worker view"]')).toBeNull();
     details?.querySelector<HTMLButtonElement>('button[aria-label="Interrupt worker"]')!.click();
     await tick();
     await Promise.resolve();
