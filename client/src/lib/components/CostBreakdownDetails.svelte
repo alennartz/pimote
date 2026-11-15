@@ -14,7 +14,7 @@
   type CostRow = Readonly<{ label: string; tokens: number; cost: number | null }>;
 
   let { totalCostUsd, breakdown, tokenBreakdown, collapsible = false }: Props = $props();
-  let expanded = $state(true);
+  let expanded = $state(false);
   let disclosure = $derived(summarizeCostDisclosure(totalCostUsd, breakdown));
   let tokens = $derived(breakdown?.tokens ?? tokenBreakdown);
   let rows = $derived.by((): CostRow[] => {

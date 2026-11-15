@@ -155,6 +155,11 @@ describe('Panel hierarchy navigation', () => {
     const mainRowButton = mainRow?.querySelector<HTMLButtonElement>('button[aria-label="Inspect worker"]');
     expect(mainRowButton?.textContent?.match(/worker/g)).toHaveLength(1);
     expect(mainRowButton?.textContent).toContain('waiting');
+    const mainContext = mainRow?.querySelector('.tree-row-meta');
+    const mainOpenButton = mainRow?.querySelector('[data-open-node="worker"]');
+    expect(mainContext?.textContent).toContain('31%');
+    expect(mainOpenButton).not.toBeNull();
+    expect(mainContext!.compareDocumentPosition(mainOpenButton!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
 
     target.querySelector<HTMLButtonElement>('button[aria-label="Inspect worker"]')!.click();
     await tick();
@@ -181,6 +186,16 @@ describe('Panel hierarchy navigation', () => {
     expect(details.textContent).toContain('Turns');
     expect(details.textContent).toContain('2');
     const breakdown = details.querySelector('[aria-label="Cost and token breakdown"]');
+    expect(details.querySelector('button.cost-disclosure-trigger')).toBeNull();
+    const expand = breakdown?.querySelector<HTMLButtonElement>('button[aria-label="Expand usage breakdown"]');
+    expect(expand?.getAttribute('aria-expanded')).toBe('false');
+    expect(breakdown?.querySelector('dl')).toBeNull();
+    expect(breakdown?.querySelector('[aria-label="Usage preview"]')?.textContent).toContain('↑500');
+    expect(breakdown?.querySelector('[aria-label="Usage preview"]')?.textContent).toContain('↓200');
+    expect(breakdown?.querySelector('[aria-label="Usage preview"]')?.textContent).toContain('4.00¢');
+    expand?.click();
+    await tick();
+    expect(breakdown?.querySelector('dl')).not.toBeNull();
     expect(breakdown?.textContent).toContain('Input');
     expect(breakdown?.textContent).toContain('500 tok');
     expect(breakdown?.textContent).toContain('Output');
@@ -191,23 +206,14 @@ describe('Panel hierarchy navigation', () => {
     expect(breakdown?.textContent).toContain('100 tok');
     expect(breakdown?.textContent).toContain('850 tok');
     expect(breakdown?.textContent).toContain('4.00¢');
-    expect(details.querySelector('button.cost-disclosure-trigger')).toBeNull();
-    const collapse = breakdown?.querySelector<HTMLButtonElement>('button[aria-label="Collapse usage breakdown"]');
-    expect(collapse?.getAttribute('aria-expanded')).toBe('true');
-    collapse?.click();
+    breakdown?.querySelector<HTMLButtonElement>('button[aria-label="Collapse usage breakdown"]')?.click();
     await tick();
     expect(breakdown?.querySelector('dl')).toBeNull();
-    expect(breakdown?.querySelector('[aria-label="Usage preview"]')?.textContent).toContain('↑500');
-    expect(breakdown?.querySelector('[aria-label="Usage preview"]')?.textContent).toContain('↓200');
-    expect(breakdown?.querySelector('[aria-label="Usage preview"]')?.textContent).toContain('4.00¢');
-    breakdown?.querySelector<HTMLButtonElement>('button[aria-label="Expand usage breakdown"]')?.click();
-    await tick();
-    expect(breakdown?.querySelector('dl')).not.toBeNull();
     expect(sessionRegistry.viewedSurface?.kind).toBe('root');
     expect(sessionRegistry.getSubagentAttachment('root', ['worker'])?.messages[0].content[0]).toMatchObject({ type: 'text', text: initialTask });
   });
 
-  it('shows token details inline when category costs are missing', async () => {
+  it('previews tokens when collapsed and shows their rows when category costs are missing', async () => {
     const worker = node(['worker']);
     const workerWithoutCostBreakdown: SubagentNodeSnapshot = {
       ...worker,
@@ -234,6 +240,13 @@ describe('Panel hierarchy navigation', () => {
     await tick();
 
     const breakdown = target.querySelector('[aria-label="Cost and token breakdown"]');
+    const preview = breakdown?.querySelector('[aria-label="Usage preview"]');
+    expect(preview?.textContent).toContain('↑500');
+    expect(preview?.textContent).toContain('↓200');
+    expect(preview?.textContent).toContain('4.00¢');
+    const expand = breakdown?.querySelector<HTMLButtonElement>('button[aria-label="Expand usage breakdown"]');
+    expand?.click();
+    await tick();
     expect(breakdown?.textContent).toContain('500 tok');
     expect(breakdown?.textContent).toContain('200 tok');
     expect(breakdown?.textContent).toContain('50 tok');

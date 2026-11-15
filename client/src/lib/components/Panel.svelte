@@ -405,7 +405,7 @@
                   <span class="text-muted-foreground block truncate text-[11px]">{row.metadata.state}</span>
                 </span>
               </button>
-              <div class="tree-row-meta text-muted-foreground hidden shrink-0 items-center gap-1 font-mono text-[10px] max-md:hidden @[20rem]:flex">
+              <div class="tree-row-meta text-muted-foreground flex shrink-0 items-center gap-1 font-mono text-[10px]">
                 {#if contextLabel(row)}<span>{contextLabel(row)}</span>{/if}
                 {#if costLabel(row)}<span>{costLabel(row)}</span>{/if}
               </div>
