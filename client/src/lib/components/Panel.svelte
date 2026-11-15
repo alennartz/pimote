@@ -480,7 +480,7 @@
                     </div>
                   {/if}
                   {#if inspectorNode.lastError}<p class="text-destructive mt-2 truncate text-xs">Error: {inspectorNode.lastError}</p>{:else if inspectorNode.lastOutput}
-                    <dl class="agent-inspector-command">
+                    <dl class="agent-inspector-command agent-inspector-output">
                       <dt class="metadata-label">Last output</dt>
                       <dd><code title={inspectorNode.lastOutput}>{inspectorNode.lastOutput}</code></dd>
                     </dl>
@@ -694,6 +694,13 @@
     font-size: 0.75rem;
     line-height: 1.4;
     overflow-wrap: anywhere;
+  }
+  .agent-inspector-output code {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    overflow: hidden;
   }
   .field-label :global([data-slot='input']),
   .field-textarea {
