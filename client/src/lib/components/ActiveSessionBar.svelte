@@ -115,7 +115,6 @@
   let holdTimer: ReturnType<typeof setTimeout> | null = null;
   let flowBaseX = 0;
   let flowLeftover = 0;
-  let flowChanged = false;
   let suppressChipClick = false;
 
   function chipElements(): HTMLElement[] {
@@ -157,7 +156,6 @@
       pointerX: startX,
       frame: null,
     };
-    chip.classList.remove('session-chip-held');
     chip.classList.add('session-chip-dragging');
     updateDrag(startX);
     startDragLoop();
@@ -219,8 +217,8 @@
     drag = null;
   }
 
-  function dropDrag() {
-    if (!drag) return;
+  function dropDrag(): boolean {
+    if (!drag) return false;
     const { id, startScroll, scrollDelta, frame } = drag;
     if (frame !== null) cancelAnimationFrame(frame);
     // The drop slot was measured while the order stood still; the lifted chip's
@@ -230,56 +228,96 @@
     clearDragVisuals();
     drag = null;
     if (railEl) railEl.scrollLeft = startScroll + scrollDelta;
-    if (fromIndex < 0 || fromIndex === target) return;
+    if (fromIndex < 0 || fromIndex === target) return false;
     suppressChipClick = true;
     sessionRegistry.reorderSessions(fromIndex, target);
+    return true;
   }
 
-  function applyFlowTranslate(offset: number) {
-    const anchorId = mobileActionsSessionId;
+  /**
+   * The flow row. While the tray is open the tray's chip is pinned at the rail
+   * centre and the rest sit around it in a projected order the swipe advances.
+   *
+   * Geometry is measured once, when the flow is established: the order is
+   * projected locally and the registry moves only when the swipe ends, so a
+   * pass never re-measures a row that is mid-glide and never re-renders the
+   * chip list under the finger. That is what keeps the swipe smooth.
+   */
+  interface FlowState {
+    /** Chip ids in the order the row currently shows. */
+    ids: string[];
+    /** Chip widths measured when the flow was established. */
+    widths: Record<string, number>;
+    heights: Record<string, number>;
+    /** Where the pinned chip started, for the one registry move on release. */
+    fromIndex: number;
+    /** At least one pass happened this gesture. */
+    moved: boolean;
+  }
+
+  let flowState: FlowState | null = null;
+
+  function establishFlow(ids: string[], anchorId: string): FlowState {
+    const widths: Record<string, number> = Object.create(null);
+    const heights: Record<string, number> = Object.create(null);
     for (const element of chipElements()) {
-      if (element.dataset.sessionChip === anchorId) {
-        element.style.transform = '';
-        continue;
-      }
-      element.style.transform = offset ? `translateX(${offset}px)` : '';
+      const id = element.dataset.sessionChip ?? '';
+      const rect = element.getBoundingClientRect();
+      widths[id] = rect.width || 80;
+      heights[id] = rect.height || 24;
     }
+    return { ids: [...ids], widths, heights, fromIndex: Math.max(0, ids.indexOf(anchorId)), moved: false };
   }
 
   /** Pin the tray's chip at the rail centre and lay the others out around it. */
-  function layoutFlow(ids: string[], anchorId: string) {
-    if (!railEl || !trackEl) return;
+  function layoutFlow(): void {
+    const anchorId = mobileActionsSessionId;
+    if (!flowState || !railEl || !trackEl || !anchorId) return;
+    const index = flowState.ids.indexOf(anchorId);
+    if (index < 0) return;
+    const widthOf = (id: string) => flowState?.widths[id] ?? 80;
     const elements = chipElements();
-    const anchor = ids.indexOf(anchorId);
-    if (elements.length === 0 || anchor < 0) return;
-    const rects = elements.map((element) => element.getBoundingClientRect());
-    const widths = rects.map((rect) => rect.width || 80);
-    const heights = rects.map((rect) => rect.height);
-    const rowHeight = Math.max(...heights, 0);
-    const anchorX = Math.max(2, Math.round((railEl.clientWidth - widths[anchor]) / 2));
-    const positions = new Array<number>(widths.length);
-    positions[anchor] = anchorX;
+    const rowHeight = Math.max(...flowState.ids.map((id) => flowState?.heights[id] ?? 24), 0);
+    const anchorX = Math.max(2, Math.round((railEl.clientWidth - widthOf(anchorId)) / 2));
+    const positions: Record<string, number> = Object.create(null);
+    positions[anchorId] = anchorX;
     let x = anchorX - SESSION_CHIP_GAP;
-    for (let i = anchor - 1; i >= 0; i--) {
-      x -= widths[i];
-      positions[i] = x;
+    for (let i = index - 1; i >= 0; i--) {
+      const id = flowState.ids[i];
+      x -= widthOf(id);
+      positions[id] = x;
       x -= SESSION_CHIP_GAP;
     }
-    x = anchorX + widths[anchor] + SESSION_CHIP_GAP;
-    for (let i = anchor + 1; i < widths.length; i++) {
-      positions[i] = x;
-      x += widths[i] + SESSION_CHIP_GAP;
+    x = anchorX + widthOf(anchorId) + SESSION_CHIP_GAP;
+    for (let i = index + 1; i < flowState.ids.length; i++) {
+      const id = flowState.ids[i];
+      positions[id] = x;
+      x += widthOf(id) + SESSION_CHIP_GAP;
     }
     trackEl.style.height = `${rowHeight}px`;
-    elements.forEach((element, index) => {
+    for (const element of elements) {
+      const id = element.dataset.sessionChip ?? '';
+      const left = positions[id] as number | undefined;
+      if (left === undefined) {
+        // A chip that arrived after the flow was established has no slot yet.
+        element.classList.remove('session-chip-flow');
+        element.style.left = '';
+        element.style.top = '';
+        element.style.transform = '';
+        continue;
+      }
       element.classList.add('session-chip-flow');
-      element.style.left = `${positions[index]}px`;
-      element.style.top = `${Math.max(0, (rowHeight - heights[index]) / 2)}px`;
-      element.style.zIndex = index === anchor ? '4' : '1';
-    });
+      element.style.left = `${left}px`;
+      element.style.top = `${Math.max(0, (rowHeight - (flowState.heights[id] ?? rowHeight)) / 2)}px`;
+      element.style.zIndex = id === anchorId ? '4' : '1';
+      // The trailing movement between two passes rides on top of the slots, so
+      // the row follows the finger as closely as it snaps to them.
+      element.style.transform = id === anchorId || !flowLeftover ? '' : `translateX(${flowLeftover}px)`;
+    }
   }
 
-  function clearFlowLayout() {
+  function clearFlowLayout(): void {
+    flowState = null;
     for (const element of chipElements()) {
       element.classList.remove('session-chip-flow');
       element.style.left = '';
@@ -290,35 +328,43 @@
     if (trackEl) trackEl.style.height = '';
   }
 
-  function stepFlow(clientX: number) {
+  function stepFlow(clientX: number): void {
     const anchorId = mobileActionsSessionId;
-    if (!anchorId) return;
-    const ids = sessionRegistry.activeSessions.map((session) => session.sessionId);
-    const index = ids.indexOf(anchorId);
+    if (!flowState || !anchorId) return;
+    const index = flowState.ids.indexOf(anchorId);
     if (index < 0) return;
-    const widthById = new Map(chipElements().map((element) => [element.dataset.sessionChip ?? '', element.getBoundingClientRect().width || 80]));
     const step = flowPasses({
       index,
-      count: ids.length,
+      count: flowState.ids.length,
       deltaX: clientX - flowBaseX,
-      widthAt: (position) => widthById.get(ids[position] ?? '') ?? 80,
+      widthAt: (position) => flowState?.widths[flowState.ids[position] ?? ''] ?? 80,
     });
     flowBaseX = clientX - step.leftover;
     if (step.passes > 0 && step.index !== index) {
-      flowChanged = true;
-      sessionRegistry.moveSession(index, step.index);
+      flowState.moved = true;
+      flowState.ids.splice(index, 1);
+      flowState.ids.splice(step.index, 0, anchorId);
     }
     const direction = step.leftover < 0 ? 1 : -1;
-    const blocked = step.index + direction < 0 || step.index + direction >= ids.length;
+    const target = flowState.ids.indexOf(anchorId);
+    const blocked = target + direction < 0 || target + direction >= flowState.ids.length;
     flowLeftover = blocked ? flowResistance(step.leftover) : step.leftover;
-    applyFlowTranslate(flowLeftover);
+    layoutFlow();
   }
 
-  function endFlow() {
+  function endFlow(): void {
     flowLeftover = 0;
-    applyFlowTranslate(0);
-    if (!flowChanged) return;
-    flowChanged = false;
+    const anchorId = mobileActionsSessionId;
+    const state = flowState;
+    if (!state || !anchorId) return;
+    const finalIndex = state.ids.indexOf(anchorId);
+    const moved = state.moved && finalIndex !== state.fromIndex;
+    state.moved = false;
+    layoutFlow();
+    if (!moved) return;
+    // One registry move for the whole gesture, then one whole-order write.
+    sessionRegistry.moveSession(state.fromIndex, finalIndex);
+    state.fromIndex = finalIndex;
     sessionRegistry.pushSessionOrder();
   }
 
@@ -349,7 +395,6 @@
       // A hold does nothing reorder-related while the tray is open, and a
       // mouse needs no hold at all: moving it lifts the chip.
       if (!chip || mobileActionsSessionId || event.pointerType === 'mouse') return;
-      chip.classList.add('session-chip-held');
       holdTimer = setTimeout(() => {
         holdTimer = null;
         if (!pointer || pointer.moved || !pointer.chip) return;
@@ -369,7 +414,6 @@
         if (Math.hypot(deltaX, deltaY) <= SESSION_CHIP_SLOP) return;
         pointer.moved = true;
         clearHoldTimer();
-        pointer.chip?.classList.remove('session-chip-held');
         // A mouse needs no hold: moving it with a chip under the cursor lifts.
         if (pointer.mouse && pointer.chip && !mobileActionsSessionId) {
           lift(pointer.chip, pointer.startX);
@@ -379,8 +423,8 @@
         pointer.mode = resolveChipGesture({ trayOpen: !!mobileActionsSessionId, moved: true, deltaX, deltaY });
         if (pointer.mode === 'flow') {
           flowBaseX = pointer.startX + Math.sign(deltaX) * SESSION_CHIP_SLOP;
-          flowChanged = false;
           flowLeftover = 0;
+          if (flowState) flowState.moved = false;
         } else if (pointer.mode === 'scroll') {
           pointer.panBaseX = event.clientX;
           pointer.panBaseScroll = node.scrollLeft;
@@ -395,31 +439,38 @@
 
     const onUp = (event: PointerEvent) => {
       clearHoldTimer();
-      if (drag) {
-        pointer = null;
-        dropDrag();
+      const active = pointer;
+      pointer = null;
+      if (!active || event.pointerId !== active.pointerId) {
+        cancelDrag();
         return;
       }
-      if (!pointer || event.pointerId !== pointer.pointerId) {
-        pointer = null;
+      const chipId = active.chip?.dataset.sessionChip;
+      const reordered = drag ? dropDrag() : false;
+      if (!drag && active.mode === 'flow') endFlow();
+
+      if (!active.moved && !reordered) {
+        // A press that never travelled is a tap. Select on release, not on the
+        // browser's synthesized click, so the view changes the moment the
+        // finger or button comes up.
+        if (chipId) {
+          handlePillClick(chipId);
+          // Act after the tap so the browser's synthesized click cannot apply
+          // the same tap twice.
+          suppressChipClick = true;
+        }
         return;
       }
-      pointer.chip?.classList.remove('session-chip-held');
-      const chipId = pointer.chip?.dataset.sessionChip;
-      if (pointer.mode === 'flow') {
-        endFlow();
-      } else if (chipId && shouldOpenSessionPillActions(event.clientX - pointer.startX, event.clientY - pointer.startY)) {
+      if (chipId && shouldOpenSessionPillActions(event.clientX - active.startX, event.clientY - active.startY)) {
         // Upward swipe: the tray opens for this chip, and the tray is what
         // makes the reorder flow live.
         markSwipeHintSeen();
         openMobileActions(chipId);
       }
-      pointer = null;
     };
 
     const onCancel = () => {
       clearHoldTimer();
-      pointer?.chip?.classList.remove('session-chip-held');
       cancelDrag();
       if (pointer?.mode === 'flow') endFlow();
       pointer = null;
@@ -453,12 +504,16 @@
     const trayId = mobileActionsSessionId;
     const ids = sessionRegistry.activeSessions.map((session) => session.sessionId);
     if (!railEl || !trackEl) return;
-    if (trayId && ids.includes(trayId)) {
-      layoutFlow(ids, trayId);
-      applyFlowTranslate(flowLeftover);
-    } else {
+    if (!trayId || !ids.includes(trayId)) {
       clearFlowLayout();
+      return;
     }
+    // Establish once per tray opening: re-measuring a gliding row under the
+    // finger is what made the swipe stutter.
+    const established = flowState !== null && ids.every((id) => flowState!.ids.includes(id));
+    if (!established) flowState = establishFlow(ids, trayId);
+    else if (!flowState!.moved) flowState!.ids = [...ids];
+    layoutFlow();
   });
 
   function archiveAndCloseSession(sessionId: string) {
@@ -719,10 +774,6 @@
 
   /* A hold lifted this chip: it follows the pointer and the others shift
      aside while the drop slot holds an insert line. */
-  :global(.session-chip-held) {
-    box-shadow: 0 0 0 2px var(--chart-2);
-  }
-
   :global(.session-chip-dragging) {
     position: relative;
     z-index: 6;
@@ -734,8 +785,10 @@
      out around it, gliding when a pass swaps neighbours. */
   :global(.session-chip-flow) {
     position: absolute;
-    transition: left 160ms ease;
-    will-change: left;
+    transition:
+      left 160ms ease,
+      transform 160ms ease;
+    will-change: left, transform;
   }
 
   .session-rail-flow {

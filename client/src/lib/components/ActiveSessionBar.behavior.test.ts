@@ -139,6 +139,49 @@ describe('active session bar behavior', () => {
     expect(connection.send).toHaveBeenCalledWith({ type: 'view_session', sessionId: id, folderPath: '/w/alpha' });
   });
 
+  it('selects on release, without waiting for the click or showing a press ring', async () => {
+    const otherId = 'release-other';
+    try {
+      isolateChips([id, otherId]);
+      render();
+      await tick();
+      stubChipGeometry(80);
+      const [, otherChip] = railChips();
+
+      otherChip.dispatchEvent(chipPointer('pointerdown', 120, 100));
+      expect(sessionRegistry.viewedSessionId).toBe(id);
+      otherChip.dispatchEvent(chipPointer('pointerup', 120, 100));
+      await tick();
+
+      expect(sessionRegistry.viewedSessionId).toBe(otherId);
+      expect(connection.send).toHaveBeenCalledWith({ type: 'view_session', sessionId: otherId, folderPath: `/w/${otherId}` });
+    } finally {
+      releaseChips([id, otherId]);
+    }
+  });
+
+  it('selects when a hold releases without travelling', async () => {
+    const otherId = 'hold-other';
+    try {
+      isolateChips([id, otherId]);
+      render();
+      await tick();
+      stubChipGeometry(80);
+      const [, otherChip] = railChips();
+
+      otherChip.dispatchEvent(chipPointer('pointerdown', 120, 100));
+      await vi.advanceTimersByTimeAsync(300);
+      expect(otherChip.classList.contains('session-chip-dragging')).toBe(true);
+      otherChip.dispatchEvent(chipPointer('pointerup', 120, 100));
+      await tick();
+
+      expect(sessionRegistry.viewedSessionId).toBe(otherId);
+      expect(connection.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'reorder_sessions' }));
+    } finally {
+      releaseChips([id, otherId]);
+    }
+  });
+
   it('lifts a chip on a hold and pushes the whole order after the drag', async () => {
     const reorderSessions = ['reorder-alpha', 'reorder-beta', 'reorder-gamma'];
     try {
