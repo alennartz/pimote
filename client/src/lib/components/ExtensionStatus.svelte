@@ -5,11 +5,9 @@
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { widgetLinesToCard } from '$lib/widget-cards.js';
   import type { ExtensionUiRequestEvent } from '@pimote/shared';
-  import Convert from 'ansi-to-html';
+  import { ansiToHtml } from '$lib/ansi-to-html.js';
 
   // Extensions assume a terminal and may emit ANSI color codes in status text.
-  // escapeXML is required because the output is injected via {@html}.
-  const ansiConverter = new Convert({ fg: 'inherit', bg: 'transparent', escapeXML: true, newline: true });
   import CircleAlert from '@lucide/svelte/icons/circle-alert';
   import Info from '@lucide/svelte/icons/info';
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
@@ -124,9 +122,9 @@
 {#if statusEntries.length > 0}
   <div class="border-border bg-muted/50 text-muted-foreground flex items-center gap-3 border-t px-4 py-1.5 text-xs">
     {#each statusEntries as [key, text] (key)}
-      <!-- escapeXML escapes all input text; only ansi-to-html's fixed color spans remain. -->
+      <!-- ansiToHtml escapes input text before creating fixed style spans. -->
       <!-- eslint-disable svelte/no-at-html-tags -->
-      <span class="truncate">{@html ansiConverter.toHtml(text)}</span>
+      <span class="truncate">{@html ansiToHtml(text)}</span>
       <!-- eslint-enable svelte/no-at-html-tags -->
     {/each}
   </div>

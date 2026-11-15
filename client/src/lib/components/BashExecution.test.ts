@@ -111,4 +111,16 @@ describe('BashExecution presentation contract', () => {
 
     view.destroy();
   });
+
+  it('renders ANSI colors in command output and escapes markup', () => {
+    const output = '\u001b[32mok\u001b[0m <img src=x onerror=alert(1)>';
+    const view = render(runningExecution({ output }));
+    const pre = view.target.querySelector('pre.bounded-output-text');
+
+    expect(pre?.innerHTML).toContain('<span style="color:#0A0">ok</span>');
+    expect(pre?.innerHTML).toContain('&lt;img src=x');
+    expect(view.target.querySelector('img')).toBeNull();
+
+    view.destroy();
+  });
 });

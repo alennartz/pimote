@@ -1,10 +1,13 @@
 <script lang="ts">
+  import { ansiToHtml } from '$lib/ansi-to-html.js';
+
   let {
     text,
     streaming = false,
     maxCollapsedLines = 10,
     accent = 'default',
     bounded = false,
+    renderAnsi = false,
   }: {
     text: string;
     streaming?: boolean;
@@ -12,6 +15,8 @@
     accent?: 'default' | 'purple';
     /** Keep the view bounded, including below the line cutoff. */
     bounded?: boolean;
+    /** Render ANSI color codes and escape the input text. */
+    renderAnsi?: boolean;
   } = $props();
 
   // Auto-expand while streaming so users can follow live output. Bounded
@@ -63,7 +68,10 @@
 </script>
 
 <div class="bounded-output" class:accent-purple={accent === 'purple'}>
-  <pre class="bounded-output-text" class:clamped class:scrollable bind:this={contentEl}>{displayText}</pre>
+  <!-- ansiToHtml escapes input text before creating fixed style spans. -->
+  <!-- eslint-disable svelte/no-at-html-tags -->
+  <pre class="bounded-output-text" class:clamped class:scrollable bind:this={contentEl}>{#if renderAnsi}{@html ansiToHtml(displayText)}{:else}{displayText}{/if}</pre>
+  <!-- eslint-enable svelte/no-at-html-tags -->
   {#if needsCollapse}
     <button class="bounded-output-toggle" onclick={() => (expanded = !expanded)}>
       {expanded ? 'Show less' : `Show more… (${lineCount} lines)`}

@@ -24,6 +24,23 @@ describe('BoundedOutput', () => {
     expect(target.querySelector('pre')?.classList.contains('scrollable')).toBe(true);
   });
 
+  it('renders ANSI styles and escapes text when enabled', async () => {
+    const target = document.createElement('div');
+    const text = '\u001b[31mred\u001b[0m <img src=x onerror=alert(1)>';
+    const component = mount(BoundedOutput, {
+      target,
+      props: { text, renderAnsi: true },
+    });
+    destroy = () => unmount(component);
+    await tick();
+
+    const pre = target.querySelector('pre');
+    expect(pre?.innerHTML).toContain('<span style="color:#A00">red</span>');
+    expect(pre?.innerHTML).toContain('&lt;img src=x');
+    expect(pre?.textContent).toBe('red <img src=x onerror=alert(1)>');
+    expect(target.querySelector('img')).toBeNull();
+  });
+
   it('offers expansion when a single line exceeds the bounded height', async () => {
     const scrollHeight = Object.getOwnPropertyDescriptor(HTMLPreElement.prototype, 'scrollHeight');
     const clientHeight = Object.getOwnPropertyDescriptor(HTMLPreElement.prototype, 'clientHeight');

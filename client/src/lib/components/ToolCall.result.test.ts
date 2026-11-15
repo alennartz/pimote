@@ -47,7 +47,10 @@ describe('tool results', () => {
     await tick();
 
     expect(target.querySelector<HTMLImageElement>('.tool-content img')?.getAttribute('src')).toBe(`data:${mimeType};base64,AQIDBA==`);
-    expect(target.querySelector('.tool-image-caption')?.textContent).toContain(note);
+    expect(target.querySelector('.tool-image-indicator')?.nextElementSibling).toBe(target.querySelector('.tool-name'));
+    expect(target.querySelector('.tool-content')?.textContent?.trim()).toBe('');
+    expect(target.querySelector('.tool-content .tool-section-label')).toBeNull();
+    expect(target.querySelector('.tool-image-caption')).toBeNull();
   });
 
   it('renders replayed read images from the tool result projection', async () => {
@@ -65,6 +68,49 @@ describe('tool results', () => {
     await tick();
 
     expect(target.querySelector<HTMLImageElement>('.tool-content img')?.getAttribute('src')).toBe('data:image/png;base64,AQIDBA==');
-    expect(target.querySelector('.tool-image-caption')?.textContent).toContain(note);
+    expect(target.querySelector('.tool-image-indicator')?.nextElementSibling).toBe(target.querySelector('.tool-name'));
+    expect(target.querySelector('.tool-content')?.textContent?.trim()).toBe('');
+    expect(target.querySelector('.tool-content .tool-section-label')).toBeNull();
+    expect(target.querySelector('.tool-image-caption')).toBeNull();
+  });
+
+  it('keeps arguments and result sections for text-only read calls', async () => {
+    const target = document.createElement('div');
+    const component = mount(ToolCall, {
+      target,
+      props: {
+        content: { type: 'tool_call', toolName: 'read', toolCallId: 'read-text', args: { path: 'notes.txt' } },
+        result: 'Text file contents',
+      },
+    });
+    destroy = () => unmount(component);
+
+    target.querySelector<HTMLButtonElement>('.tool-header')?.click();
+    await tick();
+
+    expect(target.querySelector('.tool-content')?.textContent).toContain('Arguments');
+    expect(target.querySelector('.tool-content')?.textContent).toContain('Result');
+    expect(target.querySelector('.tool-image-indicator')).toBeNull();
+  });
+
+  it('renders ANSI colors in agent bash results and escapes markup', async () => {
+    const target = document.createElement('div');
+    const result = '\u001b[31mred\u001b[0m <img src=x onerror=alert(1)>';
+    const component = mount(ToolCall, {
+      target,
+      props: {
+        content: { type: 'tool_call', toolName: 'bash', toolCallId: 'bash-ansi', args: { command: 'printf red' } },
+        result,
+      },
+    });
+    destroy = () => unmount(component);
+
+    target.querySelector<HTMLButtonElement>('.tool-header')?.click();
+    await tick();
+
+    const pre = target.querySelector('.tool-content pre.bounded-output-text');
+    expect(pre?.innerHTML).toContain('<span style="color:#A00">red</span>');
+    expect(pre?.innerHTML).toContain('&lt;img src=x');
+    expect(target.querySelector('.tool-content img')).toBeNull();
   });
 });

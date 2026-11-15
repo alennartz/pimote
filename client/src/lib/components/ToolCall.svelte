@@ -13,6 +13,7 @@
   import { imageFromToolData } from '$lib/image-content.js';
   import { observeFullyOffscreen } from '$lib/auto-collapse.js';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
+  import ImageIcon from '@lucide/svelte/icons/image';
   import Wrench from '@lucide/svelte/icons/wrench';
   import CheckCircle from '@lucide/svelte/icons/check-circle-2';
   import XCircle from '@lucide/svelte/icons/x-circle';
@@ -109,9 +110,8 @@
     streamingEntries = streamer.entries.map((e) => ({ oldText: e.oldText, newText: e.newText }));
   });
 
-  // Edit, write, codemode, and bash tool sections render expanded while
-  // active (streaming or the result is still in progress). See the
-  // delayed-collapse effect below.
+  // Edit, write, codemode, bash, and image-read sections render expanded
+  // while active. See the delayed-collapse effect below.
   $effect(() => {
     if (!isEdit && !isWrite && !isCodemode && !isBash && !hasReadImages) return;
     if (streaming || inProgress || hasReadImages) {
@@ -119,9 +119,8 @@
     }
   });
 
-  // Once an edit/write/codemode/bash section settles, keep it expanded and
-  // collapse it the first time it fully scrolls out of view, rather than
-  // snapping shut on completion.
+  // Once a specialized tool section settles, keep it expanded and collapse
+  // it the first time it fully scrolls out of view.
   $effect(() => {
     if (!isEdit && !isWrite && !isCodemode && !isBash && !hasReadImages) return;
     if (streaming || inProgress) return;
@@ -342,6 +341,9 @@
     {:else}
       <Wrench size={14} class="shrink-0" />
     {/if}
+    {#if hasReadImages}
+      <ImageIcon size={14} class="tool-image-indicator shrink-0" />
+    {/if}
     <span class="tool-name">{toolName}</span>
     {#if toolDetail}
       <span class="tool-detail">{toolDetail}</span>
@@ -355,46 +357,42 @@
 
   {#if expanded}
     <div class="tool-content">
-      {#if isEdit && editEntries.length > 0}
-        <div class="tool-section">
-          <EditDiffBlock entries={editEntries} />
+      {#if hasReadImages}
+        <div class="tool-image-body">
+          {#each resultImages as image, i (`read-image-${i}`)}
+            <ImagePreview {image} alt={`Image read by agent ${i + 1}`} />
+          {/each}
         </div>
-      {:else if isWrite && (writeBody !== '' || content.args)}
-        <div class="tool-section tool-section-code">
-          <CodeBlock content={writeBody} mode={isMarkdown ? 'markdown' : 'code'} language={writeLanguage} streaming={streaming && !isCompleted} copyLabel="Copy file contents" />
-        </div>
-      {:else if isCodemode && (codemodeCode !== '' || content.args)}
-        <div class="tool-section tool-section-code">
-          <CodeBlock content={codemodeCode} mode="code" language="typescript" streaming={streaming && !isCompleted} copyLabel="Copy script" />
-        </div>
-      {:else if isBash && (bashCommand !== '' || content.args)}
-        <div class="tool-section tool-section-code">
-          <CodeBlock content={bashCommand} mode="code" language="bash" streaming={streaming && !isCompleted} copyLabel="Copy command" />
-        </div>
-      {:else if argsText}
-        <div class="tool-section">
-          <div class="tool-section-label">Arguments</div>
-          <BoundedOutput text={argsText} streaming={streaming && !isCompleted} />
-        </div>
-      {/if}
-
-      {#if resultImages.length > 0}
-        <div class="tool-section">
-          <div class="tool-section-label">Image</div>
-          {#if resultText}
-            <div class="tool-image-caption">{resultText}</div>
-          {/if}
-          <div class="tool-images">
-            {#each resultImages as image, i (`read-image-${i}`)}
-              <ImagePreview {image} alt={`Image read by agent ${i + 1}`} />
-            {/each}
+      {:else}
+        {#if isEdit && editEntries.length > 0}
+          <div class="tool-section">
+            <EditDiffBlock entries={editEntries} />
           </div>
-        </div>
-      {:else if resultText}
-        <div class="tool-section">
-          <div class="tool-section-label">{inProgress ? 'Output (streaming)' : 'Result'}</div>
-          <BoundedOutput text={resultText} streaming={inProgress} bounded />
-        </div>
+        {:else if isWrite && (writeBody !== '' || content.args)}
+          <div class="tool-section tool-section-code">
+            <CodeBlock content={writeBody} mode={isMarkdown ? 'markdown' : 'code'} language={writeLanguage} streaming={streaming && !isCompleted} copyLabel="Copy file contents" />
+          </div>
+        {:else if isCodemode && (codemodeCode !== '' || content.args)}
+          <div class="tool-section tool-section-code">
+            <CodeBlock content={codemodeCode} mode="code" language="typescript" streaming={streaming && !isCompleted} copyLabel="Copy script" />
+          </div>
+        {:else if isBash && (bashCommand !== '' || content.args)}
+          <div class="tool-section tool-section-code">
+            <CodeBlock content={bashCommand} mode="code" language="bash" streaming={streaming && !isCompleted} copyLabel="Copy command" />
+          </div>
+        {:else if argsText}
+          <div class="tool-section">
+            <div class="tool-section-label">Arguments</div>
+            <BoundedOutput text={argsText} streaming={streaming && !isCompleted} />
+          </div>
+        {/if}
+
+        {#if resultText}
+          <div class="tool-section">
+            <div class="tool-section-label">{inProgress ? 'Output (streaming)' : 'Result'}</div>
+            <BoundedOutput text={resultText} streaming={inProgress} bounded renderAnsi={isBash} />
+          </div>
+        {/if}
       {/if}
     </div>
   {/if}
@@ -481,17 +479,15 @@
     font-weight: 500;
   }
 
-  .tool-image-caption {
-    margin-bottom: 8px;
+  :global(.tool-image-indicator) {
     color: var(--muted-foreground);
-    font-size: 0.85rem;
-    white-space: pre-wrap;
   }
 
-  .tool-images {
+  .tool-image-body {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    padding: 6px 12px;
   }
 
   .in-progress .tool-header {
