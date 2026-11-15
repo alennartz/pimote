@@ -9,6 +9,7 @@ import type {
   SubagentNodeSnapshot,
   SubagentProvider,
   SubagentProviderEvent,
+  SubagentStopRequest,
 } from '@pimote/sdk/subagents';
 import type { PimoteSessionEvent, SessionState } from '../../shared/dist/index.js';
 import { createSubagentHost, type SubagentViewChange } from './subagent-host.js';
@@ -89,6 +90,7 @@ function fixture(retainedEvents: readonly SubagentEvent[] = []) {
   const viewChanges: ViewNotification[] = [];
   const waiters = new Set<(notification: ViewNotification) => void>();
   const parentEvents: SubagentEvent[] = [];
+  const stopRequests: SubagentStopRequest[] = [];
   const projected = new Map<string, SubagentProviderEvent[]>();
   const accept = (id: string, event: SubagentProviderEvent) => projected.set(id, [...(projected.get(id) ?? []), event]);
   const surfaces = new Map<string, { emit: (event: PimoteSessionEvent) => void }>();
@@ -216,6 +218,7 @@ function fixture(retainedEvents: readonly SubagentEvent[] = []) {
     async stop(request) {
       const current = sessions.get(key(request.path));
       if (!current || current.sessionId !== request.expectedSessionId) throw new Error('stale child');
+      stopRequests.push({ ...request, path: [...request.path] });
     },
     async resurrect(request) {
       const path = [...request.parentPath, request.localId];
@@ -312,6 +315,7 @@ function fixture(retainedEvents: readonly SubagentEvent[] = []) {
     pending,
     parentEvents,
     projected,
+    stopRequests,
     viewChanges,
     surfaces,
     publish,
@@ -611,6 +615,19 @@ describe('SubagentHost', () => {
     await expect(f.host.dispatch('connection-1', old, { type: 'get_state' })).rejects.toThrow();
     await f.host.closeView('connection-1', old).catch(() => undefined);
     await expect(f.host.dispatch('connection-1', fresh, { type: 'get_state' })).resolves.toBe('scout-3:get_state');
+  });
+
+  it('stops a hierarchy node without requiring a view and guards its runtime identity', async () => {
+    const f = fixture();
+    await f.host.start();
+    const request = { path: worker, incarnation: 'worker-1-incarnation', expectedSessionId: 'worker-1' };
+
+    await f.host.stop(request, 'connection-1');
+
+    expect(f.stopRequests).toContainEqual(request);
+    expect(f.active(worker)).toBe(0);
+    await expect(f.host.stop({ ...request, expectedSessionId: 'replacement' }, 'connection-1')).rejects.toThrow('stale child runtime');
+    expect(f.stopRequests).not.toContainEqual(expect.objectContaining({ expectedSessionId: 'replacement' }));
   });
 
   it('closes views in a torn-down subtree and leaves other views usable', async () => {

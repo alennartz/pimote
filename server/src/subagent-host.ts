@@ -10,6 +10,7 @@ import type {
   SubagentPresentationProvider,
   SubagentProviderEvent,
   SubagentProviderSnapshot,
+  SubagentStopRequest,
   SubagentTeardownResult,
 } from '@pimote/sdk/subagents';
 import type { PimoteSessionEvent } from '../../shared/dist/index.js';
@@ -100,6 +101,8 @@ export interface SubagentHost {
   openView(connectionId: string, path: AgentPath, connectionToken?: number): Promise<SubagentViewAttachment>;
   closeView(connectionId: string, view: SubagentViewReference, connectionToken?: number): Promise<void>;
   dispatch(connectionId: string, view: SubagentViewReference, command: SubagentSurfaceCommand, connectionToken?: number, caller?: SessionSurfaceCallerContext): Promise<unknown>;
+  /** Stop one current child without requiring a borrowed view. */
+  stop(request: SubagentStopRequest, connectionId?: string, connectionToken?: number): Promise<void>;
   /** Return the latest provider hierarchy snapshot at the host boundary. */
   snapshot(): SubagentProviderSnapshot;
   /** Delegate resurrection through the provider's owner-control seam. */
@@ -774,6 +777,19 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     return options.provider.resurrect(request);
   };
 
+  const stop = async (request: SubagentStopRequest, connectionId?: string, connectionToken?: number): Promise<void> => {
+    assertStarted();
+    if (connectionId !== undefined) {
+      const connection = connections.get(connectionId) ?? getConnection(connectionId);
+      assertConnectionToken(connection, connectionToken);
+    }
+    const current = options.provider.snapshot();
+    replaceSnapshotNodes(current);
+    const node = nodes.get(pathKey(request.path));
+    if (!node || node.incarnation !== request.incarnation || node.sessionId !== request.expectedSessionId) throw new Error('stale child runtime');
+    await options.provider.stop({ ...request, path: clonePath(request.path) });
+  };
+
   const releaseConnection = async (connectionId: string, connectionToken?: number): Promise<void> => {
     const connection = connections.get(connectionId);
     if (!connection || closed) return;
@@ -836,6 +852,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     dispatch,
     snapshot,
     resurrect,
+    stop,
     releaseConnection,
     disconnect,
     reconnect,

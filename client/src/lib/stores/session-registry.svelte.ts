@@ -2409,6 +2409,16 @@ export class SessionRegistry {
     } as PimoteCommand);
   }
 
+  async stopSubagent(rootSessionId: string, path: AgentPath, incarnation: string, expectedSessionId: string): Promise<PimoteResponse> {
+    return connection.send({
+      type: 'subagent_stop',
+      sessionId: rootSessionId,
+      path: copyAgentPath(path),
+      incarnation,
+      expectedSessionId,
+    });
+  }
+
   async resurrectSubagent(request: {
     rootSessionId: string;
     savedSessionId: string;

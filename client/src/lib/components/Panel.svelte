@@ -1,15 +1,19 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import type { PimoteUsageBreakdown, SubagentNodeSnapshot } from '@pimote/shared';
   import { panelStore } from '$lib/stores/panel-store.svelte.js';
   import { sessionRegistry, type SubagentViewClosedNotice } from '$lib/stores/session-registry.svelte.js';
   import { projectSubagentPanelRows, type AgentPath, type SubagentPanelState, type SubagentPanelRow, type SubagentTeardownConfirmation } from '$lib/subagent-view-state.js';
   import CardList from './CardList.svelte';
   import AgentChip from './AgentChip.svelte';
+  import CostBreakdownPopover from './CostBreakdownPopover.svelte';
+  import { formatCostUsd } from '$lib/cost-disclosure.js';
   import { formatTokenCount } from '$lib/session-summary.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
   import Bot from '@lucide/svelte/icons/bot';
   import ExternalLink from '@lucide/svelte/icons/external-link';
+  import OctagonX from '@lucide/svelte/icons/octagon-x';
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import X from '@lucide/svelte/icons/x';
 
@@ -87,10 +91,6 @@
     return path.join('/');
   }
 
-  function stateLabel(row: SubagentPanelRow): string {
-    return row.metadata.activity ? `${row.metadata.state} · ${row.metadata.activity}` : row.metadata.state;
-  }
-
   function costLabel(row: SubagentPanelRow): string {
     const usage = row.metadata.usage;
     if (!usage) return '';
@@ -101,6 +101,26 @@
   function contextLabel(row: SubagentPanelRow): string {
     const percent = row.metadata.contextPercent;
     return percent === undefined ? '' : `${Math.max(0, Math.min(100, Math.round(percent)))}%`;
+  }
+
+  function usageBreakdownForNode(usage: SubagentNodeSnapshot['usage']): PimoteUsageBreakdown | undefined {
+    const costs = usage.costBreakdown;
+    if (!costs) return undefined;
+    return {
+      tokens: {
+        input: usage.input,
+        output: usage.output,
+        cacheRead: usage.cacheRead,
+        cacheWrite: usage.cacheWrite,
+        total: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
+      },
+      cost: {
+        input: costs.input,
+        output: costs.output,
+        cacheRead: costs.cacheRead,
+        cacheWrite: costs.cacheWrite,
+      },
+    };
   }
 
   function inspect(path: AgentPath): void {
@@ -139,6 +159,26 @@
       return;
     }
     void openView(path);
+  }
+
+  function isInterruptible(state: SubagentNodeSnapshot['state']): boolean {
+    return state === 'running' || state === 'waiting';
+  }
+
+  async function interruptSubagent(path: AgentPath): Promise<void> {
+    const rootId = rootSessionId;
+    const node = rootState?.nodes.find((candidate) => samePath(candidate.path, path));
+    if (!rootId || !node || !isInterruptible(node.state)) return;
+    busy = true;
+    try {
+      const response = await sessionRegistry.stopSubagent(rootId, node.path, node.incarnation, node.sessionId);
+      if (!response.success) setNotice({ rootSessionId: rootId, path: node.path, reason: 'unavailable' }, true);
+    } catch (error) {
+      console.error('[Panel] Failed to interrupt subagent:', error);
+      setNotice({ rootSessionId: rootId, path: node.path, reason: 'unavailable' }, true);
+    } finally {
+      busy = false;
+    }
   }
 
   async function closeChildView(): Promise<void> {
@@ -335,7 +375,7 @@
         <div class="space-y-0.5">
           {#each rows as row (pathLabel(row.path))}
             <div
-              class="tree-row flex min-w-0 items-center gap-1 rounded-md border border-transparent py-0.5 pr-1 transition-colors {row.inspected
+              class="tree-row grid min-w-0 items-center gap-x-1 gap-y-0.5 rounded-md border border-transparent py-0.5 pr-1 transition-colors {row.inspected
                 ? 'border-ring/60 bg-sidebar-accent'
                 : ''}"
               data-node={pathLabel(row.path)}
@@ -360,42 +400,19 @@
                       state={row.metadata.state}
                     />
                   </span>
-                  <span class="text-muted-foreground block truncate text-[11px]">{pathLabel(row.path)} · {stateLabel(row)}</span>
+                  <span class="text-muted-foreground block truncate text-[11px]">{row.metadata.state}</span>
                 </span>
               </button>
               <div class="tree-row-meta text-muted-foreground hidden shrink-0 items-center gap-1 font-mono text-[10px] max-md:hidden @[20rem]:flex">
                 {#if contextLabel(row)}<span>{contextLabel(row)}</span>{/if}
                 {#if costLabel(row)}<span>{costLabel(row)}</span>{/if}
               </div>
-              {#if row.live}
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  class="row-teardown text-muted-foreground hover:text-destructive hover:bg-destructive/10 max-md:size-11"
-                  aria-label={`Teardown ${pathLabel(row.path)}`}
-                  title={`Teardown ${pathLabel(row.path)}`}
-                  disabled={busy}
-                  onclick={(event) => {
-                    event.stopPropagation();
-                    requestTeardown(row.path);
-                  }}
-                >
-                  <Trash2 class="size-3" />
-                </Button>
+              {#if row.metadata.activity}
+                <dl class="tree-row-command">
+                  <dt>Last command</dt>
+                  <dd><code title={row.metadata.activity}>{row.metadata.activity}</code></dd>
+                </dl>
               {/if}
-              <Button
-                variant="ghost"
-                size="xs"
-                class={`open-action text-muted-foreground hover:text-foreground max-md:min-h-11 max-md:min-w-[4.5rem] max-md:justify-center ${row.viewOpen ? 'open bg-sidebar-accent text-foreground' : ''}`}
-                data-open-node={pathLabel(row.path)}
-                aria-label={row.viewOpen ? `Show ${pathLabel(row.path)} view` : `Open ${pathLabel(row.path)} view`}
-                title={row.viewOpen ? 'Show open view' : 'Open child view'}
-                disabled={busy}
-                onclick={() => showView(row.path)}
-              >
-                <ExternalLink class="size-3.5" />
-                <span class="hidden max-md:inline">{row.viewOpen ? 'View' : 'Open'}</span>
-              </Button>
             </div>
           {/each}
         </div>
@@ -412,37 +429,97 @@
             personaIcon={inspectorNode.personaIcon}
             state={inspectorNode.state}
           />
-          <strong class="min-w-0 flex-1 truncate font-mono text-xs">{pathLabel(inspectorNode.path)}</strong>
-          <span class="text-muted-foreground rounded-full border px-1.5 py-0.5 text-[10px]">{inspectorViewOpen ? 'View open' : 'View closed'}</span>
+          <span class="text-muted-foreground ml-auto rounded-full border px-1.5 py-0.5 text-[10px]">{inspectorViewOpen ? 'View open' : 'View closed'}</span>
         </div>
         <div class="mt-3 grid grid-cols-2 gap-x-3 gap-y-2">
-          <div><span class="metadata-label">Persona</span><span>{inspectorNode.persona ?? 'Default'}</span></div>
           <div><span class="metadata-label">Model</span><span>{inspectorNode.model ?? '—'}{inspectorNode.thinkingLevel ? ` · ${inspectorNode.thinkingLevel}` : ''}</span></div>
-          <div><span class="metadata-label">State</span><span>{inspectorNode.state}{inspectorNode.activity ? ` · ${inspectorNode.activity}` : ''}</span></div>
+          <div><span class="metadata-label">State</span><span>{inspectorNode.state}</span></div>
           <div><span class="metadata-label">Channels</span><span>{inspectorNode.channels?.join(' · ') || '—'}</span></div>
           <div><span class="metadata-label">Waits</span><span>{inspectorNode.waitingFor?.map(pathLabel).join(' · ') || '—'}</span></div>
           <div><span class="metadata-label">Context</span><span>{inspectorNode.contextFill ?? '—'}{inspectorNode.contextFill !== undefined ? '%' : ''}</span></div>
-          <div>
-            <span class="metadata-label">Input tokens</span><span
-              >{inspectorNode.usage ? formatTokenCount(inspectorNode.usage.input + inspectorNode.usage.cacheRead + inspectorNode.usage.cacheWrite) : '—'}</span
-            >
-          </div>
-          <div><span class="metadata-label">Output tokens</span><span>{inspectorNode.usage ? formatTokenCount(inspectorNode.usage.output) : '—'}</span></div>
-          <div><span class="metadata-label">Cost</span><span>{inspectorNode.usage ? `$${inspectorNode.usage.cost.toFixed(2)}` : '—'}</span></div>
-          <div><span class="metadata-label">Turns</span><span>{inspectorNode.usage?.turns ?? 0}</span></div>
         </div>
+        {#if inspectorNode.usage}
+          {@const usage = inspectorNode.usage}
+          {@const cacheTokens = usage.cacheRead + usage.cacheWrite}
+          {@const breakdown = usageBreakdownForNode(usage)}
+          <div class="agent-inspector-usage" aria-label="Subagent usage">
+            <span title="Input tokens">↑{formatTokenCount(usage.input)}</span>
+            <span title="Output tokens">↓{formatTokenCount(usage.output)}</span>
+            {#if cacheTokens > 0}<span title="Cache tokens">cache {formatTokenCount(cacheTokens)}</span>{/if}
+            {#if usage.cost > 0 && breakdown}
+              <CostBreakdownPopover totalCostUsd={usage.cost} {breakdown} contextLabel={`Subagent ${pathLabel(inspectorNode.path)}`} />
+            {:else}
+              <span title={breakdown ? 'Cost' : 'Detailed cost breakdown unavailable'}>{formatCostUsd(usage.cost) ?? '—'}</span>
+            {/if}
+            <span title="Turns">{usage.turns} {usage.turns === 1 ? 'turn' : 'turns'}</span>
+          </div>
+        {/if}
+        {#if inspectorNode.activity}
+          <dl class="agent-inspector-command">
+            <dt class="metadata-label">Last command</dt>
+            <dd><code title={inspectorNode.activity}>{inspectorNode.activity}</code></dd>
+          </dl>
+        {/if}
         {#if inspectorNode.lastError}<p class="text-destructive mt-2 truncate text-xs">Error: {inspectorNode.lastError}</p>{:else if inspectorNode.lastOutput}<p
             class="text-muted-foreground mt-2 truncate text-xs"
           >
             Last output: {inspectorNode.lastOutput}
           </p>{/if}
-        <div class="mt-3 flex flex-wrap gap-1.5">
+        <div class="agent-inspector-actions mt-3 flex flex-wrap items-center gap-1.5">
           {#if selectedPath && samePath(selectedPath, inspectorNode.path)}
-            <Button variant="outline" size="xs" class="max-md:min-h-11" onclick={() => void closeChildView()}>Close child view</Button>
+            <Button
+              variant="ghost"
+              size="xs"
+              class="open-action text-muted-foreground hover:text-foreground max-md:min-h-11 max-md:min-w-[4.5rem] max-md:justify-center"
+              aria-label="Close child view"
+              title="Close child view"
+              disabled={busy}
+              onclick={() => void closeChildView()}
+            >
+              <X class="size-3.5" />
+              <span class="hidden max-md:inline">Close</span>
+            </Button>
           {:else}
-            <Button variant="outline" size="xs" class="max-md:min-h-11" onclick={() => showView(inspectorNode.path)}>{inspectorViewOpen ? 'Show view' : 'Open view'}</Button>
+            <Button
+              variant="ghost"
+              size="xs"
+              class="open-action text-muted-foreground hover:text-foreground max-md:min-h-11 max-md:min-w-[4.5rem] max-md:justify-center"
+              aria-label={inspectorViewOpen ? `Show ${pathLabel(inspectorNode.path)} view` : `Open ${pathLabel(inspectorNode.path)} view`}
+              title={inspectorViewOpen ? 'Show open view' : 'Open child view'}
+              disabled={busy}
+              onclick={() => showView(inspectorNode.path)}
+            >
+              <ExternalLink class="size-3.5" />
+              <span class="hidden max-md:inline">{inspectorViewOpen ? 'View' : 'Open'}</span>
+            </Button>
           {/if}
-          <Button variant="destructive" size="xs" class="max-md:min-h-11" onclick={() => requestTeardown(inspectorNode!.path)}>Teardown</Button>
+          {#if isInterruptible(inspectorNode.state)}
+            <Button
+              variant="destructive"
+              size="xs"
+              class="mb-1 gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors max-md:min-h-11"
+              aria-label={`Interrupt ${pathLabel(inspectorNode.path)}`}
+              title="Interrupt agent"
+              disabled={busy}
+              onclick={() => void interruptSubagent(inspectorNode!.path)}
+            >
+              <OctagonX class="size-4" />
+              <span>Interrupt</span>
+            </Button>
+          {/if}
+          {#if inspectorNode.state !== 'errored' && inspectorNode.state !== 'dead'}
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              class="row-teardown text-muted-foreground hover:text-destructive hover:bg-destructive/10 ml-auto max-md:size-11"
+              aria-label={`Teardown ${pathLabel(inspectorNode.path)}`}
+              title={`Teardown ${pathLabel(inspectorNode.path)}`}
+              disabled={busy}
+              onclick={() => requestTeardown(inspectorNode.path)}
+            >
+              <Trash2 class="size-3" />
+            </Button>
+          {/if}
         </div>
       </section>
     {/if}
@@ -524,8 +601,42 @@
   .panel-host {
     container-type: inline-size;
   }
+  .tree-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
   .tree-row-select {
     padding-inline-start: calc(0.5rem + var(--tree-indent));
+  }
+  .tree-row-command {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    gap: 0.4rem;
+    min-width: 0;
+    margin: 0;
+    padding: 0.3rem 0.35rem 0.4rem calc(0.5rem + var(--tree-indent));
+    border-top: 1px solid color-mix(in oklch, var(--sidebar-border) 60%, transparent);
+  }
+  .tree-row-command dt {
+    color: var(--muted-foreground);
+    font-size: 0.625rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .tree-row-command dd {
+    min-width: 0;
+    margin: 0;
+  }
+  .tree-row-command code {
+    display: block;
+    min-width: 0;
+    color: var(--muted-foreground);
+    font-family: var(--font-mono, monospace);
+    font-size: 0.675rem;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
   }
   .tree-row-meta {
     line-height: 1.25;
@@ -545,6 +656,43 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: 0.75rem;
+  }
+  .agent-inspector-usage {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem 0.65rem;
+    margin-top: 0.65rem;
+    padding-top: 0.55rem;
+    border-top: 1px solid color-mix(in oklch, var(--sidebar-border) 60%, transparent);
+    color: var(--muted-foreground);
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .agent-inspector-usage > span {
+    white-space: nowrap;
+  }
+  .agent-inspector-command {
+    min-width: 0;
+    margin: 0.65rem 0 0;
+  }
+  .agent-inspector-command dd {
+    min-width: 0;
+    margin: 0.15rem 0 0;
+  }
+  .agent-inspector-command code {
+    display: block;
+    min-width: 0;
+    padding: 0.4rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface-sunken);
+    color: var(--foreground);
+    font-family: var(--font-mono, monospace);
+    font-size: 0.75rem;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
   }
   .field-label :global([data-slot='input']),
   .field-textarea {

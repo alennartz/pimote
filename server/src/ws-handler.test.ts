@@ -372,6 +372,29 @@ describe('native branch snapshot wire fields', () => {
   });
 });
 
+describe('root-scoped subagent stop command', () => {
+  it('stops a hierarchy node without opening its child view', async () => {
+    const slot = createMockSlot({ id: 'stop-root' });
+    const stop = vi.fn(async () => {});
+    slot.subagentHost = { stop, connectionToken: () => 7 } as unknown as NonNullable<ManagedSlot['subagentHost']>;
+    const { handler, sent } = createTestHandler('stop-client', { sessions: new Map([['stop-root', slot]]) });
+
+    await handler.handleMessage(
+      JSON.stringify({
+        type: 'subagent_stop',
+        id: 'stop-worker',
+        sessionId: 'stop-root',
+        path: ['worker'],
+        incarnation: 'worker-incarnation',
+        expectedSessionId: 'worker-session',
+      }),
+    );
+
+    expect(stop).toHaveBeenCalledWith({ path: ['worker'], incarnation: 'worker-incarnation', expectedSessionId: 'worker-session' }, 'stop-client', 7);
+    expect(findResponse(sent, 'stop-worker')).toMatchObject({ success: true });
+  });
+});
+
 describe('global settings wire command', () => {
   it('returns a session-independent manifest using the request response envelope', async () => {
     const { handler, sent } = createTestHandler('settings-client');

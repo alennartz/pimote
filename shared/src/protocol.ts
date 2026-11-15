@@ -1103,6 +1103,14 @@ export interface SubagentSetTreeLabelCommand extends SubagentCommandBase {
   label?: string;
 }
 
+export interface SubagentStopCommand extends CommandBase {
+  type: 'subagent_stop';
+  sessionId: string;
+  path: AgentPath;
+  incarnation: string;
+  expectedSessionId: string;
+}
+
 export interface SubagentTeardownCommand extends CommandBase {
   type: 'subagent_teardown';
   sessionId: string;
@@ -1219,6 +1227,7 @@ export type PimoteCommand =
   | SubagentGetTreeCommand
   | SubagentNavigateTreeCommand
   | SubagentSetTreeLabelCommand
+  | SubagentStopCommand
   | SubagentTeardownCommand
   | SubagentResurrectCommand;
 

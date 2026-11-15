@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { AgentPath, PimoteSubagentAwaitResult, SubagentNodeSnapshot } from '@pimote/shared';
-  import Bot from '@lucide/svelte/icons/bot';
+  import FolderNatureIcon from './FolderNatureIcon.svelte';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
 
   type AgentState = PimoteSubagentAwaitResult['statuses'][number]['state'] | SubagentNodeSnapshot['state'];
@@ -47,7 +47,7 @@
       {#if displayPersonaIcon}
         {displayPersonaIcon}
       {:else}
-        <Bot size={12} />
+        <FolderNatureIcon kind="persona" class="size-3" />
       {/if}
     </span>
   {:else}
@@ -99,7 +99,7 @@
   }
 
   .agent-chip[data-agent-state='running'] .agent-chip-status:not(.agent-chip-persona) {
-    background: var(--custom-accent);
+    background: var(--status-connected);
   }
 
   .agent-chip[data-agent-state='waiting'] .agent-chip-status:not(.agent-chip-persona) {
@@ -107,7 +107,7 @@
   }
 
   .agent-chip[data-agent-state='idle'] .agent-chip-status:not(.agent-chip-persona) {
-    background: var(--status-connected);
+    background: var(--custom-accent);
   }
 
   .agent-chip[data-agent-state='errored'] .agent-chip-status:not(.agent-chip-persona),
@@ -121,7 +121,7 @@
   }
 
   .agent-chip[data-agent-state='running'] .agent-chip-persona {
-    color: var(--custom-accent);
+    color: var(--status-connected);
   }
 
   .agent-chip[data-agent-state='waiting'] .agent-chip-persona {
@@ -129,7 +129,7 @@
   }
 
   .agent-chip[data-agent-state='idle'] .agent-chip-persona {
-    color: var(--status-connected);
+    color: var(--custom-accent);
   }
 
   .agent-chip[data-agent-state='errored'] .agent-chip-persona,

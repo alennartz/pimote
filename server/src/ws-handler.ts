@@ -1084,6 +1084,7 @@ export class WsHandler {
         case 'subagent_steer':
         case 'subagent_follow_up':
         case 'subagent_abort':
+        case 'subagent_stop':
         case 'subagent_bash':
         case 'subagent_abort_bash':
         case 'subagent_set_model':
@@ -1377,6 +1378,13 @@ export class WsHandler {
         },
         this.subagentConnectionToken(slot),
       );
+      this.sendResponse(id, true);
+      return;
+    }
+
+    if (command.type === 'subagent_stop') {
+      await host.stop({ path: command.path, incarnation: command.incarnation, expectedSessionId: command.expectedSessionId }, this.clientId, this.subagentConnectionToken(slot));
+      this.rememberSubagentConnectionToken(slot);
       this.sendResponse(id, true);
       return;
     }

@@ -40,7 +40,15 @@ function node(path: readonly string[]): SubagentNodeSnapshot {
     thinkingLevel: 'high',
     state: 'waiting',
     activity: 'checking callback ownership',
-    usage: { input: 500, output: 200, cacheRead: 50, cacheWrite: 100, cost: 0.04, turns: 2 },
+    usage: {
+      input: 500,
+      output: 200,
+      cacheRead: 50,
+      cacheWrite: 100,
+      cost: 0.04,
+      costBreakdown: { input: 0.02, output: 0.01, cacheRead: 0.005, cacheWrite: 0.005 },
+      turns: 2,
+    },
     contextFill: 31,
     channels: ['parent', 'worker/scout'],
     waitingFor: [['worker', 'scout']],
@@ -137,6 +145,17 @@ describe('Panel hierarchy navigation', () => {
     const target = render();
     await tick();
     expect(target.querySelector('button[aria-label="Inspect worker/scout"]')).not.toBeNull();
+    const mainRow = target.querySelector<HTMLElement>('[data-node="worker"]');
+    const mainCommand = mainRow?.querySelector('dl.tree-row-command');
+    expect(mainCommand).not.toBeNull();
+    expect(mainCommand?.querySelector('dt')?.textContent).toBe('Last command');
+    expect(mainCommand?.querySelector('dd')?.textContent).toContain('checking callback ownership');
+    expect(mainCommand?.parentElement).toBe(mainRow);
+    expect(mainRow?.querySelector('[data-folder-icon="persona"]')).not.toBeNull();
+    const mainRowButton = mainRow?.querySelector<HTMLButtonElement>('button[aria-label="Inspect worker"]');
+    expect(mainRowButton?.textContent?.match(/worker/g)).toHaveLength(1);
+    expect(mainRowButton?.textContent).toContain('waiting');
+
     target.querySelector<HTMLButtonElement>('button[aria-label="Inspect worker"]')!.click();
     await tick();
 
@@ -149,13 +168,25 @@ describe('Panel hierarchy navigation', () => {
     expect(target.querySelectorAll('[aria-label="Selected subagent details"]')).toHaveLength(1);
     expect(details.textContent).not.toContain(initialTask);
     expect(details.textContent).toContain('reviewer');
+    expect(details.textContent).not.toContain('Persona');
     expect(details.textContent).toContain('provider/review-model');
-    expect(details.textContent).toContain('checking callback ownership');
+    const detailCommand = details.querySelector('dl.agent-inspector-command');
+    expect(detailCommand).not.toBeNull();
+    expect(detailCommand?.querySelector('dt')?.textContent).toBe('Last command');
+    expect(detailCommand?.querySelector('dd')?.textContent).toContain('checking callback ownership');
     expect(details.textContent).toContain('parent');
     expect(details.textContent).toContain('worker/scout');
-    expect(details.textContent).toContain('650');
-    expect(details.textContent).toContain('200');
-    expect(details.textContent).toContain('Turns');
+    const usage = details.querySelector('[aria-label="Subagent usage"]');
+    expect(usage?.textContent).toContain('↑500');
+    expect(usage?.textContent).toContain('↓200');
+    expect(usage?.textContent).toContain('cache 150');
+    expect(usage?.textContent).toContain('2 turns');
+    const costTrigger = usage?.querySelector<HTMLButtonElement>('button.cost-disclosure-trigger');
+    expect(costTrigger?.textContent?.trim()).toBe('4.00¢');
+    costTrigger?.click();
+    await tick();
+    await tick();
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('Cache read');
     expect(sessionRegistry.viewedSurface?.kind).toBe('root');
     expect(sessionRegistry.getSubagentAttachment('root', ['worker'])?.messages[0].content[0]).toMatchObject({ type: 'text', text: initialTask });
   });
@@ -197,6 +228,8 @@ describe('Panel hierarchy navigation', () => {
     expect(panelStore.open).toBe(presentation === 'sidebar');
 
     if (presentation === 'drawer') panelStore.openPanel();
+    target.querySelector<HTMLButtonElement>('button[aria-label="Inspect worker"]')!.click();
+    await tick();
     target.querySelector<HTMLButtonElement>('button[aria-label="Show worker view"]')!.click();
     await tick();
     expect(sessionRegistry.viewedSurface?.kind).toBe('child');
@@ -244,16 +277,23 @@ describe('Panel row teardown', () => {
     });
   }
 
-  it('offers teardown on every live row without inspecting it first', async () => {
+  it('keeps view and teardown actions in the inspected details', async () => {
     const target = render();
     await tick();
 
-    expect(teardownButton(target, 'worker')).not.toBeNull();
-    expect(teardownButton(target, 'worker/scout')).not.toBeNull();
+    expect(target.querySelector('[data-node="worker"] button[aria-label="Show worker view"]')).toBeNull();
+    expect(target.querySelector('[data-node="worker"] button[aria-label="Teardown worker"]')).toBeNull();
     expect(target.querySelector('[aria-label="Selected subagent details"]')).toBeNull();
+
+    target.querySelector<HTMLButtonElement>('button[aria-label="Inspect worker"]')!.click();
+    await tick();
+
+    const details = target.querySelector('[aria-label="Selected subagent details"]');
+    expect(details?.querySelector('button[aria-label="Show worker view"]')).not.toBeNull();
+    expect(details?.querySelector('button[aria-label="Teardown worker"]')).not.toBeNull();
   });
 
-  it('hides the teardown affordance on a dead row', async () => {
+  it('hides the teardown affordance on a dead inspected agent', async () => {
     sessionRegistry.handleEvent({
       type: 'subagent_event',
       sessionId: 'root',
@@ -267,11 +307,41 @@ describe('Panel row teardown', () => {
     const target = render();
     await tick();
 
-    expect(target.querySelector('button[aria-label="Teardown worker"]')).toBeNull();
-    expect(teardownButton(target, 'worker/scout')).not.toBeNull();
+    target.querySelector<HTMLButtonElement>('button[aria-label="Inspect worker"]')!.click();
+    await tick();
+    expect(target.querySelector('[aria-label="Selected subagent details"] button[aria-label="Teardown worker"]')).toBeNull();
+
+    target.querySelector<HTMLButtonElement>('button[aria-label="Inspect worker/scout"]')!.click();
+    await tick();
+    expect(target.querySelector('[aria-label="Selected subagent details"] button[aria-label="Teardown worker/scout"]')).not.toBeNull();
   });
 
-  it('opens the confirmation dialog from the row and tears down on confirm', async () => {
+  it('interrupts an inspected child without opening its view', async () => {
+    const target = render();
+    await tick();
+    await sessionRegistry.closeSubagentView('root', ['worker']);
+    await tick();
+    vi.mocked(connection.send).mockClear();
+
+    target.querySelector<HTMLButtonElement>('button[aria-label="Inspect worker"]')!.click();
+    await tick();
+    const details = target.querySelector('[aria-label="Selected subagent details"]');
+    expect(details?.querySelector('button[aria-label="Open worker view"]')).not.toBeNull();
+    details?.querySelector<HTMLButtonElement>('button[aria-label="Interrupt worker"]')!.click();
+    await tick();
+    await Promise.resolve();
+
+    expect(connection.send).toHaveBeenCalledWith({
+      type: 'subagent_stop',
+      sessionId: 'root',
+      path: ['worker'],
+      incarnation: 'inc-worker',
+      expectedSessionId: 'child-worker',
+    });
+    expect(sessionRegistry.getSubagentAttachment('root', ['worker'])?.closed).toBe(true);
+  });
+
+  it('opens the confirmation dialog from the inspector and tears down on confirm', async () => {
     vi.mocked(connection.send).mockClear();
     openWorkerChildView();
     const target = render();
