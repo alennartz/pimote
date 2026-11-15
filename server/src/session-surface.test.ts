@@ -622,6 +622,51 @@ describe('SessionSurface', () => {
     expect(snapshot.messages.some((message) => message.entryId === 'hidden-metadata')).toBe(false);
   });
 
+  it('hides persisted custom entries when the runner lacks an entry-renderer lookup', async () => {
+    const f = fixture();
+    (f.native as unknown as { extensionRunner: unknown }).extensionRunner = {};
+    f.data.branch = [
+      ...f.data.branch,
+      {
+        type: 'custom',
+        id: 'idle-1',
+        parentId: 'compaction',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        customType: 'session-idle',
+        data: { at: '2026-04-05T01:11:44.135Z' },
+      },
+    ] as unknown as typeof f.data.branch;
+    const snapshot = await f.surface.initialize();
+    expect(snapshot.messages.some((message) => message.role === 'custom' && message.customType === 'session-idle')).toBe(false);
+  });
+
+  it('shows persisted custom entries only when a renderer is registered', async () => {
+    const f = fixture();
+    (f.native as unknown as { extensionRunner: unknown }).extensionRunner = { getEntryRenderer: (customType: string) => (customType === 'print-prompt' ? {} : undefined) };
+    f.data.branch = [
+      ...f.data.branch,
+      {
+        type: 'custom',
+        id: 'idle-1',
+        parentId: 'compaction',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        customType: 'session-idle',
+        data: { at: '2026-04-05T01:11:44.135Z' },
+      },
+      {
+        type: 'custom',
+        id: 'prompt-1',
+        parentId: 'compaction',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        customType: 'print-prompt',
+        data: { text: 'the prompt' },
+      },
+    ] as unknown as typeof f.data.branch;
+    const snapshot = await f.surface.initialize();
+    expect(snapshot.messages.some((message) => message.role === 'custom' && message.customType === 'session-idle')).toBe(false);
+    expect(snapshot.messages).toContainEqual(expect.objectContaining({ role: 'custom', customType: 'print-prompt', entryId: 'prompt-1' }));
+  });
+
   it('returns the full saved branch instead of only the current compacted context', async () => {
     const f = fixture();
     const snapshot = await f.surface.initialize();

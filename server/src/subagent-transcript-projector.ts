@@ -19,6 +19,9 @@ export interface SubagentProjectionSnapshot {
 export interface SubagentTranscriptProjectorOptions {
   readonly sessionId: string;
   readonly manifest: SubagentPresentationManifest;
+  /** TUI-parity gate for native custom entries: only entries with a registered
+   *  entry renderer become transcript messages. Omit to keep them invisible. */
+  readonly customEntryVisible?: (customType: string) => boolean;
 }
 
 /** Server-side transcript projection seam for native and semantic events. */
@@ -156,6 +159,7 @@ function isSubagentContent(content: PimoteMessageContent): content is Extract<Pi
 export function createSubagentTranscriptProjector(options: SubagentTranscriptProjectorOptions): SubagentTranscriptProjector {
   const hiddenTools = new Set(options.manifest.hiddenToolNames);
   const hiddenCustomTypes = new Set(options.manifest.hiddenCustomTypes);
+  const customEntryVisible = options.customEntryVisible;
   let messages: PimoteAgentMessage[] = [];
   let nativeBlocks: NativeBlock[][] = [];
   const hiddenToolCalls = new Set<string>();
@@ -779,6 +783,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
         return [];
       }
       if (event.entry.type === 'custom') {
+        if (customEntryVisible && !customEntryVisible(event.entry.customType)) return [];
         const mapped = mapCustomEntry(event.entry);
         messages = [...messages, mapped];
         nativeBlocks = [...nativeBlocks, mapped.content.map((content, sourceIndex) => ({ sourceIndex, content }))];

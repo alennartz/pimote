@@ -367,6 +367,32 @@ describe('subagent transcript projector', () => {
     expect(current.snapshot().messages[0]?.content[0]).toMatchObject({ subagentKind: 'message_received', subagentState: 'complete', data });
   });
 
+  it('keeps native custom entries failing the visibility predicate out of the projection', () => {
+    const current = createSubagentTranscriptProjector({
+      sessionId: 'root-session',
+      manifest: { hiddenToolNames: [], hiddenCustomTypes: [] },
+      customEntryVisible: (customType) => customType !== 'session-idle',
+    });
+    current.acceptNativeEvent({
+      type: 'entry_appended',
+      entry: { id: 'idle-1', type: 'custom', customType: 'session-idle', data: { at: '2026-04-05T01:11:44.135Z' } },
+    } as unknown as IncomingSdkEvent);
+    expect(current.snapshot().messages).toEqual([]);
+  });
+
+  it('renders native custom entries that pass the visibility predicate', () => {
+    const current = createSubagentTranscriptProjector({
+      sessionId: 'root-session',
+      manifest: { hiddenToolNames: [], hiddenCustomTypes: [] },
+      customEntryVisible: () => true,
+    });
+    current.acceptNativeEvent({
+      type: 'entry_appended',
+      entry: { id: 'note-1', type: 'custom', customType: 'extension-note', data: { text: 'note body' } },
+    } as unknown as IncomingSdkEvent);
+    expect(current.snapshot().messages).toEqual([expect.objectContaining({ role: 'custom', customType: 'extension-note', entryId: 'note-1' })]);
+  });
+
   it('replaces a hidden custom entry with its provider content', () => {
     const current = projector();
     current.rehydrate([{ role: 'custom', customType: 'subagents', entryId: 'incoming-entry', content: [{ type: 'text', text: '<agent_message>hidden</agent_message>' }] }]);

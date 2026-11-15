@@ -426,7 +426,7 @@ function fullMessagesFor(options: SessionSurfaceOptions, capabilities: SessionSu
   const customVisible =
     visible ??
     ((customType: string) =>
-      capabilities.renderer?.visible !== false && (native.extensionRunner?.getEntryRenderer ? Boolean(native.extensionRunner.getEntryRenderer(customType)) : true));
+      capabilities.renderer?.visible !== false && (native.extensionRunner?.getEntryRenderer ? Boolean(native.extensionRunner.getEntryRenderer(customType)) : false));
   if (options.kind === 'child') {
     const rawEntries = manager?.getBranch?.() ?? manager?.getEntries?.();
     if (Array.isArray(rawEntries)) return mapSavedBranch(rawEntries as SdkSessionEntry[], customVisible);
@@ -554,7 +554,7 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     if (providerSnapshot?.manifest?.hiddenCustomTypes.includes(customType)) return true;
     if (capabilities.renderer?.visible === false) return false;
     const runner = (options.session as unknown as { extensionRunner?: { getEntryRenderer?: (name: string) => unknown } }).extensionRunner;
-    return runner?.getEntryRenderer ? Boolean(runner.getEntryRenderer(customType)) : true;
+    return runner?.getEntryRenderer ? Boolean(runner.getEntryRenderer(customType)) : false;
   };
   const surfacePath = options.subagentPath ?? [];
   const samePath = (left: readonly string[], right: readonly string[]): boolean => left.length === right.length && left.every((part, index) => part === right[index]);
@@ -568,6 +568,7 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     ? createSubagentTranscriptProjector({
         sessionId: options.sessionId,
         manifest: providerSnapshot?.manifest ?? { hiddenToolNames: [], hiddenCustomTypes: [] },
+        customEntryVisible,
       })
     : undefined;
   const eventBuffer =
@@ -1016,6 +1017,7 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     projector = createSubagentTranscriptProjector({
       sessionId: options.sessionId,
       manifest: providerSnapshot.manifest ?? { hiddenToolNames: [], hiddenCustomTypes: [] },
+      customEntryVisible,
     });
     projector.rehydrate(fullMessagesFor(options, capabilities, customEntryVisible));
     const partial = mapStreamingMessage(options.session.state?.streamingMessage);
