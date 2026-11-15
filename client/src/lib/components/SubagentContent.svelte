@@ -281,7 +281,7 @@
                 </button>
               {/if}
             </div>
-            <SubagentMarkdown label="Task" text={child.task} streaming={active} />
+            <SubagentMarkdown text={child.task} streaming={active} />
           </div>
         {/each}
       {:else if content.subagentKind === 'message_received' && content.data.operation === 'send'}
@@ -324,7 +324,7 @@
         {/if}
         {#if content.data.result.error}<SubagentMarkdown label="Wait error" text={content.data.result.error} />{/if}
       {:else if content.data.operation === 'completion'}
-        <SubagentMarkdown label="Output" text={content.data.result.output} />
+        <SubagentMarkdown text={content.data.result.output} />
         <SubagentMarkdown label="Error" text={content.data.result.error} />
         {#if content.data.result.usage}<div class="subagent-usage">{usageLabel(content.data.result.usage)}</div>{/if}
       {:else if content.data.operation === 'interrupt'}
@@ -410,6 +410,15 @@
     text-align: left;
     cursor: pointer;
     transition: background-color 0.15s;
+  }
+
+  .subagent-card[data-subagent-kind='completion'] {
+    border-left: 3px solid var(--custom-accent);
+    background: color-mix(in oklch, var(--custom-surface) 40%, transparent);
+  }
+
+  .subagent-card[data-subagent-kind='completion'] .subagent-header {
+    background: color-mix(in oklch, var(--custom-surface) 55%, transparent);
   }
 
   .subagent-header:hover {

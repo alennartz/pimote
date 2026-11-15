@@ -59,30 +59,30 @@
     {#if collapsible}
       <button
         type="button"
-        class="cost-breakdown-toggle text-muted-foreground hover:bg-sidebar-accent/60 focus-visible:ring-ring/50 grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 rounded-sm px-1 py-1 text-left outline-none focus-visible:ring-2"
+        class="cost-breakdown-toggle text-muted-foreground hover:bg-sidebar-accent/60 focus-visible:ring-ring/50 grid w-full min-w-0 items-center gap-x-2 rounded-sm px-1 py-1 text-left outline-none focus-visible:ring-2 {expanded
+          ? 'grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-x-3 text-[0.65rem] font-medium tracking-wide uppercase'
+          : 'grid-cols-[minmax(0,1fr)_auto]'}"
         aria-label={expanded ? 'Collapse usage breakdown' : 'Expand usage breakdown'}
         aria-expanded={expanded}
         onclick={() => (expanded = !expanded)}
       >
-        <span class="cost-breakdown-preview flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 py-1.5 text-xs tabular-nums" aria-label="Usage preview">
-          {#if tokens}
-            {@const cacheRate = formatCacheHitRate(tokens)}
-            <span>↑{formatTokenCount(tokens.input)}</span>
-            <span>↓{formatTokenCount(tokens.output)}</span>
-            {#if cacheRate}<span>cache: {cacheRate}</span>{/if}
-          {/if}
-          <span class="text-foreground font-medium">{totalCostLabel()}</span>
-        </span>
+        {#if expanded}
+          <span>Category</span>
+          <span class="text-right">Tokens</span>
+          <span class="text-right">Cost</span>
+        {:else}
+          <span class="cost-breakdown-preview flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 py-1.5 text-xs tabular-nums" aria-label="Usage preview">
+            {#if tokens}
+              {@const cacheRate = formatCacheHitRate(tokens)}
+              <span>↑{formatTokenCount(tokens.input)}</span>
+              <span>↓{formatTokenCount(tokens.output)}</span>
+              {#if cacheRate}<span>cache: {cacheRate}</span>{/if}
+            {/if}
+            <span class="text-foreground font-medium">{totalCostLabel()}</span>
+          </span>
+        {/if}
         <span class="cost-breakdown-chevron {expanded ? 'expanded' : ''}"><ChevronRight class="size-3.5" /></span>
       </button>
-    {/if}
-
-    {#if collapsible && expanded}
-      <div class="text-muted-foreground mb-1 grid grid-cols-[minmax(0,1fr)_auto_auto] gap-x-3 text-[0.65rem] font-medium tracking-wide uppercase">
-        <span>Category</span>
-        <span class="text-right">Tokens</span>
-        <span class="text-right">Cost</span>
-      </div>
     {/if}
 
     {#if showDetails}

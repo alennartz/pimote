@@ -32,6 +32,8 @@ export type SubagentNodeSnapshot = Readonly<{
   /** Stable for runtime replacement. Changes when a path is removed or reused. */
   incarnation: string;
   sessionId: string;
+  /** Child runtime working directory. */
+  cwd?: string;
   task?: string;
   persona?: string;
   personaIcon?: string;

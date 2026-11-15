@@ -93,6 +93,16 @@
     return path.join('/');
   }
 
+  function parentWorkingDirectory(node: SubagentNodeSnapshot): string | undefined {
+    const parentPath = node.path.slice(0, -1);
+    if (parentPath.length === 0) return rootState?.rootCwd;
+    return rootState?.nodes.find((candidate) => samePath(candidate.path, parentPath))?.cwd;
+  }
+
+  function hasDistinctWorkingDirectory(node: SubagentNodeSnapshot): boolean {
+    return Boolean(node.cwd && node.cwd !== parentWorkingDirectory(node));
+  }
+
   function costLabel(row: SubagentPanelRow): string {
     const usage = row.metadata.usage;
     if (!usage) return '';
@@ -432,17 +442,12 @@
               </Button>
               {#if row.metadata.activity && !samePath(inspectorNode?.path, row.path)}
                 <dl class="tree-row-command">
-                  <dt>Last command</dt>
                   <dd><code title={row.metadata.activity}>{row.metadata.activity}</code></dd>
                 </dl>
               {/if}
               {#if inspectorNode && samePath(inspectorNode.path, row.path)}
                 <section class="agent-inspector border-sidebar-border/70 border-t pt-3 pb-3" aria-label="Selected subagent details">
-                  <div class="flex items-center gap-2">
-                    <AgentChip path={inspectorNode.path} rootSessionId={rootSessionId ?? ''} persona={inspectorNode.persona} personaIcon={inspectorNode.personaIcon} />
-                    <span class="text-muted-foreground ml-auto rounded-full border px-1.5 py-0.5 text-[10px]">{inspectorViewOpen ? 'View open' : 'View closed'}</span>
-                  </div>
-                  <div class="mt-3 grid grid-cols-2 gap-x-3 gap-y-2">
+                  <div class="grid grid-cols-2 gap-x-3 gap-y-2">
                     <div>
                       <span class="metadata-label">Model</span><span>{inspectorNode.model ?? '—'}{inspectorNode.thinkingLevel ? ` · ${inspectorNode.thinkingLevel}` : ''}</span>
                     </div>
@@ -451,7 +456,19 @@
                     {#if inspectorNode.waitingFor && inspectorNode.waitingFor.length > 0}
                       <div><span class="metadata-label">Waits</span><span>{inspectorNode.waitingFor.map(pathLabel).join(' · ')}</span></div>
                     {/if}
+                    {#if hasDistinctWorkingDirectory(inspectorNode)}
+                      <div><span class="metadata-label">Working directory</span><span title={inspectorNode.cwd}>{inspectorNode.cwd}</span></div>
+                    {/if}
+                    {#if inspectorViewOpen}
+                      <div><span class="metadata-label">View</span><span>open</span></div>
+                    {/if}
                   </div>
+                  {#if inspectorNode.activity}
+                    <dl class="agent-inspector-command">
+                      <dt class="metadata-label">Last command</dt>
+                      <dd><code title={inspectorNode.activity}>{inspectorNode.activity}</code></dd>
+                    </dl>
+                  {/if}
                   {#if inspectorNode.usage}
                     {@const usage = inspectorNode.usage}
                     {@const breakdown = usageBreakdownForNode(usage)}
@@ -462,17 +479,12 @@
                       {/key}
                     </div>
                   {/if}
-                  {#if inspectorNode.activity}
+                  {#if inspectorNode.lastError}<p class="text-destructive mt-2 truncate text-xs">Error: {inspectorNode.lastError}</p>{:else if inspectorNode.lastOutput}
                     <dl class="agent-inspector-command">
-                      <dt class="metadata-label">Last command</dt>
-                      <dd><code title={inspectorNode.activity}>{inspectorNode.activity}</code></dd>
+                      <dt class="metadata-label">Last output</dt>
+                      <dd><code title={inspectorNode.lastOutput}>{inspectorNode.lastOutput}</code></dd>
                     </dl>
                   {/if}
-                  {#if inspectorNode.lastError}<p class="text-destructive mt-2 truncate text-xs">Error: {inspectorNode.lastError}</p>{:else if inspectorNode.lastOutput}<p
-                      class="text-muted-foreground mt-2 truncate text-xs"
-                    >
-                      Last output: {inspectorNode.lastOutput}
-                    </p>{/if}
                   <div class="agent-inspector-actions mt-3 flex flex-wrap items-center gap-1.5">
                     {#if selectedPath && samePath(selectedPath, inspectorNode.path)}
                       <Button
@@ -616,20 +628,13 @@
   .tree-row-command {
     display: grid;
     grid-column: 1 / -1;
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     align-items: start;
-    gap: 0.4rem;
+    gap: 0;
     min-width: 0;
     margin: 0;
     padding: 0.3rem 0.35rem 0.4rem calc(0.5rem + var(--tree-indent));
     border-top: 1px solid color-mix(in oklch, var(--sidebar-border) 60%, transparent);
-  }
-  .tree-row-command dt {
-    color: var(--muted-foreground);
-    font-size: 0.625rem;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    white-space: nowrap;
   }
   .tree-row-command dd {
     min-width: 0;

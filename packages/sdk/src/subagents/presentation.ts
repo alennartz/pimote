@@ -156,6 +156,8 @@ export type PersistedSubagentContent = Readonly<{
 
 export type SubagentProviderSnapshot = Readonly<{
   manifest: SubagentPresentationManifest;
+  /** Root session working directory, used to identify children that override it. */
+  rootCwd?: string;
   nodes: readonly SubagentNodeSnapshot[];
   cursor: FeedCursor;
   activeOperations: readonly ActiveSubagentOperation[];

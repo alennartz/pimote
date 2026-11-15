@@ -155,6 +155,7 @@ export interface SubagentAttachmentState {
 
 export interface SubagentRootState {
   readonly rootSessionId: string;
+  rootCwd?: string;
   nodes: SubagentNodeSnapshot[];
   providerCursor: FeedCursor | null;
   manifest: SubagentSnapshot['manifest'];
@@ -822,7 +823,13 @@ export class SessionRegistry {
   getSubagentSnapshot(rootSessionId: string): SubagentSnapshot | null {
     const root = this.subagentRoots[rootSessionId];
     if (!root || !root.providerCursor) return null;
-    return { nodes: root.nodes, cursor: root.providerCursor, manifest: root.manifest, activeOperations: root.activeOperations };
+    return {
+      nodes: root.nodes,
+      cursor: root.providerCursor,
+      manifest: root.manifest,
+      activeOperations: root.activeOperations,
+      ...(root.rootCwd !== undefined ? { rootCwd: root.rootCwd } : {}),
+    };
   }
 
   clearSubagentRoot(rootSessionId: string): void {
@@ -1234,6 +1241,7 @@ export class SessionRegistry {
     if (shouldApplyNodes) {
       const manifest = snapshot.manifest;
       root.manifest = { hiddenToolNames: [...manifest.hiddenToolNames], hiddenCustomTypes: [...manifest.hiddenCustomTypes] };
+      root.rootCwd = snapshot.rootCwd;
       root.activeOperations = [...snapshot.activeOperations];
       root.hierarchySnapshotReceived = true;
       root.nodes = [...snapshot.nodes].map((node) => ({

@@ -6,7 +6,7 @@
     text,
     streaming = false,
   }: {
-    label: string;
+    label?: string;
     text: string | undefined;
     streaming?: boolean;
   } = $props();
@@ -14,7 +14,7 @@
 
 {#if text !== undefined}
   <section class="subagent-text-section" aria-label={label}>
-    <div class="tool-section-label">{label}</div>
+    {#if label}<div class="tool-section-label">{label}</div>{/if}
     {#key streaming ? label : `${label}:${text}`}
       <CodeBlock content={text} mode="markdown" language={null} {streaming} />
     {/key}

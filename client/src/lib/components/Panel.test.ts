@@ -34,6 +34,7 @@ function node(path: readonly string[]): SubagentNodeSnapshot {
     path,
     sessionId: `child-${path.join('/')}`,
     incarnation: `inc-${path.join('/')}`,
+    cwd: path.length === 1 ? '/workspace' : '/workspace/scout',
     task: initialTask,
     persona: 'reviewer',
     model: 'provider/review-model',
@@ -53,6 +54,7 @@ function node(path: readonly string[]): SubagentNodeSnapshot {
     channels: ['parent', 'worker/scout'],
     waitingFor: [['worker', 'scout']],
     hasSubgroup: path.length === 1,
+    lastOutput: 'Callback ownership confirmed.',
   };
 }
 
@@ -91,6 +93,7 @@ beforeEach(() => {
     cursor: { epoch: 'epoch-1', sequence: 1 },
     manifest: { hiddenToolNames: [], hiddenCustomTypes: [] },
     activeOperations: [],
+    rootCwd: '/workspace',
     nodes: [node(['worker']), node(['worker', 'scout'])],
   });
   sessionRegistry.handleEvent({
@@ -148,7 +151,7 @@ describe('Panel hierarchy navigation', () => {
     const mainRow = target.querySelector<HTMLElement>('[data-node="worker"]');
     const mainCommand = mainRow?.querySelector('dl.tree-row-command');
     expect(mainCommand).not.toBeNull();
-    expect(mainCommand?.querySelector('dt')?.textContent).toBe('Last command');
+    expect(mainCommand?.querySelector('dt')).toBeNull();
     expect(mainCommand?.querySelector('dd')?.textContent).toContain('checking callback ownership');
     expect(mainCommand?.parentElement).toBe(mainRow);
     expect(mainRow?.querySelector('[data-folder-icon="persona"]')).not.toBeNull();
@@ -178,13 +181,20 @@ describe('Panel hierarchy navigation', () => {
     expect(target.querySelectorAll('[aria-label="Selected subagent details"]')).toHaveLength(1);
     expect(mainRow?.querySelector('dl.tree-row-command')).toBeNull();
     expect(details.textContent).not.toContain(initialTask);
-    expect(details.textContent).toContain('reviewer');
+    expect(details.textContent).not.toContain('reviewer');
     expect(details.textContent).not.toContain('Persona');
+    expect(details.textContent).not.toContain('View closed');
+    const viewLabel = [...details.querySelectorAll('.metadata-label')].find((label) => label.textContent === 'View');
+    expect(viewLabel?.nextElementSibling?.textContent).toBe('open');
+    expect(details.textContent).not.toContain('Working directory');
     expect(details.textContent).toContain('provider/review-model');
-    const detailCommand = details.querySelector('dl.agent-inspector-command');
-    expect(detailCommand).not.toBeNull();
-    expect(detailCommand?.querySelector('dt')?.textContent).toBe('Last command');
-    expect(detailCommand?.querySelector('dd')?.textContent).toContain('checking callback ownership');
+    const detailCommands = details.querySelectorAll('dl.agent-inspector-command');
+    expect(detailCommands[0]?.querySelector('dt')?.textContent).toBe('Last command');
+    expect(detailCommands[0]?.querySelector('dd')?.textContent).toContain('checking callback ownership');
+    expect(detailCommands[1]?.querySelector('dt')?.textContent).toBe('Last output');
+    expect(detailCommands[1]?.querySelector('dd code')?.textContent).toBe('Callback ownership confirmed.');
+    const usage = details.querySelector('.agent-inspector-usage');
+    expect(detailCommands[0]?.compareDocumentPosition(usage!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(details.textContent).toContain('parent');
     expect(details.textContent).toContain('worker/scout');
     expect(details.textContent).not.toContain('State');
@@ -211,6 +221,10 @@ describe('Panel hierarchy navigation', () => {
     expect(breakdown?.querySelector('[aria-label="Usage preview"]')?.textContent).toContain('4.00¢');
     expand?.click();
     await tick();
+    expect(expand?.textContent).toContain('Category');
+    expect(expand?.textContent).toContain('Tokens');
+    expect(expand?.textContent).toContain('Cost');
+    expect(expand?.querySelector('[aria-label="Usage preview"]')).toBeNull();
     expect(breakdown?.querySelector('dl')).not.toBeNull();
     expect(breakdown?.textContent).toContain('Input');
     expect(breakdown?.textContent).toContain('500 tok');
@@ -225,6 +239,7 @@ describe('Panel hierarchy navigation', () => {
     breakdown?.querySelector<HTMLButtonElement>('button[aria-label="Collapse usage breakdown"]')?.click();
     await tick();
     expect(breakdown?.querySelector('dl')).toBeNull();
+    expect(breakdown?.querySelector('[aria-label="Usage preview"]')).not.toBeNull();
     expect(sessionRegistry.viewedSurface?.kind).toBe('root');
 
     mainRowButton?.click();
@@ -243,7 +258,10 @@ describe('Panel hierarchy navigation', () => {
     const row = target.querySelector<HTMLElement>('[data-node="worker"]')!;
     const inspectButton = row.querySelector<HTMLButtonElement>('button[aria-label="Inspect worker"]')!;
     expect(inspectButton.getAttribute('aria-expanded')).toBe('true');
-    expect(row.querySelector('[aria-label="Selected subagent details"]')).not.toBeNull();
+    const details = row.querySelector('[aria-label="Selected subagent details"]');
+    expect(details).not.toBeNull();
+    expect([...details!.querySelectorAll('.metadata-label')].some((label) => label.textContent === 'View')).toBe(true);
+    expect(details?.textContent).not.toContain('View closed');
 
     inspectButton.click();
     await tick();
@@ -295,6 +313,23 @@ describe('Panel hierarchy navigation', () => {
     expect(breakdown?.textContent).toContain('100 tok');
     expect(breakdown?.textContent).toContain('Category costs unavailable');
     expect(target.querySelector('button.cost-disclosure-trigger')).toBeNull();
+  });
+
+  it('shows a working directory only when it differs from the parent agent', async () => {
+    const target = render();
+    await tick();
+
+    target.querySelector<HTMLButtonElement>('button[aria-label="Inspect worker"]')!.click();
+    await tick();
+    let details = target.querySelector('[aria-label="Selected subagent details"]')!;
+    expect(details.textContent).not.toContain('Working directory');
+
+    target.querySelector<HTMLButtonElement>('button[aria-label="Inspect worker/scout"]')!.click();
+    await tick();
+    details = target.querySelector('[aria-label="Selected subagent details"]')!;
+    const directoryLabel = [...details.querySelectorAll('.metadata-label')].find((label) => label.textContent === 'Working directory');
+    expect(directoryLabel?.nextElementSibling?.textContent).toBe('/workspace/scout');
+    expect(directoryLabel?.nextElementSibling?.getAttribute('title')).toBe('/workspace/scout');
   });
 
   it('hides the waits field when the agent has no wait targets', async () => {

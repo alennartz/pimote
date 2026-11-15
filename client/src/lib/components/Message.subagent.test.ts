@@ -133,9 +133,12 @@ describe('subagent transcript cards', () => {
       { rootSessionId: 'root-session' },
     );
     const spawnCard = card(target, 'delegation');
-    const task = section(spawnCard, 'Task');
-    expect(task.textContent).toContain('confi');
-    expect(task.querySelector('.code-block[data-mode="markdown"]')).not.toBeNull();
+    const task = spawnCard.querySelector('.subagent-text-section');
+    expect(task).not.toBeNull();
+    expect(task?.getAttribute('aria-label')).toBeNull();
+    expect(spawnCard.querySelector('.tool-section-label')).toBeNull();
+    expect(task?.textContent).toContain('confi');
+    expect(task?.querySelector('.code-block[data-mode="markdown"]')).not.toBeNull();
     const chip = spawnCard.querySelector<HTMLElement>('[data-agent-path="team/worker"]');
     expect(chip?.getAttribute('aria-label')).toBe('scout:worker');
     expect(chip?.querySelector('[data-persona-icon] svg')).not.toBeNull();
@@ -150,9 +153,9 @@ describe('subagent transcript cards', () => {
         result: { children: [{ path: ['team', 'worker'], task: 'Review **configuration** and run `tests`.', persona: 'scout' }] },
       }),
     );
-    const completedTask = section(card(target, 'delegation'), 'Task');
-    expect(completedTask.querySelector('strong')?.textContent).toBe('configuration');
-    expect(completedTask.querySelector('code')?.textContent).toBe('tests');
+    const completedTask = card(target, 'delegation').querySelector('.subagent-text-section');
+    expect(completedTask?.querySelector('strong')?.textContent).toBe('configuration');
+    expect(completedTask?.querySelector('code')?.textContent).toBe('tests');
   });
 
   it('bounds long spawn tasks and offers show-more', async () => {
@@ -164,7 +167,7 @@ describe('subagent transcript cards', () => {
         result: { children: [{ path: ['worker'], task }] },
       }),
     );
-    expect(section(card(target, 'delegation'), 'Task').querySelector('.code-block-toggle')?.textContent).toContain('Show more');
+    expect(card(target, 'delegation').querySelector('.subagent-text-section .code-block-toggle')?.textContent).toContain('Show more');
   });
 
   it('uses one bounded Markdown section for awaited output after completion or message interruption', async () => {
@@ -305,7 +308,10 @@ describe('subagent transcript cards', () => {
     const { target } = await render(completion);
     const completionCard = card(target, 'completion');
     expect(completionCard.querySelector('[data-agent-path="team"]')).not.toBeNull();
-    expect(section(completionCard, 'Output').querySelector('strong')?.textContent).toBe('deploy');
+    const completionOutput = completionCard.querySelector('.subagent-text-section');
+    expect(completionOutput?.getAttribute('aria-label')).toBeNull();
+    expect(completionOutput?.querySelector('strong')?.textContent).toBe('deploy');
+    expect(completionCard.matches('[data-subagent-kind="completion"]')).toBe(true);
     expect(completionCard.textContent).toContain('cache: 37.5%');
     expect(completionCard.textContent).toContain('$0.1250');
   });
