@@ -40,6 +40,7 @@ export class EventBuffer {
   /** Cursors below this floor cannot be replayed after a session reset. */
   private replayFloor: number;
   private pendingPromptEcho: string | undefined;
+  private metadataSentSinceTurnEnd = false;
 
   constructor(
     private readonly capacity: number,
@@ -180,6 +181,7 @@ export class EventBuffer {
 
     switch (sdkEvent.type) {
       case 'agent_start':
+        this.metadataSentSinceTurnEnd = false;
         return { ...base, type: 'agent_start' };
 
       case 'agent_end':
@@ -189,8 +191,11 @@ export class EventBuffer {
       case 'turn_start':
         return { ...base, type: 'turn_start' };
 
-      case 'turn_end':
-        return { ...base, type: 'turn_end' };
+      case 'turn_end': {
+        const meta = this.getSessionMeta?.();
+        this.metadataSentSinceTurnEnd = meta !== undefined;
+        return { ...base, type: 'turn_end', ...(meta ? { meta } : {}) };
+      }
 
       case 'message_start': {
         const usage = sdkEvent.message.role === 'assistant' ? mapAgentMessageUsage(sdkEvent.message) : undefined;
@@ -360,7 +365,8 @@ export class EventBuffer {
       // drives the idle UI transition + completion notification.
       case 'agent_settled': {
         this.pendingPromptEcho = undefined;
-        const meta = this.getSessionMeta?.();
+        const meta = sdkEvent.aborted || !this.metadataSentSinceTurnEnd ? this.getSessionMeta?.() : undefined;
+        this.metadataSentSinceTurnEnd = false;
         return {
           ...base,
           type: 'agent_settled',

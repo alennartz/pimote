@@ -642,12 +642,21 @@ describe('EventBuffer', () => {
       expect(buffer.replay(0)).toEqual(liveEvents);
     });
 
-    it('piggybacks session metadata on terminal lifecycle events', () => {
+    it('piggybacks persisted metadata on turn_end and only sends a terminal fallback when needed', () => {
       const meta = { gitBranch: 'main', contextUsage: { percent: 12, contextWindow: 64000 }, lifetimeCostUsd: 4.5 };
       const buffer = new EventBuffer(10, undefined, 0, undefined, () => meta);
       const liveEvents: PimoteSessionEvent[] = [];
-      buffer.onEvent(makeSdkEvent('agent_settled', { aborted: false }), SESSION_ID, (event) => liveEvents.push(event));
-      expect(liveEvents[0]).toMatchObject({ type: 'agent_settled', meta });
+      const sendLive = (event: PimoteSessionEvent) => liveEvents.push(event);
+      buffer.onEvent(makeSdkEvent('turn_end'), SESSION_ID, sendLive);
+      buffer.onEvent(makeSdkEvent('agent_settled', { aborted: false }), SESSION_ID, sendLive);
+      expect(liveEvents[0]).toMatchObject({ type: 'turn_end', meta });
+      expect(liveEvents[1]?.type).toBe('agent_settled');
+      expect(liveEvents[1]).not.toHaveProperty('meta');
+
+      const aborted = new EventBuffer(10, undefined, 0, undefined, () => meta);
+      const abortedEvents: PimoteSessionEvent[] = [];
+      aborted.onEvent(makeSdkEvent('agent_settled', { aborted: true }), SESSION_ID, (event) => abortedEvents.push(event));
+      expect(abortedEvents[0]).toMatchObject({ type: 'agent_settled', aborted: true, meta });
     });
 
     it('forwards aborted on agent_settled and omits it for a finished run', () => {

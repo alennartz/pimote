@@ -1349,6 +1349,8 @@ export interface TurnStartEvent extends SessionEventBase {
 
 export interface TurnEndEvent extends SessionEventBase {
   type: 'turn_end';
+  /** Session metadata persisted for this turn, avoiding a follow-up request. */
+  meta?: SessionMeta;
 }
 
 export interface MessageStartEvent extends SessionEventBase {

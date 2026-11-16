@@ -1740,8 +1740,11 @@ export class SessionRegistry {
         break;
       }
 
-      case 'turn_end':
+      case 'turn_end': {
+        const turnEnd = event as import('@pimote/shared').TurnEndEvent;
+        if (turnEnd.meta) this.updateMeta(sessionId, turnEnd.meta);
         break;
+      }
 
       case 'message_start': {
         const start = event as MessageStartEvent;

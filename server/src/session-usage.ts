@@ -59,7 +59,7 @@ export function projectSessionUsage(entries: readonly SessionEntry[], stats: Pic
 export function makeSessionMeta(session: AgentSession, gitBranch: string | null): SessionMeta {
   const contextUsage = session.getContextUsage?.() ?? null;
   const stats = session.getSessionStats?.() ?? ({ cost: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } as const);
-  const usageBreakdown = projectSessionUsage(session.sessionManager.getEntries(), stats);
+  const usageBreakdown = projectSessionUsage(session.sessionManager.getEntries?.() ?? [], stats);
   return {
     gitBranch,
     contextUsage: contextUsage ? { percent: contextUsage.percent, contextWindow: contextUsage.contextWindow } : null,
