@@ -108,6 +108,7 @@ describe('custom messages', () => {
     await tick();
     expect(target.querySelector('.custom-content')).not.toBeNull();
 
+    emit?.([{ isIntersecting: true } as IntersectionObserverEntry]);
     emit?.([{ isIntersecting: false } as IntersectionObserverEntry]);
     await tick();
 

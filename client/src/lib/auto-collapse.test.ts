@@ -61,10 +61,23 @@ describe('observeFullyOffscreen', () => {
     const f = fakeFactory();
     const onOffscreen = vi.fn();
     observeFullyOffscreen(el, onOffscreen, f.make);
+    f.emit([entry(true)]);
     f.emit([entry(false)]);
     f.emit([entry(false)]);
     expect(onOffscreen).toHaveBeenCalledTimes(1);
     expect(f.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not collapse a block that is already offscreen when observation starts', () => {
+    const f = fakeFactory();
+    const onOffscreen = vi.fn();
+    observeFullyOffscreen(el, onOffscreen, f.make);
+    f.emit([entry(false)]);
+    expect(onOffscreen).not.toHaveBeenCalled();
+
+    f.emit([entry(true)]);
+    f.emit([entry(false)]);
+    expect(onOffscreen).toHaveBeenCalledTimes(1);
   });
 
   it('disposer disconnects the observer', () => {

@@ -26,16 +26,22 @@ function defaultObserverFactory(): OffscreenObserverFactory | null {
  * of view — then stop observing. Returns a disposer to stop observing early
  * (e.g. when the element unmounts or the caller re-expands).
  *
- * Note: IntersectionObserver reports the element's current visibility on its
- * first callback. If `el` is already offscreen when observation starts, the
- * collapse fires immediately, which is the desired behavior.
+ * Note: IntersectionObserver reports the element's current visibility as soon
+ * as observation starts. That first report only records where the element is;
+ * it never collapses. A block that settles offscreen stays open until the
+ * reader scrolls it out of view, so an unread block is not folded unseen.
  *
  * Degrades to a no-op when no observer is available (e.g. SSR/tests without a
  * factory injected).
  */
 export function observeFullyOffscreen(el: Element, onOffscreen: () => void, makeObserver: OffscreenObserverFactory | null = defaultObserverFactory()): () => void {
   if (!makeObserver) return () => {};
+  let reported = false;
   const observer = makeObserver((entries) => {
+    if (!reported) {
+      reported = true;
+      return;
+    }
     if (isFullyOffscreen(entries)) {
       onOffscreen();
       observer.disconnect();
