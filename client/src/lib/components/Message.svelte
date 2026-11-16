@@ -715,10 +715,10 @@
   .skill-content {
     padding: 0 10px 8px;
     font-size: 0.85rem;
-    --collapse-fade: color-mix(in oklch, var(--skill-surface) 95%, transparent);
-    --collapse-fade-height: 32px;
-    --collapse-toggle-color: color-mix(in oklch, var(--skill-foreground) 92%, black);
-    --collapse-toggle-hover: var(--skill-foreground-hover);
+    --collapsible-fade: color-mix(in oklch, var(--skill-surface) 95%, transparent);
+    --collapsible-fade-height: 32px;
+    --collapsible-toggle-color: color-mix(in oklch, var(--skill-foreground) 92%, black);
+    --collapsible-toggle-hover: var(--skill-foreground-hover);
   }
 
   .skill-after {
@@ -772,10 +772,10 @@
   .custom-content {
     padding: 0 10px 8px;
     font-size: 0.85rem;
-    --collapse-fade: color-mix(in oklch, var(--custom-surface) 95%, transparent);
-    --collapse-fade-height: 48px;
-    --collapse-toggle-color: color-mix(in oklch, var(--custom-foreground) 92%, black);
-    --collapse-toggle-hover: var(--custom-foreground-hover);
+    --collapsible-fade: color-mix(in oklch, var(--custom-surface) 95%, transparent);
+    --collapsible-fade-height: 48px;
+    --collapsible-toggle-color: color-mix(in oklch, var(--custom-foreground) 92%, black);
+    --collapsible-toggle-hover: var(--custom-foreground-hover);
   }
 
   /* ---- Mobile: stack icon row above body, open menu to the right ---- */

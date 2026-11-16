@@ -132,7 +132,7 @@
     position: relative;
   }
 
-  .code-block :global(.collapse-body) {
+  .code-block :global(.collapsible-body) {
     border-radius: 0;
     background: var(--surface-sunken);
   }

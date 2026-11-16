@@ -9,10 +9,10 @@
    * always buys visible space instead of swapping one scrollbar for another.
    *
    * Callers tune appearance through inherited custom properties:
-   *   --collapse-fade         gradient color for the collapsed fade
-   *   --collapse-fade-height  height of that fade
-   *   --collapse-toggle-color toggle text color
-   *   --collapse-toggle-hover toggle hover color
+   *   --collapsible-fade         gradient color for the collapsed fade
+   *   --collapsible-fade-height  height of that fade
+   *   --collapsible-toggle-color toggle text color
+   *   --collapsible-toggle-hover toggle hover color
    */
   import type { Snippet } from 'svelte';
   import { observeFullyOffscreen } from '$lib/auto-collapse.js';
@@ -98,15 +98,15 @@
   });
 </script>
 
-<div class="collapse" bind:this={rootEl} style:--collapse-collapsed={collapsedHeight} style:--collapse-expanded={expandedHeight}>
-  <div class="collapse-body" data-state={collapseState} bind:this={bodyEl}>
+<div class="collapsible" bind:this={rootEl} style:--collapsible-collapsed={collapsedHeight} style:--collapsible-expanded={expandedHeight}>
+  <div class="collapsible-body" data-state={collapseState} bind:this={bodyEl}>
     {@render body()}
     {#if fade && collapseState === 'clamped'}
-      <div class="collapse-fade" aria-hidden="true"></div>
+      <div class="collapsible-fade" aria-hidden="true"></div>
     {/if}
   </div>
   {#if collapses}
-    <button type="button" class="collapse-toggle" aria-expanded={collapseState === 'expanded'} onclick={() => (expanded = !expanded)}>
+    <button type="button" class="collapsible-toggle" aria-expanded={collapseState === 'expanded'} onclick={() => (expanded = !expanded)}>
       {#if collapseState === 'expanded'}
         Show less
       {:else if lineCount === undefined}
@@ -119,47 +119,47 @@
 </div>
 
 <style>
-  .collapse {
+  .collapsible {
     min-width: 0;
   }
 
-  .collapse-body {
+  .collapsible-body {
     position: relative;
     min-width: 0;
   }
 
-  .collapse-body[data-state='clamped'] {
-    max-height: var(--collapse-collapsed);
+  .collapsible-body[data-state='clamped'] {
+    max-height: var(--collapsible-collapsed);
     overflow: hidden;
   }
 
-  .collapse-body[data-state='capped'] {
-    max-height: var(--collapse-collapsed);
+  .collapsible-body[data-state='capped'] {
+    max-height: var(--collapsible-collapsed);
     overflow-y: auto;
   }
 
-  .collapse-body[data-state='expanded'] {
-    max-height: var(--collapse-expanded);
+  .collapsible-body[data-state='expanded'] {
+    max-height: var(--collapsible-expanded);
     overflow-y: auto;
   }
 
-  .collapse-fade {
+  .collapsible-fade {
     position: absolute;
     right: 0;
     bottom: 0;
     left: 0;
-    height: var(--collapse-fade-height, 32px);
+    height: var(--collapsible-fade-height, 32px);
     pointer-events: none;
-    background: linear-gradient(to bottom, transparent, var(--collapse-fade));
+    background: linear-gradient(to bottom, transparent, var(--collapsible-fade));
   }
 
-  .collapse-toggle {
+  .collapsible-toggle {
     display: inline-block;
     margin-top: 4px;
     padding: 0;
     background: none;
     border: none;
-    color: var(--collapse-toggle-color, var(--muted-foreground));
+    color: var(--collapsible-toggle-color, var(--muted-foreground));
     font-size: 0.75rem;
     cursor: pointer;
     text-decoration: underline;
@@ -167,8 +167,8 @@
     opacity: 0.8;
   }
 
-  .collapse-toggle:hover {
+  .collapsible-toggle:hover {
     opacity: 1;
-    color: var(--collapse-toggle-hover, var(--foreground));
+    color: var(--collapsible-toggle-hover, var(--foreground));
   }
 </style>

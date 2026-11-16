@@ -133,11 +133,11 @@
     font-variant-ligatures: none;
   }
 
-  .bounded-output :global(.collapse-toggle) {
+  .bounded-output :global(.collapsible-toggle) {
     color: var(--_accent);
   }
 
-  .bounded-output :global(.collapse-toggle:hover) {
+  .bounded-output :global(.collapsible-toggle:hover) {
     color: var(--foreground);
   }
 </style>
