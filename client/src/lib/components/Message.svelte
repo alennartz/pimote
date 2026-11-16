@@ -80,6 +80,10 @@
   let customRootEl: HTMLDivElement | undefined = $state();
   let systemExpanded = $state(false);
   let skillExpanded = $state(false);
+  // Reasoning bodies outlive the streaming handoff: the settled message arrives
+  // with new block objects, so the block that owns its own open state would
+  // remount closed. Key by block position, which is stable across the swap.
+  let thinkingOpen = $state<Record<number, boolean>>({});
   let toolMenuOpen = $state(false);
 
   // Some models emit the answer twice (an extra message item repeating the
@@ -337,7 +341,7 @@
           {:else if block.type === 'text'}
             <TextBlock text={block.text ?? ''} streaming={blockStreaming} />
           {:else if block.type === 'thinking'}
-            <ThinkingBlock text={block.text ?? ''} streaming={blockStreaming} />
+            <ThinkingBlock text={block.text ?? ''} streaming={blockStreaming} expanded={thinkingOpen[i] ?? false} onExpandedChange={(value) => (thinkingOpen[i] = value)} />
           {:else if block.type === 'image'}
             <ImagePreview image={block.image} alt="Image in assistant response" />
           {:else if block.type === 'tool_call'}

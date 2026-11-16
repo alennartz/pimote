@@ -6,10 +6,20 @@
   import { countThinkingWords, createThinkingWordCounter, previewThinkingText, shouldRenderThinkingBlock } from '$lib/thinking-content.js';
   import { StickToBottom } from '$lib/stick-to-bottom.svelte.js';
 
-  let { text, streaming = false }: { text: string; streaming?: boolean } = $props();
+  let {
+    text,
+    streaming = false,
+    expanded = $bindable(false),
+    onExpandedChange,
+  }: { text: string; streaming?: boolean; expanded?: boolean; onExpandedChange?: (expanded: boolean) => void } = $props();
 
-  // $state instead of $derived so manual toggle during streaming isn't snapped back
-  let expanded = $state(false);
+  // The reader owns whether this block is open. The message list remounts blocks
+  // when a streaming message becomes a settled one, so the state has to live
+  // above this component or the reasoning body would fold at the handoff.
+  function setExpanded(next: boolean): void {
+    expanded = next;
+    onExpandedChange?.(next);
+  }
   let rootEl: HTMLDivElement | undefined = $state();
   let scrollEl: HTMLDivElement | undefined = $state();
   let textEl: HTMLPreElement | undefined = $state();
@@ -32,7 +42,7 @@
   // Auto-expand while streaming.
   $effect(() => {
     if (streaming) {
-      expanded = true;
+      setExpanded(true);
     }
   });
 
@@ -43,7 +53,7 @@
     if (!expanded) return;
     if (!rootEl) return;
     return observeFullyOffscreen(rootEl, () => {
-      expanded = false;
+      setExpanded(false);
     });
   });
 
@@ -85,7 +95,7 @@
 
 {#if shouldRender}
   <div class="thinking-block" bind:this={rootEl}>
-    <button class="thinking-header" onclick={() => (expanded = !expanded)}>
+    <button class="thinking-header" onclick={() => setExpanded(!expanded)}>
       <ChevronRight class="shrink-0 transition-transform duration-150 {expanded ? 'rotate-90' : ''}" size={14} />
       <BrainCircuit size={14} class="shrink-0" />
       <span class="thinking-label">

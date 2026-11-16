@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mount, unmount } from 'svelte';
+import { mount, tick, unmount } from 'svelte';
 import { flushSync } from 'svelte';
 import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
 
@@ -146,6 +146,29 @@ describe('MessageList streaming menus', () => {
       icon.click();
       flushSync();
     }
+  });
+});
+
+describe('MessageList reasoning bodies', () => {
+  it('keeps an open reasoning body across the streaming handoff', async () => {
+    sessionRegistry.handleEvent({ type: 'message_start', sessionId: 's1', cursor: 1, role: 'assistant' });
+    sessionRegistry.handleEvent({ type: 'message_update', sessionId: 's1', cursor: 2, subtype: 'start', contentIndex: 0, content: { type: 'thinking', text: '' } });
+    sessionRegistry.handleEvent({ type: 'message_update', sessionId: 's1', cursor: 3, subtype: 'delta', contentIndex: 0, content: { type: 'text', text: 'weighing the options' } });
+    flushSync();
+    await tick();
+
+    expect(target.querySelector('.thinking-content')).not.toBeNull();
+
+    sessionRegistry.handleEvent({
+      type: 'message_end',
+      sessionId: 's1',
+      cursor: 4,
+      message: { role: 'assistant', content: [{ type: 'thinking', text: 'weighing the options' }] },
+    });
+    flushSync();
+    await tick();
+
+    expect(target.querySelector('.thinking-content')).not.toBeNull();
   });
 });
 
