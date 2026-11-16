@@ -7,7 +7,8 @@
  * Escape detection follows the React original: programmatic writes leave an
  * `ignoreScrollToTop` sentinel, and an upward wheel resolved to this scroller
  * escapes immediately unless a nested scroller consumes it. Animation ticks
- * write synchronously inside the frame callback.
+ * write synchronously inside the frame callback. Scroll traffic that never
+ * leaves the bottom (a viewport clamp, a content shrink) never escapes.
  *----------------------------------------------------------------------------------------------*/
 
 /** Distance from the bottom (px) that still counts as following the tail. */
@@ -162,6 +163,37 @@ export class StickToBottom {
       resizeObserver.observe(contentElement);
       return () => resizeObserver.disconnect();
     });
+
+    // A viewport change moves the bottom without changing content height, so
+    // the content observer stays silent. A pinned follow lands on the new
+    // bottom inside this callback, before the frame paints.
+    $effect(() => {
+      const scrollElement = this.options.scrollElement();
+      if (!scrollElement || typeof ResizeObserver === 'undefined') return;
+
+      let previousWidth = scrollElement.clientWidth;
+      let previousHeight = scrollElement.clientHeight;
+
+      const resizeObserver = new ResizeObserver(() => {
+        const width = scrollElement.clientWidth;
+        const height = scrollElement.clientHeight;
+        const changed = width !== previousWidth || height !== previousHeight;
+        previousWidth = width;
+        previousHeight = height;
+        if (!changed) return;
+
+        this.isNearBottomState = this.isNearBottom();
+        // A reader inside the transcript stays where they are reading, and
+        // content shorter than the viewport has no bottom to reach.
+        if (this.escapedFromLockState || this.maxScrollTop <= 0) return;
+
+        this.isAtBottomState = true;
+        this.setScrollTop(this.targetScrollTop);
+      });
+
+      resizeObserver.observe(scrollElement);
+      return () => resizeObserver.disconnect();
+    });
   }
 
   get escapedFromLock(): boolean {
@@ -177,11 +209,16 @@ export class StickToBottom {
     return this.options.scrollElement()?.scrollTop ?? 0;
   }
 
-  /** Bottom-most scroll position minus one, so fractional scroll heights terminate the animation. */
-  get targetScrollTop(): number {
+  /** Bottom-most reachable scroll position. */
+  get maxScrollTop(): number {
     const scrollElement = this.options.scrollElement();
     if (!scrollElement) return 0;
-    return scrollElement.scrollHeight - 1 - scrollElement.clientHeight;
+    return scrollElement.scrollHeight - scrollElement.clientHeight;
+  }
+
+  /** Bottom-most scroll position minus one, so fractional scroll heights terminate the animation. */
+  get targetScrollTop(): number {
+    return this.maxScrollTop - 1;
   }
 
   get scrollDifference(): number {
@@ -365,7 +402,9 @@ export class StickToBottom {
       }
 
       const isScrollingDown = scrollTop > previousScrollTop;
-      const isScrollingUp = scrollTop < previousScrollTop;
+      // A shrink of the viewport or of the content clamps the position down to
+      // the new maximum. Landing on the bottom is not a scroll away from it.
+      const isScrollingUp = scrollTop < previousScrollTop && scrollTop < this.maxScrollTop;
 
       if (isScrollingUp) this.stopScroll();
       if (isScrollingDown) this.escapedFromLockState = false;

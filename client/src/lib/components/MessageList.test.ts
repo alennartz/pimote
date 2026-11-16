@@ -313,6 +313,73 @@ describe('MessageList scroll pin', () => {
     expect(container.scrollTop).toBe(859); // glued to the new bottom, not offset
   });
 
+  it('re-glues to the bottom in the frame of a viewport shrink', async () => {
+    container.scrollTop = geometry.scrollHeight;
+    await settle();
+    paintFrame();
+    expect(container.scrollTop).toBe(600);
+
+    // A question panel appears below the list and steals 260px of height.
+    geometry.clientHeight = 140;
+    fireResize(container);
+
+    // No frame may pass between the resize and the realignment.
+    expect(container.scrollTop).toBe(859);
+  });
+
+  it('stays glued to the bottom when the viewport grows while pinned', async () => {
+    container.scrollTop = geometry.scrollHeight;
+    await settle();
+    paintFrame();
+    expect(container.scrollTop).toBe(600);
+
+    // The on-screen keyboard closes and the list gains 300px; the browser
+    // clamps the scroll position down to the new maximum.
+    geometry.clientHeight = 700;
+    container.scrollTop = geometry.scrollHeight;
+    container.dispatchEvent(new Event('scroll'));
+    fireResize(container);
+    await settle();
+
+    expect(container.scrollTop).toBe(299);
+    expect(target.querySelector('.scroll-to-bottom')).toBeNull();
+  });
+
+  it('ignores a clamp scroll event that arrives after the viewport growth', async () => {
+    container.scrollTop = geometry.scrollHeight;
+    await settle();
+    paintFrame();
+    expect(container.scrollTop).toBe(600);
+
+    geometry.clientHeight = 700;
+    container.scrollTop = geometry.scrollHeight;
+    fireResize(container);
+    // The scroll notification for the clamped position lands after the resize.
+    container.dispatchEvent(new Event('scroll'));
+    await settle();
+
+    expect(container.scrollTop).toBe(299);
+    expect(target.querySelector('.scroll-to-bottom')).toBeNull();
+  });
+
+  it('keeps a detached reader in place when the viewport grows', async () => {
+    container.scrollTop = geometry.scrollHeight;
+    await settle();
+    paintFrame();
+    container.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true }));
+    container.scrollTop = 200;
+    container.dispatchEvent(new Event('scroll'));
+    await settle();
+    expect(target.querySelector('.scroll-to-bottom')).not.toBeNull();
+
+    geometry.clientHeight = 700;
+    fireResize(container);
+    await settle();
+
+    expect(container.scrollTop).toBe(200);
+    expect(target.querySelector('.scroll-to-bottom')).not.toBeNull();
+  });
+
   it('keeps following output after a question panel appears', async () => {
     container.scrollTop = geometry.scrollHeight;
     await settle();

@@ -580,19 +580,12 @@
     stick.scrollToBottom();
   }
 
-  // Sibling UI (the question panel, the on-screen keyboard) steals height from
-  // the list without scrolling it. Re-glue to the bottom on a shrink while
-  // pinned, or the leftover offset detaches the follow from the bottom.
+  // The stick follows viewport resizes itself; this observer keeps the sticky
+  // band width and the sticky targets in step with the list geometry.
   $effect(() => {
     const el = scrollContainer;
     if (!el || typeof ResizeObserver === 'undefined') return;
-    let lastHeight = el.clientHeight;
     const observer = new ResizeObserver(() => {
-      const height = el.clientHeight;
-      if (height < lastHeight && stick.isAtBottom) {
-        stick.scrollToBottom({ animation: 'instant', preserveScrollPosition: true });
-      }
-      lastHeight = height;
       listClientWidth = el.clientWidth;
       updateStickyTargets();
     });
