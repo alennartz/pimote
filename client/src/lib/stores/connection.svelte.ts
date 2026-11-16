@@ -684,7 +684,10 @@ export class ConnectionStore {
     }, 1000);
     this.reconnectTimer = setTimeout(async () => {
       this.reconnectTimer = null;
-      this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000);
+      // Jitter spreads reconnect storms across clients: after a server
+      // restart every tab doubles from the same delay, and a deterministic
+      // schedule would sync their restore fan-outs.
+      this.reconnectDelay = Math.min(Math.round(this.reconnectDelay * 2 * (0.5 + Math.random())), 30000);
 
       // Before reconnecting, check if the auth session is still valid.
       // When a reverse proxy (e.g. Cloudflare Access) expires the session,

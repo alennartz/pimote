@@ -96,7 +96,7 @@
     <div class="mx-auto flex w-full max-w-2xl flex-col gap-10 px-5 pt-12 pb-28 md:max-w-4xl md:pt-16">
       <div class="flex flex-col items-center gap-1.5">
         <div class="flex items-center gap-2.5">
-          <img src="/pwa/icon-512.png" alt="" class="border-border size-[90px] rounded-xl border object-cover" />
+          <img src="/pwa/icon-192.png" alt="" width="90" height="90" class="border-border size-[90px] rounded-xl border object-cover" />
           <span class="text-foreground text-4xl font-semibold tracking-tight">Pimote</span>
         </div>
       </div>

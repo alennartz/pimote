@@ -192,9 +192,22 @@
     return ids;
   });
 
+  // Keystrokes must not rescan the transcript: matches derive from the
+  // debounced query, and an empty query clears immediately.
+  let findQueryDebounced = $state('');
+  $effect(() => {
+    const query = findQuery.trim();
+    if (!query) {
+      findQueryDebounced = '';
+      return;
+    }
+    const timer = setTimeout(() => (findQueryDebounced = query), 150);
+    return () => clearTimeout(timer);
+  });
+
   const findMatches = $derived.by(() => {
-    if (!findQuery.trim() || !session) return [];
-    return findInConversation(session.messages, findQuery.trim());
+    if (!findQueryDebounced || !session) return [];
+    return findInConversation(session.messages, findQueryDebounced);
   });
 
   const branchCounts = $derived.by(() => (treeSnapshot ? abandonedBranchCounts(treeSnapshot.tree) : new Map<string, number>()));
@@ -207,7 +220,7 @@
 
   function registerRow(node: HTMLElement, key: string) {
     rowElements.set(key, node);
-    if (!rowResizeObserver && typeof ResizeObserver !== 'undefined') rowResizeObserver = new ResizeObserver(updateStickyTargets);
+    if (!rowResizeObserver && typeof ResizeObserver !== 'undefined') rowResizeObserver = new ResizeObserver(onRowsResized);
     rowResizeObserver?.observe(node);
     return {
       destroy() {
@@ -215,6 +228,22 @@
         if (rowElements.get(key) === node) rowElements.delete(key);
       },
     };
+  }
+
+  /** A row that ends above the sticky band moves every row below it; a row
+   *  that starts below it (the streaming row growing at the bottom) moves
+   *  nothing the sticky targets depend on. Recompute only for the former, so
+   *  steady streaming costs one rect read per frame instead of one per row. */
+  function onRowsResized(entries: ResizeObserverEntry[]): void {
+    const sc = scrollContainer;
+    if (!sc) return;
+    const fold = sc.getBoundingClientRect().top + 40;
+    for (const entry of entries) {
+      if ((entry.target as HTMLElement).getBoundingClientRect().top < fold) {
+        updateStickyTargets();
+        return;
+      }
+    }
   }
 
   function transcriptPositions(): UserMessagePosition[] {

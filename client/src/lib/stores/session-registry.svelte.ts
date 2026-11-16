@@ -79,6 +79,7 @@ import {
   applySubagentContentEvent,
   applySubagentContentToStreaming,
   hydrateSubagentContent,
+  projectMessage,
   isSubagentContentEvent,
   type SubagentContentEvent,
   type SubagentContentState,
@@ -87,7 +88,15 @@ import {
 /** Maximum UTF-8 bytes retained from live bash deltas per execution. */
 export const MAX_BASH_LIVE_OUTPUT_BYTES = 256 * 1024;
 
+/** Upper bound for live tool partial output, so a chatty tool cannot grow the
+ *  streamed string (and its render) without limit. The final tool result
+ *  replaces it on completion. */
+export const MAX_TOOL_PARTIAL_CHARS = 256 * 1024;
+
 const bashTextEncoder = new TextEncoder();
+/** Tracked live-output byte counts per child attachment, so a growing bash
+ *  buffer is appended without re-encoding the accumulated output per delta. */
+const attachmentBashBytes = new WeakMap<object, Map<string, number>>();
 
 export type SubagentPath = AgentPath;
 
@@ -253,8 +262,10 @@ function isZeroUsage(usage: PimoteUsage | undefined): boolean {
 }
 
 /** Append a live delta without allowing the transient browser buffer to grow unbounded. */
-function appendBoundedBashOutput(current: string, delta: string, maxBytes: number): { output: string; bytes: number; truncated: boolean } {
-  const currentBytes = utf8ByteLength(current);
+/** Append a live delta, trusting the caller's tracked byte count when provided
+ *  so a growing buffer is never re-encoded in full per delta. */
+function appendBoundedBashOutput(current: string, delta: string, maxBytes: number, trackedBytes?: number): { output: string; bytes: number; truncated: boolean } {
+  const currentBytes = trackedBytes ?? utf8ByteLength(current);
   if (currentBytes >= maxBytes) {
     const boundedCurrent = currentBytes > maxBytes ? truncateUtf8(current, maxBytes) : current;
     return { output: boundedCurrent, bytes: utf8ByteLength(boundedCurrent), truncated: delta.length > 0 || boundedCurrent !== current };
@@ -374,22 +385,31 @@ function hydrateMessageEntryIds(session: Pick<PerSessionState, 'messages' | 'mes
 
 type ProjectedTranscript = Pick<PerSessionState, 'messages' | 'messageKeys' | 'optimisticEntries' | 'projectedSubagentContent'>;
 
-function confirmedTranscriptRows(transcript: ProjectedTranscript) {
-  const pendingKeys = new Set(transcript.optimisticEntries.map((entry) => entry.key));
-  const rows = transcript.messages.map((message, index) => ({ message, key: transcript.messageKeys[index] }));
-  return {
-    confirmed: rows.filter((row) => !pendingKeys.has(row.key)),
-    pending: rows.filter((row) => pendingKeys.has(row.key)),
-  };
-}
-
 function applyProjectedEventToTranscript(transcript: ProjectedTranscript, event: SubagentContentEvent, generateKeys: (count: number) => string[]): void {
-  const { confirmed, pending } = confirmedTranscriptRows(transcript);
-  const projected = applySubagentContentEvent({ messages: confirmed.map((row) => row.message), active: transcript.projectedSubagentContent.active }, event);
-  const addedKeys = generateKeys(projected.messages.length - confirmed.length);
+  // Split confirmed from pending rows in one pass. The projection copies only
+  // the message carrying the operation, so this stays a shallow re-fold.
+  const pendingKeys = new Set(transcript.optimisticEntries.map((entry) => entry.key));
+  const messages = transcript.messages;
+  const keys = transcript.messageKeys;
+  const confirmedMessages: PimoteAgentMessage[] = [];
+  const confirmedKeys: string[] = [];
+  const pendingMessages: PimoteAgentMessage[] = [];
+  const pendingRowKeys: string[] = [];
+  for (let index = 0; index < messages.length; index += 1) {
+    const key = keys[index];
+    if (key !== undefined && pendingKeys.has(key)) {
+      pendingMessages.push(messages[index]);
+      pendingRowKeys.push(key);
+    } else {
+      confirmedMessages.push(messages[index]);
+      confirmedKeys.push(key);
+    }
+  }
+  const projected = applySubagentContentEvent({ messages: confirmedMessages, active: transcript.projectedSubagentContent.active }, event);
+  const addedKeys = generateKeys(projected.messages.length - confirmedMessages.length);
   transcript.projectedSubagentContent = projected;
-  transcript.messages = [...projected.messages, ...pending.map((row) => row.message)];
-  transcript.messageKeys = [...confirmed.map((row) => row.key), ...addedKeys, ...pending.map((row) => row.key)];
+  transcript.messages = [...projected.messages, ...pendingMessages];
+  transcript.messageKeys = [...confirmedKeys, ...addedKeys, ...pendingRowKeys];
 }
 
 function streamingParentTargetsFutureRow(parentMessageId: string, transcript: ProjectedTranscript): boolean {
@@ -479,7 +499,7 @@ function applyChildNativeEvent(attachment: SubagentAttachmentState, event: Pimot
       const update = event as MessageUpdateEvent;
       const streaming = attachment.streamingMessage;
       if (!streaming) break;
-      const content = streaming.content.map((block) => ({ ...block }));
+      const content = streaming.content.slice();
       if (update.subtype === 'start') {
         content[update.contentIndex] = {
           type: update.content.type,
@@ -508,12 +528,12 @@ function applyChildNativeEvent(attachment: SubagentAttachmentState, event: Pimot
         messages[ownIndex] = end.message;
         attachment.messages = messages;
         attachment.optimisticEntries = attachment.optimisticEntries.filter((entry) => entry !== ownEntry);
+        attachment.projectedSubagentContent = projectMessage(attachment.projectedSubagentContent, end.message, ownIndex, attachment.messages);
       } else {
         attachment.messages = [...attachment.messages, end.message];
         attachment.messageKeys = [...attachment.messageKeys, `child-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${attachment.messages.length - 1}`];
+        attachment.projectedSubagentContent = projectMessage(attachment.projectedSubagentContent, end.message, attachment.messages.length - 1, attachment.messages);
       }
-      attachment.projectedSubagentContent = hydrateSubagentContent(attachment.messages, attachment.projectedSubagentContent.active);
-      attachment.messages = [...attachment.projectedSubagentContent.messages];
       attachment.transcript = attachment.messages;
       attachment.state = { ...attachment.state, messageCount: attachment.messages.length };
       attachment.streamingMessage = null;
@@ -522,8 +542,12 @@ function applyChildNativeEvent(attachment: SubagentAttachmentState, event: Pimot
     }
     case 'custom_entry': {
       attachment.messages = [...attachment.messages, (event as CustomEntryEvent).message];
-      attachment.projectedSubagentContent = hydrateSubagentContent(attachment.messages, attachment.projectedSubagentContent.active);
-      attachment.messages = [...attachment.projectedSubagentContent.messages];
+      attachment.projectedSubagentContent = projectMessage(
+        attachment.projectedSubagentContent,
+        (event as CustomEntryEvent).message,
+        attachment.messages.length - 1,
+        attachment.messages,
+      );
       attachment.transcript = attachment.messages;
       attachment.messageKeys = [...attachment.messageKeys, `child-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${attachment.messages.length - 1}`];
       attachment.state = { ...attachment.state, messageCount: attachment.messages.length };
@@ -533,7 +557,13 @@ function applyChildNativeEvent(attachment: SubagentAttachmentState, event: Pimot
       const update = event as BashExecutionUpdateEvent;
       const running = Object.values(attachment.bashExecutions).find((execution) => execution.status === 'running' && (!update.id || execution.id === update.id));
       if (running) {
-        const bounded = appendBoundedBashOutput(running.output, update.delta, MAX_BASH_LIVE_OUTPUT_BYTES);
+        let runningBytes = attachmentBashBytes.get(attachment);
+        if (!runningBytes) {
+          runningBytes = new Map(); // eslint-disable-line svelte/prefer-svelte-reactivity -- byte bookkeeping, never read reactively
+          attachmentBashBytes.set(attachment, runningBytes);
+        }
+        const bounded = appendBoundedBashOutput(running.output, update.delta, MAX_BASH_LIVE_OUTPUT_BYTES, runningBytes.get(running.id));
+        runningBytes.set(running.id, bounded.bytes);
         attachment.bashExecutions = {
           ...attachment.bashExecutions,
           [running.id]: {
@@ -557,7 +587,9 @@ function applyChildNativeEvent(attachment: SubagentAttachmentState, event: Pimot
     case 'tool_execution_update': {
       const update = event as ToolExecutionUpdateEvent;
       const execution = attachment.toolExecutions[update.toolCallId];
-      if (execution) attachment.toolExecutions = { ...attachment.toolExecutions, [update.toolCallId]: { ...execution, partialResult: execution.partialResult + update.content } };
+      if (execution && execution.partialResult.length <= MAX_TOOL_PARTIAL_CHARS) {
+        attachment.toolExecutions = { ...attachment.toolExecutions, [update.toolCallId]: { ...execution, partialResult: execution.partialResult + update.content } };
+      }
       break;
     }
     case 'tool_execution_end': {
@@ -1757,8 +1789,7 @@ export class SessionRegistry {
         // renderer — appended in arrival order; no streaming state involved.
         const entryEvent = event as CustomEntryEvent;
         session.messages = [...session.messages, entryEvent.message];
-        session.projectedSubagentContent = hydrateSubagentContent(session.messages, session.projectedSubagentContent.active);
-        session.messages = [...session.projectedSubagentContent.messages];
+        session.projectedSubagentContent = projectMessage(session.projectedSubagentContent, entryEvent.message, session.messages.length - 1, session.messages);
         session.messageKeys = [...session.messageKeys, 'msg-' + this._nextMessageKey++];
         session.messageCount++;
         break;
@@ -1769,6 +1800,7 @@ export class SessionRegistry {
         const message: PimoteAgentMessage = end.message;
         const partialUsage = session.lastPositiveStreamingUsage ?? session.pendingAssistantUsage?.usage;
         let insertedKey: string | null = null;
+        let projectedIndex: number;
 
         // Reconcile optimistic entries. The server stamps a started prompt's
         // user echo with the sender's clientMessageId, so our own echo
@@ -1782,6 +1814,7 @@ export class SessionRegistry {
           const newMessages = [...session.messages];
           newMessages[ownIdx] = message;
           session.messages = newMessages;
+          projectedIndex = ownIdx;
           session.optimisticEntries = session.optimisticEntries.filter((e) => e !== ownEntry);
           // The echo's message_start was skipped, so no placeholder exists for
           // it. Clear streaming state only for a user placeholder from an
@@ -1816,6 +1849,7 @@ export class SessionRegistry {
             });
           }
           session.messageKeys = [...session.messageKeys.slice(0, insertIdx), key, ...session.messageKeys.slice(insertIdx)];
+          projectedIndex = insertIdx;
           session.streamingMessage = null;
           session.streamingKey = null;
         }
@@ -1838,8 +1872,7 @@ export class SessionRegistry {
         if (message.role === 'toolResult') {
           this.applyToolResults(session, message);
         }
-        session.projectedSubagentContent = hydrateSubagentContent(session.messages, session.projectedSubagentContent.active);
-        session.messages = [...session.projectedSubagentContent.messages];
+        session.projectedSubagentContent = projectMessage(session.projectedSubagentContent, message, projectedIndex, session.messages);
         break;
       }
 
@@ -1862,7 +1895,7 @@ export class SessionRegistry {
       case 'tool_execution_update': {
         const upd = event as ToolExecutionUpdateEvent;
         const call = session.toolExecutions[upd.toolCallId];
-        if (call) {
+        if (call && call.partialResult.length <= MAX_TOOL_PARTIAL_CHARS) {
           call.partialResult += upd.content;
         }
         break;
@@ -2332,7 +2365,7 @@ export class SessionRegistry {
     if (!execution || execution.status !== 'running') return;
 
     const outputKey = this.bashOutputKey(sessionId, targetId);
-    const bounded = appendBoundedBashOutput(execution.output, update.delta, MAX_BASH_LIVE_OUTPUT_BYTES);
+    const bounded = appendBoundedBashOutput(execution.output, update.delta, MAX_BASH_LIVE_OUTPUT_BYTES, this.bashOutputBytes.get(outputKey));
     this.bashOutputBytes.set(outputKey, bounded.bytes);
     session.bashExecutions = {
       ...session.bashExecutions,
@@ -2842,7 +2875,9 @@ export async function openExistingSession(sessionId: string, folderPath: string 
     }
     if (data?.folder) sessionRegistry.bindSessionFolder(sessionId, data.folder);
     cancelledNewSessionIds.delete(sessionId);
-    await refreshSessionMetaAndCommands(sessionId);
+    // Selection must not wait on meta/commands; the refresh already updates
+    // the registry when its responses arrive.
+    void refreshSessionMetaAndCommands(sessionId);
     if (shouldSwitch) sessionRegistry.selectSession(sessionId);
     attachedSessionIds.add(sessionId);
     return true;

@@ -7,6 +7,20 @@ export interface FindMatch {
   length: number;
 }
 
+/** Lowercased text per block, reused across queries. The source is checked so
+ *  a block whose text mutated in place (live deltas) re-lowers instead of
+ *  serving a stale copy. */
+const loweredBlockTexts = new WeakMap<object, { source: string; lowered: string }>();
+
+function loweredBlockText(block: PimoteAgentMessage['content'][number]): string {
+  const text = typeof block.text === 'string' ? block.text : '';
+  const cached = loweredBlockTexts.get(block);
+  if (cached && cached.source === text) return cached.lowered;
+  const lowered = text.toLowerCase();
+  loweredBlockTexts.set(block, { source: text, lowered });
+  return lowered;
+}
+
 /** Find query matches in user and assistant text blocks. */
 export function findInConversation(messages: readonly PimoteAgentMessage[], query: string): FindMatch[] {
   if (query.length === 0) return [];
@@ -25,7 +39,7 @@ export function findInConversation(messages: readonly PimoteAgentMessage[], quer
       const block = message.content[blockIndex];
       if (block.type !== 'text' || typeof block.text !== 'string') continue;
 
-      const normalizedText = block.text.toLowerCase();
+      const normalizedText = loweredBlockText(block);
       let offset = normalizedText.indexOf(normalizedQuery);
       while (offset !== -1) {
         matches.push({ messageKey, blockIndex, offset, length: query.length });

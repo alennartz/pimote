@@ -31,7 +31,7 @@
     }
     const title = current.title;
     const prefill = current.prefill as string | undefined;
-    void import('$lib/editor-language.js').then((langMod) => {
+    void import('$lib/editor-language-resolve.js').then((langMod) => {
       editorLanguage = langMod.resolveEditorLanguage(title, prefill);
     });
   });

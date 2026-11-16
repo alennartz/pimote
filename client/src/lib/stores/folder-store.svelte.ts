@@ -115,21 +115,37 @@ export class FolderStore {
    * `lastActivity` (the ordering fact the pinned order sorts on), then loaded
    * session lists — name as tiebreak. Mirrors the server's pinned order from
    * row data alone, so rows rank correctly before lazy session lists load.
+   * Cached: recomputes once per dependency change, not per read.
    */
-  get visibleFolders(): FolderInfo[] {
-    const list = this.folders.filter((folder) => (this.showArchived || !folder.archived) && (!this.activeQuery || this.queryMatchPaths.includes(folder.path)));
-    const openActivity = this.readOpenSessionActivity();
+  readonly visibleFolders = $derived.by(() => {
+    const showArchived = this.showArchived;
+    const queryMatch = this.activeQuery ? new Set(this.queryMatchPaths) : null; // eslint-disable-line svelte/prefer-svelte-reactivity -- local pure projection, not reactive state
+    const list = this.folders.filter((folder) => (showArchived || !folder.archived) && (!queryMatch || queryMatch.has(folder.path)));
+    const openActivityByFolder = new Map<string, number[]>(); // eslint-disable-line svelte/prefer-svelte-reactivity -- local pure projection, not reactive state
+    for (const session of this.readOpenSessionActivity()) {
+      const stamps = openActivityByFolder.get(session.folderPath);
+      const stamp = session.modified ? toTimestamp(session.modified) : Number.MAX_SAFE_INTEGER;
+      if (stamps) stamps.push(stamp);
+      else openActivityByFolder.set(session.folderPath, [stamp]);
+    }
+    const sessionRecency = new Map<string, number>(); // eslint-disable-line svelte/prefer-svelte-reactivity -- local pure projection, not reactive state
+    for (const [path, sessions] of this.sessions) {
+      let max = 0;
+      for (const session of sessions) max = Math.max(max, toTimestamp(session.modified));
+      sessionRecency.set(path, max);
+    }
     const recency = (folder: FolderInfo): number => {
       if (folder.activeSessionCount > 0) return Number.MAX_SAFE_INTEGER;
-      return Math.max(
-        0,
-        ...(this.sessions.get(folder.path) ?? []).map((session) => toTimestamp(session.modified)),
-        ...openActivity.filter((session) => session.folderPath === folder.path).map((session) => (session.modified ? toTimestamp(session.modified) : Number.MAX_SAFE_INTEGER)),
-        folder.lastActivity ?? 0,
-      );
+      const openStamps = openActivityByFolder.get(folder.path);
+      const carried = folder.lastActivity ?? 0;
+      const loaded = sessionRecency.get(folder.path) ?? 0;
+      if (!openStamps) return Math.max(loaded, carried);
+      let max = Math.max(loaded, carried);
+      for (const stamp of openStamps) max = Math.max(max, stamp);
+      return max;
     };
     return [...list].sort((a, b) => Number(b.favorite === true) - Number(a.favorite === true) || recency(b) - recency(a) || a.name.localeCompare(b.name));
-  }
+  });
 
   /** Active server query, for views that remount with a cleared toolbar. */
   get query(): string {

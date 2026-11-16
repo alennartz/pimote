@@ -2,14 +2,15 @@
  * @vitest-environment jsdom
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createIncrementalHighlighter, highlightToHtml } from './code-highlight.js';
+import { createIncrementalHighlighter, ensureHljs, highlightToHtml } from './code-highlight.js';
 
 afterEach(() => {
   vi.useRealTimers();
 });
 
 describe('highlightToHtml', () => {
-  it('emits hljs span markup for a registered language', () => {
+  it('emits hljs span markup for a registered language', async () => {
+    await ensureHljs();
     const html = highlightToHtml('const x = 1;', 'typescript');
     expect(html).toContain('<span');
     expect(html).toContain('hljs-');

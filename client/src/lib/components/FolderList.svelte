@@ -228,7 +228,6 @@
     const { instance, path } = measurement;
     instance.measureElement(node);
     return {
-      update: () => instance.measureElement(node),
       destroy: () => {
         // A virtualized row can disappear without its menu's close callback.
         // Its click suppression must not survive to consume another row's tap.

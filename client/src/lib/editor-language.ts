@@ -1,5 +1,3 @@
-import { detectHighlightedLanguage } from './syntax-highlighter.js';
-
 export type EditorLanguage = 'typescript' | 'javascript' | 'json' | 'python' | 'shell' | 'html' | 'xml' | 'css' | 'markdown' | 'yaml' | 'sql' | 'diff';
 
 export interface ResolvedEditorLanguage {
@@ -91,6 +89,8 @@ function mapHighlightLanguage(language: string | null): EditorLanguage | null {
   return HIGHLIGHT_LANGUAGE_MAP[language.toLowerCase()] ?? null;
 }
 
+export { mapHighlightLanguage, getLanguageLabel };
+
 export function extractFilenameFromTitle(title: string): string | null {
   const matches = title.match(FILELIKE_PATTERN);
   if (!matches || matches.length === 0) return null;
@@ -136,28 +136,4 @@ export function inferLanguageFromPath(path: string): EditorLanguage | null {
   const extension = lastComponent.slice(dotIndex + 1).toLowerCase();
   if (!extension) return null;
   return EXTENSION_LANGUAGE_MAP[extension] ?? null;
-}
-
-export function inferLanguageFromContent(prefill: string): ResolvedEditorLanguage | null {
-  const id = mapHighlightLanguage(detectHighlightedLanguage(prefill));
-  if (!id) return null;
-
-  return {
-    id,
-    label: getLanguageLabel(id),
-    source: 'prefill',
-  };
-}
-
-export function resolveEditorLanguage(title?: string, prefill?: string): ResolvedEditorLanguage | null {
-  if (title) {
-    const fromTitle = inferLanguageFromTitle(title);
-    if (fromTitle) return fromTitle;
-  }
-
-  if (prefill) {
-    return inferLanguageFromContent(prefill);
-  }
-
-  return null;
 }

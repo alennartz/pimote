@@ -25,12 +25,57 @@
   let contentEl: HTMLPreElement | undefined = $state();
 
   let lines = $derived(text.split('\n'));
-  let lineCount = $derived(lines.length);
+  // Counted without materializing the line array: output deltas arrive many
+  // times per second and the buffer can reach the live-output cap.
+  let lineCount = $derived.by(() => {
+    let count = 1;
+    for (let index = text.indexOf('\n'); index !== -1; index = text.indexOf('\n', index + 1)) count += 1;
+    return count;
+  });
   let visualOverflow = $state(false);
   let needsCollapse = $derived(lineCount > maxCollapsedLines || visualOverflow);
   let clamped = $derived(needsCollapse && !expanded);
   let scrollable = $derived(!clamped && (bounded || (expanded && needsCollapse)));
   let displayText = $derived(needsCollapse && !expanded ? lines.slice(0, maxCollapsedLines).join('\n') : text);
+
+  // Live deltas must not re-convert and re-replace the whole output per
+  // arrival — conversion cost over the full buffer is quadratic across a
+  // stream and every innerHTML write discards the rendered text nodes.
+  // While streaming, the view renders the latest value on a trailing timer;
+  // once streaming ends it renders the final value exactly. `null` falls
+  // through to `displayText`, which keeps the first paint synchronous.
+  const RENDER_INTERVAL_MS = 100;
+  let rendered: string | null = $state(null);
+  let pendingRender: string | null = null;
+  let renderTimer: ReturnType<typeof setTimeout> | null = null;
+
+  $effect(() => {
+    const next = displayText;
+    if (!streaming) {
+      if (renderTimer !== null) {
+        clearTimeout(renderTimer);
+        renderTimer = null;
+        pendingRender = null;
+      }
+      rendered = next;
+      return;
+    }
+    if (next === rendered && pendingRender === null) return;
+    pendingRender = next;
+    if (renderTimer === null) {
+      renderTimer = setTimeout(() => {
+        renderTimer = null;
+        if (pendingRender !== null) {
+          rendered = pendingRender;
+          pendingRender = null;
+        }
+      }, RENDER_INTERVAL_MS);
+    }
+  });
+
+  $effect(() => () => {
+    if (renderTimer !== null) clearTimeout(renderTimer);
+  });
 
   // A long unbroken line can exceed the visual height without increasing the
   // logical line count. Measure bounded results so they get the same collapse
@@ -42,10 +87,11 @@
       return;
     }
 
-    // Re-measure when text or expansion changes. Svelte runs effects after the
-    // DOM update, so scrollHeight reflects the current rendered content.
-    void text;
+    // Re-measure when rendered content or expansion changes. Svelte runs
+    // effects after the DOM update, so scrollHeight reflects what is shown.
+    void rendered;
     void expanded;
+    void clamped;
     const updateOverflow = () => {
       visualOverflow = el.scrollHeight > el.clientHeight;
     };
@@ -60,8 +106,8 @@
   // Auto-scroll to bottom while streaming and expanded
   $effect(() => {
     if (streaming && expanded && contentEl) {
-      // Track text to re-run on changes
-      void text;
+      // Track rendered content so the scroll follows the throttle cadence.
+      void rendered;
       contentEl.scrollTop = contentEl.scrollHeight;
     }
   });
@@ -70,7 +116,8 @@
 <div class="bounded-output" class:accent-purple={accent === 'purple'}>
   <!-- ansiToHtml escapes input text before creating fixed style spans. -->
   <!-- eslint-disable svelte/no-at-html-tags -->
-  <pre class="bounded-output-text" class:clamped class:scrollable bind:this={contentEl}>{#if renderAnsi}{@html ansiToHtml(displayText)}{:else}{displayText}{/if}</pre>
+  <pre class="bounded-output-text" class:clamped class:scrollable bind:this={contentEl}>{#if renderAnsi}{@html ansiToHtml(rendered ?? displayText)}{:else}{rendered ??
+        displayText}{/if}</pre>
   <!-- eslint-enable svelte/no-at-html-tags -->
   {#if needsCollapse}
     <button class="bounded-output-toggle" onclick={() => (expanded = !expanded)}>

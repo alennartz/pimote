@@ -258,6 +258,11 @@
         <h1>Client Performance Audit</h1>
         <p class="dek">Svelte 5 + SvelteKit PWA — algorithmic complexity, streaming hot paths, main-thread saturation, network timing, bundle weight.</p>
         <p class="meta">Scope: <code>client/src</code> at v0.16.0-rc.7 · static analysis + production build measurement</p>
+        <div class="callout">
+          <strong>Remediation status:</strong> S1–S6, R1–R4, N1–N3, L1–L3, and B1–B2 are fixed. The eager session-route closure is now 684 KB raw / 207 KB gzip. One correction to
+          the bundle findings: the former 155 KB "voice chunk" was mostly call-UI the session route genuinely renders, so only the ~9 KB seams factory was deferrable (now dynamic,
+          warmed at idle); highlight.js core (~65 KB raw) moved fully off the static import graph. Full suite (1357 tests), svelte-check, and production build pass after the fixes.
+        </div>
       </header>
 
       <div class="takeaways">

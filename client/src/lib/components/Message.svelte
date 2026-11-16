@@ -86,6 +86,23 @@
   // speaking it.
   let visibleContent = $derived(message.role === 'assistant' ? collapseDuplicateTextBlocks(message.content) : message.content);
 
+  // Stable per-block keys. The subagent projection can splice blocks into the
+  // middle of a message; index keys would remount every following block
+  // (re-parsing markdown, resetting highlights) on each insertion.
+  const blockKeyIds = new WeakMap<object, number>();
+  let nextBlockKeyId = 1;
+  function blockKey(block: unknown, index: number): string {
+    if (block && typeof block === 'object') {
+      let id = blockKeyIds.get(block);
+      if (id === undefined) {
+        id = nextBlockKeyId++;
+        blockKeyIds.set(block, id);
+      }
+      return `block-${id}`;
+    }
+    return `native-${index}`;
+  }
+
   let hasSpeakableText = $derived(message.role === 'assistant' && !streaming && visibleContent.some((c) => c.type === 'text' && c.text));
 
   // An assistant turn cancelled by session.abort() (e.g. a voice-mode barge-in
@@ -144,8 +161,8 @@
   let skillLines = $derived(skillBlock ? skillBlock.body.split('\n') : []);
   let skillNeedsCollapse = $derived(skillLines.length > SKILL_COLLAPSED_LINES);
 
-  let customText = $derived(getUserText(message));
-  let customLines = $derived(customText.split('\n'));
+  // Custom messages share the user text fold — same content shape, same join.
+  let customLines = $derived(userText.split('\n'));
   let customNeedsCollapse = $derived(customLines.length > MAX_COLLAPSED_LINES);
   let systemSections = $derived(message.role === 'system' ? ((message as PimoteAgentMessage).sections ?? {}) : {});
   let systemSectionNames = $derived(Object.keys(systemSections));
@@ -313,7 +330,7 @@
             {/if}
           </div>
         {/if}
-        {#each visibleContent as block, i (`native-${i}`)}
+        {#each visibleContent as block, i (blockKey(block, i))}
           {@const blockStreaming = block.streaming ?? false}
           {#if block.type === 'subagent'}
             {@const operationToolCallId = block.placement && 'toolCallId' in block.placement ? block.placement.toolCallId : block.toolCallId}
@@ -376,14 +393,14 @@
         {#if !customCollapsed}
           <div class="custom-content">
             {#if streaming}
-              <BoundedOutput text={customText} {streaming} accent="purple" />
+              <BoundedOutput text={userText} {streaming} accent="purple" />
             {:else}
               <div
                 class="custom-text-container"
                 class:custom-text-collapsed={customNeedsCollapse && !customExpanded}
                 class:custom-text-expanded={customNeedsCollapse && customExpanded}
               >
-                <TextBlock text={customText} />
+                <TextBlock text={userText} />
               </div>
               {#if customNeedsCollapse && !customExpanded}
                 <button class="custom-toggle" onclick={() => (customExpanded = true)}> Show more… </button>

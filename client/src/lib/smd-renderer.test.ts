@@ -4,6 +4,7 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import * as smd from 'streaming-markdown';
 import { createRenderer } from './smd-renderer.js';
+import { ensureHljs } from './code-highlight.js';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -214,11 +215,12 @@ describe('createRenderer', () => {
       expect(code!.classList.contains('hljs')).toBe(true);
     });
 
-    it('highlights fenced code mid-stream, before the closing fence arrives', () => {
+    it('highlights fenced code mid-stream, before the closing fence arrives', async () => {
       // The headline markdown-surface behavior: fenced code highlights WHILE it
       // streams, not only once the fence closes. Open a fence with a language
       // and stream code into it WITHOUT a closing fence, then let the throttle
       // window elapse — the <code> should already carry hljs span markup.
+      await ensureHljs();
       vi.useFakeTimers();
       const container = document.createElement('div');
       const renderer = createRenderer(container);

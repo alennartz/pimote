@@ -195,14 +195,23 @@ export class StickToBottom {
     const scrollElement = this.options.scrollElement();
     if (!scrollElement) return;
     // Override CSS scroll-behavior so the write lands immediately instead
-    // of being intercepted by browser smooth scrolling.
-    const { scrollBehavior } = getComputedStyle(scrollElement);
+    // of being intercepted by browser smooth scrolling. The stylesheet
+    // value is cached per element: it only changes with CSS, never per
+    // frame, and getComputedStyle would force a style recalc on every
+    // animation tick.
+    let scrollBehavior = StickToBottom.cachedScrollBehavior.get(scrollElement);
+    if (scrollBehavior === undefined) {
+      scrollBehavior = getComputedStyle(scrollElement).scrollBehavior;
+      StickToBottom.cachedScrollBehavior.set(scrollElement, scrollBehavior);
+    }
     const changed = scrollBehavior !== 'auto';
     if (changed) scrollElement.style.scrollBehavior = 'auto';
     scrollElement.scrollTop = scrollTop;
     if (changed) scrollElement.style.scrollBehavior = scrollBehavior;
     this.ignoreScrollToTop = scrollElement.scrollTop;
   }
+
+  private static cachedScrollBehavior = new WeakMap<HTMLElement, string>();
 
   scrollToBottom = (scrollOptions: ScrollToBottomOptions = {}): Promise<boolean> => {
     if (typeof scrollOptions === 'string') scrollOptions = { animation: scrollOptions };

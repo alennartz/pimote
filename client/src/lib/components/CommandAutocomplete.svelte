@@ -40,11 +40,15 @@
       const seq = ++serverRequestSeq;
       try {
         if (currentMode === 'fileRefs' && completeFileRefs) {
-          serverItems = await completeFileRefs(currentQuery);
+          const items = await completeFileRefs(currentQuery);
+          if (seq !== serverRequestSeq) return;
+          serverItems = items;
           return;
         }
         if (currentMode === 'args' && completeArgs) {
-          serverItems = await completeArgs(currentCommandName, currentQuery);
+          const items = await completeArgs(currentCommandName, currentQuery);
+          if (seq !== serverRequestSeq) return;
+          serverItems = items;
           return;
         }
         const res = await (currentMode === 'fileRefs'

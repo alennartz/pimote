@@ -1,8 +1,31 @@
-import { hljs } from './syntax-highlighter.js';
-
 function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
+
+/** Syntax-highlighter module state. The module loads behind a dynamic import
+ *  so hljs and its languages stay off the startup path; the import starts
+ *  when this module first loads, and every live highlighter re-renders its
+ *  last element once it lands. */
+type SyntaxHighlighterModule = typeof import('./syntax-highlighter.js');
+
+let hljsModule: SyntaxHighlighterModule | null = null;
+let hljsLoading: Promise<SyntaxHighlighterModule> | null = null;
+const liveHighlighters = new Set<{ rerenderLast(): void }>();
+
+/** Resolve the syntax-highlighter module. Until it lands,
+ *  `highlightToHtml` emits HTML-escaped plain text; every scheduled element
+ *  upgrades automatically when the module arrives. */
+export function ensureHljs(): Promise<SyntaxHighlighterModule> {
+  if (hljsModule) return Promise.resolve(hljsModule);
+  hljsLoading ??= import('./syntax-highlighter.js').then((module) => {
+    hljsModule = module;
+    for (const highlighter of liveHighlighters) highlighter.rerenderLast();
+    return module;
+  });
+  return hljsLoading;
+}
+
+if (typeof window !== 'undefined') void ensureHljs();
 
 /**
  * Highlight a complete code string to hljs HTML markup.
@@ -14,7 +37,8 @@ function escapeHtml(text: string): string {
  * - Never throws: any hljs error falls back to HTML-escaped plain text.
  */
 export function highlightToHtml(text: string, language: string | null): string {
-  if (language && hljs.getLanguage(language)) {
+  const hljs = hljsModule?.hljs;
+  if (language && hljs?.getLanguage(language)) {
     try {
       return hljs.highlight(text, { language }).value;
     } catch {
@@ -66,7 +90,7 @@ export function createIncrementalHighlighter(opts?: { intervalMs?: number }): In
     el.innerHTML = highlightToHtml(text, language);
   };
 
-  return {
+  const highlighter = {
     schedule(el: HTMLElement, text: string, language: string | null) {
       pending = { el, text, language };
       if (timer === null) {
@@ -84,11 +108,19 @@ export function createIncrementalHighlighter(opts?: { intervalMs?: number }): In
       run();
     },
     dispose() {
+      liveHighlighters.delete(highlighter);
       if (timer !== null) {
         clearTimeout(timer);
         timer = null;
       }
       pending = null;
     },
+    /** Upgrade pass: the highlighter module landed after this element was
+     *  rendered; re-render the latest values now. */
+    rerenderLast() {
+      run();
+    },
   };
+  liveHighlighters.add(highlighter);
+  return highlighter;
 }
