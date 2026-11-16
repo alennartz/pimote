@@ -11,7 +11,7 @@
   import { abandonedBranchCounts } from '$lib/branch-tree.js';
   import { findInConversation, type FindMatch } from '$lib/conversation-find.js';
   import { previousUserAbove, type UserMessagePosition } from '$lib/transcript-navigation.js';
-  import { StickToBottom } from '$lib/stick-to-bottom.svelte.js';
+  import { STICK_TO_BOTTOM_OFFSET_PX, StickToBottom } from '$lib/stick-to-bottom.svelte.js';
   import { needsDraftPrompt, applyDraftChoice, type DraftChoice } from '$lib/draft-policy.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
@@ -291,7 +291,14 @@
     const fallbackIndex = match.messageKey.startsWith('message-') ? Number(match.messageKey.slice(8)) : -1;
     const fallbackEntry = fallbackIndex >= 0 ? displayEntries.find((entry) => entry.kind === 'message' && entry.messageIndex === fallbackIndex) : undefined;
     const key = messageEntryIds.get(match.messageKey) ?? fallbackEntry?.key;
-    scrollToEntry(key ?? null);
+    if (!key) return;
+    // A match above the window has no row to scroll to yet: mount its page first.
+    const index = displayEntries.findIndex((entry) => entry.key === key);
+    if (index >= 0 && index < windowStart) {
+      stick.stopScroll();
+      windowAnchor = { view: windowViewKey, key: displayEntries[Math.max(0, index - TRANSCRIPT_WINDOW_EXTEND_ROWS)].key };
+    }
+    void tick().then(() => scrollToEntry(key));
   }
 
   function isActiveFindEntry(entry: DisplayEntry): boolean {
@@ -375,6 +382,7 @@
 
   function onScroll() {
     updateStickyTargets();
+    scheduleWindowExtend();
   }
 
   type DisplayEntry =
@@ -421,6 +429,80 @@
   });
 
   let toolResultUsageIndex = $derived.by(() => indexToolResultUsage(session?.messages ?? []));
+
+  // ---- Rendered window ----
+  //
+  // Building a transcript row costs about a millisecond, so a view that mounts
+  // every row of a long session blocks the click that asked for it. The reader
+  // lands at the bottom, so a fresh view mounts the tail only, and older rows
+  // join when the reader scrolls up to reach them.
+  //
+  // The window start is a row key rather than an index: the tail slides
+  // forward as messages arrive, and a key-anchored start stays put. The anchor
+  // carries the view identity, so a view change needs no reset and a stale key
+  // from the previous transcript cannot anchor the new one.
+  const TRANSCRIPT_WINDOW_ROWS = 60;
+  const TRANSCRIPT_WINDOW_EXTEND_ROWS = 80;
+  const TRANSCRIPT_WINDOW_EXTEND_PX = 600;
+
+  let windowAnchor = $state<{ view: string; key: string } | null>(null);
+
+  const windowViewKey = $derived(childSurface ? `child:${childSurface.childSessionId}` : `root:${session?.sessionId ?? ''}`);
+  const tailWindowStart = $derived(Math.max(0, displayEntries.length - TRANSCRIPT_WINDOW_ROWS));
+  const windowStart = $derived.by(() => {
+    const anchor = windowAnchor;
+    if (!anchor || anchor.view !== windowViewKey) return tailWindowStart;
+    // A row that left the transcript (resync, replacement) unanchors the window.
+    const index = displayEntries.findIndex((entry) => entry.key === anchor.key);
+    return index >= 0 ? index : tailWindowStart;
+  });
+  const visibleEntries = $derived(displayEntries.slice(windowStart));
+
+  /** Mount the rows one window taller, keeping the reader's place: the rows
+   *  inserted above the viewport add exactly the height the scroll offset gains. */
+  function extendWindow(): void {
+    const sc = scrollContainer;
+    if (!sc || windowStart === 0) return;
+    const anchor = displayEntries[Math.max(0, windowStart - TRANSCRIPT_WINDOW_EXTEND_ROWS)];
+    if (!anchor) return;
+    const anchorTop = sc.scrollTop;
+    const anchorHeight = sc.scrollHeight;
+    // Growing the window is a browse into history: release the tail follow, or
+    // the content height change pulls the reader back to the bottom.
+    stick.stopScroll();
+    windowAnchor = { view: windowViewKey, key: anchor.key };
+    void tick().then(() => {
+      const element = scrollContainer;
+      if (!element) return;
+      const addedAbove = element.scrollHeight - anchorHeight;
+      if (addedAbove > 0) element.scrollTop = anchorTop + addedAbove;
+    });
+  }
+
+  /** Grow the window when the reader reaches the top of it. The gap to the
+   *  bottom is measured here rather than read from the follow loop: a frame can
+   *  run before that loop settles its escape, and a reader who lands at the top
+   *  in one jump must still reach the older rows. */
+  function maybeExtendWindow(): void {
+    const sc = scrollContainer;
+    if (!sc || windowStart === 0) return;
+    if (sc.scrollTop > TRANSCRIPT_WINDOW_EXTEND_PX) return;
+    // Still following the tail: the transcript slides, it does not grow.
+    if (sc.scrollHeight - sc.clientHeight - sc.scrollTop <= STICK_TO_BOTTOM_OFFSET_PX) return;
+    extendWindow();
+  }
+
+  let windowFrame: number | null = null;
+
+  /** Check on the next frame: the delay collapses a burst of scroll events into
+   *  one check. */
+  function scheduleWindowExtend(): void {
+    if (windowFrame !== null) return;
+    windowFrame = requestAnimationFrame(() => {
+      windowFrame = null;
+      maybeExtendWindow();
+    });
+  }
 
   function getAssistantRowUsage(entry: Extract<DisplayEntry, { kind: 'message' }>): AssistantRowUsage | null {
     if (entry.message.role !== 'assistant' || !session) return null;
@@ -486,6 +568,7 @@
   onDestroy(() => {
     clearInterval(activityInterval);
     if (stickyFrame !== null) cancelAnimationFrame(stickyFrame);
+    if (windowFrame !== null) cancelAnimationFrame(windowFrame);
     rowResizeObserver?.disconnect();
     rowResizeObserver = null;
   });
@@ -510,7 +593,7 @@
         </div>
       {/if}
 
-      {#each displayEntries as entry (entry.key)}
+      {#each visibleEntries as entry (entry.key)}
         <div class="transcript-row" class:find-active={isActiveFindEntry(entry)} use:registerRow={entry.key} data-message-key={entry.key}>
           {#if entry.kind === 'bash'}
             <BashExecution execution={entry.execution} onCancel={readOnly ? undefined : () => handleBashCancel(entry.execution.id)} />

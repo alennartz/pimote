@@ -101,9 +101,18 @@ it('bounds streaming transcript geometry work to one refresh per display frame',
   // Sticky navigation only needs user-row geometry, even after many layout notifications.
   const userRows = session.messages.filter((message) => message.role === 'user').length;
   expect(measurements).toBeLessThanOrEqual(userRows);
-  expect(target.querySelector('.sticky-preview')?.textContent).toContain('message 40');
+  // The preview names the last user row above the fold, among the rows the
+  // transcript mounts. The mounted set is the tail window, so read the expected
+  // label from the rows rather than from the session length.
+  const mountedPositions = new Map(rows.map((row, position) => [Number(row.dataset.messageKey?.slice(1)), position]));
+  const stickyLabelFor = (fold: number) =>
+    [...mountedPositions.keys()]
+      .filter((index) => index % 10 === 0 && mountedPositions.get(index)! < fold)
+      .sort((a, b) => mountedPositions.get(a)! - mountedPositions.get(b)!)
+      .at(-1);
+  expect(target.querySelector('.sticky-preview')?.textContent).toContain(`message ${stickyLabelFor(50)}`);
   firstVisibleRow = 30;
   container.dispatchEvent(new Event('scroll'));
   paint();
-  expect(target.querySelector('.sticky-preview')?.textContent).toContain('message 20');
+  expect(target.querySelector('.sticky-preview')?.textContent).toContain(`message ${stickyLabelFor(30)}`);
 });

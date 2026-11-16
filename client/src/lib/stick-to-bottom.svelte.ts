@@ -10,7 +10,8 @@
  * write synchronously inside the frame callback.
  *----------------------------------------------------------------------------------------------*/
 
-const STICK_TO_BOTTOM_OFFSET_PX = 70;
+/** Distance from the bottom (px) that still counts as following the tail. */
+export const STICK_TO_BOTTOM_OFFSET_PX = 70;
 const SIXTY_FPS_INTERVAL_MS = 1000 / 60;
 const RETAIN_ANIMATION_DURATION_MS = 350;
 
