@@ -1165,3 +1165,21 @@ describe('PimoteSessionManager — closeIdleSessionsAt', () => {
     expect(close).not.toHaveBeenCalled();
   });
 });
+
+describe('PimoteSessionManager — runtime teardown', () => {
+  it('reports teardown before it closes any session', async () => {
+    // The resume extension reads this while pi records the shutdown abort, so
+    // the flag must already be true when the first slot goes down.
+    const manager = await PimoteSessionManager.create(createTestConfig(), createMockPushService());
+    injectSession(manager, createFakeSlot({ id: 'live' }));
+    const seenDuringClose: boolean[] = [];
+    vi.spyOn(manager, 'closeSession').mockImplementation(async () => {
+      seenDuringClose.push(manager.isRuntimeTeardown());
+    });
+
+    expect(manager.isRuntimeTeardown()).toBe(false);
+    await manager.dispose();
+
+    expect(seenDuringClose).toEqual([true]);
+  });
+});

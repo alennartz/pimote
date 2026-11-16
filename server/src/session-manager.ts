@@ -38,6 +38,7 @@ import { completeFileRefs } from './file-references.js';
 import { makeSessionMeta } from './session-usage.js';
 import { LoginOrchestrator } from './login-orchestrator.js';
 import { createVoiceExtension } from './voice/index.js';
+import { createSessionResumeExtension } from './session-resume.js';
 import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
 import { loadManagerExtension } from './manager/attachment.js';
 import { discoverProvider, type BorrowedAgentSession, type SubagentPresentationProvider, type SubagentProviderDiscovery } from '@pimote/sdk/subagents';
@@ -794,6 +795,8 @@ export class PimoteSessionManager {
   private readonly extensionBindFlights = new WeakMap<AgentSession, Promise<void>>();
   /** Serialize runtime creation because each session registers providers on the shared ModelRuntime. */
   private modelRuntimeStartup: Promise<void> = Promise.resolve();
+  /** Set by `dispose()`: every slot below is going down mid-turn. */
+  private runtimeTeardown = false;
   private idleCheckHandle: ReturnType<typeof setInterval> | null = null;
   private gitBranchCheckHandle: ReturnType<typeof setInterval> | null = null;
   /** Call-active predicate from the latest startIdleCheck; an active voice
@@ -1248,6 +1251,9 @@ export class PimoteSessionManager {
     const fileDownloadFactory = this.fileDownloadFactory;
     const managerExtensionFactory = this.managerExtensionFactory;
     const pimoteDocsFactory = this.pimoteDocsFactory;
+    const sessionResumeFactory = createSessionResumeExtension({
+      isRuntimeTeardown: () => this.isRuntimeTeardown(),
+    });
 
     const factory: CreateAgentSessionRuntimeFactory = async ({ cwd, agentDir, sessionManager, sessionStartEvent }) => {
       // Services load extension factories before constructing AgentSession.
@@ -1275,6 +1281,7 @@ export class PimoteSessionManager {
           createToolSearchExtension(),
           createMcpExtension(),
           createSettingsWatchExtension(),
+          sessionResumeFactory,
         ];
         const eventBus = createEventBus();
         eventBusRef.current = eventBus;
@@ -1825,7 +1832,14 @@ export class PimoteSessionManager {
     return paths.filter((requested) => [...stillHosted].some((folder) => isWithin(resolve(folder), resolve(requested))));
   }
 
+  /** Whether every live slot is being torn down mid-turn. The session-resume
+   *  extension reads it to keep a shutdown-aborted transcript resumable. */
+  isRuntimeTeardown(): boolean {
+    return this.runtimeTeardown;
+  }
+
   async dispose(): Promise<void> {
+    this.runtimeTeardown = true;
     this.stopIdleCheck();
     const sessionIds = Array.from(this.sessions.keys());
     await Promise.all(sessionIds.map((id) => this.closeSession(id)));

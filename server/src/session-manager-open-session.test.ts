@@ -133,6 +133,7 @@ describe('PimoteSessionManager.openSession', () => {
       piExtensionFactories.toolSearch,
       piExtensionFactories.mcp,
       expect.any(Function),
+      expect.any(Function),
     ]);
   });
 
@@ -227,6 +228,7 @@ describe('PimoteSessionManager.openSession', () => {
       piExtensionFactories.toolSearch,
       piExtensionFactories.mcp,
       expect.any(Function),
+      expect.any(Function),
     ]);
     expect(serviceArgs[1]?.resourceLoaderOptions?.extensionFactories).toEqual([
       staticHostFactory,
@@ -234,6 +236,7 @@ describe('PimoteSessionManager.openSession', () => {
       piExtensionFactories.codemode,
       piExtensionFactories.toolSearch,
       piExtensionFactories.mcp,
+      expect.any(Function),
       expect.any(Function),
     ]);
   });
