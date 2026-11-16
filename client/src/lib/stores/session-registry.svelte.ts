@@ -667,6 +667,8 @@ export interface BashExecutionState {
 
 export interface PerSessionState {
   sessionId: string;
+  /** Path of the session's JSONL file on the server; undefined until pi persists it. */
+  sessionFile: string | undefined;
   /** Whether this session belongs in the reconnect restore set. */
   restorable: boolean;
   folderPath: string;
@@ -1232,6 +1234,7 @@ export class SessionRegistry {
   private createSessionState(sessionId: string, folderPath: string, projectName: string): PerSessionState {
     return {
       sessionId,
+      sessionFile: undefined,
       restorable: true,
       folderPath,
       projectName,
@@ -1986,6 +1989,7 @@ export class SessionRegistry {
         rebuilt.treeNavigationSummarizing = state.treeNavigationSummarizing ?? false;
         rebuilt.autoCompactionEnabled = state.autoCompactionEnabled;
         rebuilt.messageCount = state.messageCount;
+        rebuilt.sessionFile = state.sessionFile;
         rebuilt.sessionName = state.sessionName ?? null;
         rebuilt.projectedSubagentContent = hydrateSubagentContent(messages, resync.activeSubagentContent ?? []);
         rebuilt.messages = [...rebuilt.projectedSubagentContent.messages];
@@ -2707,6 +2711,7 @@ async function fetchFullSessionData(sessionId: string): Promise<void> {
       session.isCompacting = state.isCompacting;
       session.autoCompactionEnabled = state.autoCompactionEnabled;
       session.messageCount = state.messageCount;
+      session.sessionFile = state.sessionFile;
       session.sessionName = state.sessionName ?? null;
     }
 

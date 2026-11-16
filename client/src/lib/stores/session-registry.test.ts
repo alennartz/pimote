@@ -1063,7 +1063,7 @@ describe('SessionRegistry', () => {
           availableThinkingLevels: ['off', 'minimal', 'low', 'medium', 'high'],
           isStreaming: false,
           isCompacting: false,
-          sessionFile: undefined,
+          sessionFile: '/sessions/s1.jsonl',
           sessionId: 's1',
           autoCompactionEnabled: true,
           messageCount: 2,
@@ -1077,6 +1077,7 @@ describe('SessionRegistry', () => {
       expect(session.thinkingLevel).toBe('high');
       expect(session.autoCompactionEnabled).toBe(true);
       expect(session.messageCount).toBe(2);
+      expect(session.sessionFile).toBe('/sessions/s1.jsonl');
       expect(session.messages).toEqual(messages);
       expect(session.firstMessage).toBe('Hello');
       expect(session.draftText).toBe('keep my unsent text');

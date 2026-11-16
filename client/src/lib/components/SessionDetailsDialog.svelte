@@ -14,6 +14,7 @@
   import { updateStore } from '$lib/stores/update.svelte.js';
   import { getContextDisplay, getContextTone } from '$lib/session-summary.js';
   import CostBreakdownPopover from './CostBreakdownPopover.svelte';
+  import CopyButton from './CopyButton.svelte';
   import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
   import X from '@lucide/svelte/icons/x';
 
@@ -58,6 +59,18 @@
         : 'border-border bg-muted text-muted-foreground',
   );
 </script>
+
+{#snippet identityRow(label: string, value: string)}
+  <div class="border-border/60 flex items-start justify-between gap-3 border-t px-3 py-3">
+    <span class="text-muted-foreground shrink-0">{label}</span>
+    <div class="flex min-w-0 items-start justify-end gap-2">
+      <span class="min-w-0 text-right font-mono text-xs break-all select-all" title={value}>{value}</span>
+      <div class="shrink-0">
+        <CopyButton text={value} title={`Copy ${label.toLowerCase()}`} />
+      </div>
+    </div>
+  </div>
+{/snippet}
 
 <Dialog.Root bind:open>
   <Dialog.Trigger>
@@ -152,6 +165,13 @@
             <span class="text-muted-foreground">Git branch</span>
             <span class="max-w-[60%] min-w-0 truncate text-right font-medium">{session.gitBranch}</span>
           </div>
+        {/if}
+
+        {#if !child && session}
+          {@render identityRow('Session ID', session.sessionId)}
+          {#if session.sessionFile}
+            {@render identityRow('Session file', session.sessionFile)}
+          {/if}
         {/if}
 
         {#if child?.state.isStreaming || child?.state.isCompacting || session?.isStreaming || session?.isCompacting || session?.isNavigatingTree}
