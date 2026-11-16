@@ -3,6 +3,10 @@
 export const SESSION_CHIP_SLOP = 8;
 /** Gap between two chips, matching the rail's `gap-1.5`. */
 export const SESSION_CHIP_GAP = 6;
+/** Widest rail stretch a chip drag scrolls per animation frame. */
+export const SESSION_CHIP_MAX_SCROLL_STEP = 5;
+/** Pointer distance from a rail edge that starts auto-scrolling a drag. */
+export const SESSION_CHIP_SCROLL_EDGE = 34;
 
 export function isUpwardSessionPillSwipe(deltaX: number, deltaY: number): boolean {
   return deltaY < 0 && Math.abs(deltaY) > Math.abs(deltaX);
@@ -68,4 +72,58 @@ export function flowPasses(input: { index: number; count: number; deltaX: number
  *  Damped, so a refused pass reads as the row springing back. */
 export function flowResistance(leftover: number, factor = 0.22, limit = 22): number {
   return Math.sign(leftover) * Math.min(Math.abs(leftover) * factor, limit);
+}
+
+/** Chip geometry in the rail's content space, left edge and width. */
+export interface ChipBox {
+  left: number;
+  width: number;
+}
+
+/**
+ * The slot a dragged chip drops into: every other chip whose centre sits left
+ * of the dragged chip's centre goes before it.
+ */
+export function dropSlot(boxes: readonly ChipBox[], fromIndex: number, offset: number): number {
+  const from = boxes[fromIndex];
+  if (!from) return fromIndex;
+  const centre = from.left + from.width / 2 + offset;
+  let slot = 0;
+  boxes.forEach((box, index) => {
+    if (index === fromIndex) return;
+    if (box.left + box.width / 2 < centre) slot += 1;
+  });
+  return slot;
+}
+
+/** How far a chip shifts aside while the dragged chip hovers over a drop slot. */
+export function chipShift(index: number, fromIndex: number, slot: number, step: number): number {
+  if (index === fromIndex) return 0;
+  if (fromIndex < slot && index > fromIndex && index <= slot) return -step;
+  if (fromIndex > slot && index >= slot && index < fromIndex) return step;
+  return 0;
+}
+
+/** Where the insert-line marker sits for a drop slot, in content space. */
+export function insertLineX(boxes: readonly ChipBox[], fromIndex: number, slot: number, gap: number = SESSION_CHIP_GAP): number {
+  const from = boxes[fromIndex];
+  const target = boxes[slot];
+  if (!from || !target) return 0;
+  const x = slot <= fromIndex ? target.left - gap / 2 - 1.5 : target.left + target.width + gap / 2 - 1.5;
+  return Math.max(0, x);
+}
+
+/** Rail scroll speed for a dragged chip held near either rail edge. */
+export function autoScrollVelocity(
+  pointerX: number,
+  railLeft: number,
+  railRight: number,
+  edge: number = SESSION_CHIP_SCROLL_EDGE,
+  maxStep: number = SESSION_CHIP_MAX_SCROLL_STEP,
+): number {
+  const innerRight = railRight - edge;
+  const innerLeft = railLeft + edge;
+  if (pointerX > innerRight) return maxStep * Math.min(1, (pointerX - innerRight) / edge);
+  if (pointerX < innerLeft) return -maxStep * Math.min(1, (innerLeft - pointerX) / edge);
+  return 0;
 }

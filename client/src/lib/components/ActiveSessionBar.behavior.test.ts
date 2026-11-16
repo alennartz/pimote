@@ -46,6 +46,10 @@ function chipPointer(type: string, clientX: number, clientY: number): PointerEve
   return new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, pointerType: 'touch', clientX, clientY });
 }
 
+function mousePointer(type: string, clientX: number, clientY: number): PointerEvent {
+  return new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 2, pointerType: 'mouse', button: 0, clientX, clientY });
+}
+
 function railChips(): HTMLElement[] {
   return [...target.querySelectorAll<HTMLElement>('[data-session-chip]')];
 }
@@ -137,6 +141,30 @@ describe('active session bar behavior', () => {
 
     chip().click();
     expect(connection.send).toHaveBeenCalledWith({ type: 'view_session', sessionId: id, folderPath: '/w/alpha' });
+  });
+
+  it('reorders on a mouse drag and keeps the trailing click out of selection', async () => {
+    const dragSessions = ['drag-alpha', 'drag-beta', 'drag-gamma'];
+    try {
+      isolateChips(dragSessions);
+      render();
+      await tick();
+      stubChipGeometry(80);
+
+      const [, second] = railChips();
+      second.dispatchEvent(mousePointer('pointerdown', 100, 100));
+      second.dispatchEvent(mousePointer('pointermove', 10, 100));
+      second.dispatchEvent(mousePointer('pointerup', 10, 100));
+      // The browser follows a mouse press and release with a click.
+      second.click();
+      await tick();
+
+      expect(connection.send).toHaveBeenCalledWith({ type: 'reorder_sessions', order: [dragSessions[1], dragSessions[0], dragSessions[2]], baseVersion: 0 });
+      expect(connection.send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'view_session', sessionId: dragSessions[1] }));
+      expect(railChips().map((element) => element.dataset.sessionChip)).toEqual([dragSessions[1], dragSessions[0], dragSessions[2]]);
+    } finally {
+      releaseChips(dragSessions);
+    }
   });
 
   it('flows the row one chip per half width while the tray is open and pushes one order', async () => {

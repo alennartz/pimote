@@ -13,7 +13,20 @@
   import { getSessionPillSwipeHintShown, setSessionPillSwipeHintShown } from '$lib/stores/persistence.js';
   import { getSessionChipLabel, getSessionDisplayName } from '$lib/session-summary.js';
   import { getSessionPillIconColor } from '$lib/session-pill-status.js';
-  import { SESSION_CHIP_GAP, SESSION_CHIP_SLOP, flowPasses, flowResistance, resolveChipGesture, shouldOpenSessionPillActions, type ChipGesture } from './session-pill-gesture.js';
+  import {
+    SESSION_CHIP_GAP,
+    SESSION_CHIP_SLOP,
+    autoScrollVelocity,
+    chipShift,
+    dropSlot,
+    flowPasses,
+    flowResistance,
+    insertLineX,
+    resolveChipGesture,
+    shouldOpenSessionPillActions,
+    type ChipBox,
+    type ChipGesture,
+  } from './session-pill-gesture.js';
   import FolderNatureIcon, { folderIconKind } from './FolderNatureIcon.svelte';
 
   const uiQueue = getExtensionUiQueue();
@@ -24,6 +37,7 @@
   let deleteSessionId = $state<string | null>(null);
   let railEl = $state<HTMLDivElement | null>(null);
   let trackEl = $state<HTMLDivElement | null>(null);
+  let insertLineEl = $state<HTMLDivElement | null>(null);
 
   let hintStartTimer: ReturnType<typeof setTimeout> | null = null;
   let hintClearTimer: ReturnType<typeof setTimeout> | null = null;
@@ -49,6 +63,11 @@
   }
 
   function handlePillClick(sessionId: string) {
+    // The click that ends a mouse drag belongs to the drag, not a selection.
+    if (suppressChipClick) {
+      suppressChipClick = false;
+      return;
+    }
     if (mobileActionsSessionId === sessionId) {
       mobileActionsSessionId = null;
       return;
@@ -60,10 +79,32 @@
 
   /* ---------- chip order ---------- */
 
-  /** The rail gesture in flight: a flow swipe while the tray is open, or a
-   *  plain press that the browser turns into a click. */
+  /** A chip lifted by the mouse: it follows the pointer while its neighbours
+   *  shift aside, and the row writes one order when it drops. */
+  interface ChipDrag {
+    chip: HTMLElement;
+    id: string;
+    index: number;
+    startX: number;
+    startScroll: number;
+    /** Rail extent past the lift position; measured before any transform so a
+     *  moved chip cannot widen the scroll area under the drag. */
+    maxExtra: number;
+    scrollDelta: number;
+    velocity: number;
+    boxes: ChipBox[];
+    gap: number;
+    step: number;
+    pointerX: number;
+    frame: number | null;
+  }
+
+  /** The rail gesture in flight: a flow swipe while the tray is open, a mouse
+   *  drag with it closed, or a plain press that the browser turns into a
+   *  click. */
   interface RailPointer {
     pointerId: number;
+    mouse: boolean;
     chip: HTMLElement | null;
     startX: number;
     startY: number;
@@ -71,13 +112,121 @@
     mode: ChipGesture;
   }
 
+  let drag: ChipDrag | null = null;
   let pointer: RailPointer | null = null;
   let flowBaseX = 0;
   let flowLeftover = 0;
+  let suppressChipClick = false;
 
   function chipElements(): HTMLElement[] {
     if (!trackEl) return [];
     return [...trackEl.querySelectorAll<HTMLElement>('[data-session-chip]')];
+  }
+
+  function chipBoxes(elements: HTMLElement[]): ChipBox[] {
+    const origin = trackEl?.getBoundingClientRect().left ?? 0;
+    return elements.map((element) => {
+      const rect = element.getBoundingClientRect();
+      return { left: rect.left - origin, width: rect.width };
+    });
+  }
+
+  function lift(chip: HTMLElement, startX: number): void {
+    const elements = chipElements();
+    const index = elements.indexOf(chip);
+    if (!railEl || !trackEl || index < 0) return;
+    const boxes = chipBoxes(elements);
+    const gap = boxes.length > 1 ? Math.max(SESSION_CHIP_GAP, boxes[1].left - (boxes[0].left + boxes[0].width)) : SESSION_CHIP_GAP;
+    drag = {
+      chip,
+      id: chip.dataset.sessionChip ?? '',
+      index,
+      startX,
+      startScroll: railEl.scrollLeft,
+      maxExtra: Math.max(0, railEl.scrollWidth - railEl.clientWidth - railEl.scrollLeft),
+      scrollDelta: 0,
+      velocity: 0,
+      boxes,
+      gap,
+      step: boxes[index].width + gap,
+      pointerX: startX,
+      frame: null,
+    };
+    chip.classList.add('session-chip-dragging');
+    updateDrag(startX);
+    startDragLoop();
+  }
+
+  function updateDrag(clientX: number): void {
+    const active = drag;
+    if (!active || !railEl || !trackEl) return;
+    active.pointerX = clientX;
+    const offset = clientX - active.startX + active.scrollDelta;
+    trackEl.style.transform = active.scrollDelta ? `translateX(${-active.scrollDelta}px)` : '';
+    active.chip.style.transform = `translateX(${offset}px) scale(1.06)`;
+    const slot = dropSlot(active.boxes, active.index, offset);
+    chipElements().forEach((element, index) => {
+      if (index === active.index) return;
+      const shift = chipShift(index, active.index, slot, active.step);
+      element.style.transform = shift ? `translateX(${shift}px)` : '';
+    });
+    if (insertLineEl) {
+      insertLineEl.style.left = `${insertLineX(active.boxes, active.index, slot, active.gap)}px`;
+      insertLineEl.hidden = false;
+    }
+    const box = railEl.getBoundingClientRect();
+    active.velocity = autoScrollVelocity(clientX, box.left, box.right);
+  }
+
+  function startDragLoop(): void {
+    if (!drag || drag.frame !== null) return;
+    const step = () => {
+      if (!drag) return;
+      if (drag.velocity && railEl) {
+        const next = Math.min(drag.maxExtra, Math.max(-drag.startScroll, drag.scrollDelta + drag.velocity));
+        if (next !== drag.scrollDelta) {
+          drag.scrollDelta = next;
+          updateDrag(drag.pointerX);
+        }
+      }
+      drag.frame = requestAnimationFrame(step);
+    };
+    drag.frame = requestAnimationFrame(step);
+  }
+
+  function clearDragVisuals(): void {
+    for (const element of chipElements()) {
+      element.style.transform = '';
+      element.classList.remove('session-chip-dragging');
+    }
+    if (trackEl) trackEl.style.transform = '';
+    if (insertLineEl) insertLineEl.hidden = true;
+  }
+
+  /** Put a dragged chip back where it was — the gesture was refused or taken. */
+  function cancelDrag(): void {
+    if (!drag) return;
+    if (drag.frame !== null) cancelAnimationFrame(drag.frame);
+    clearDragVisuals();
+    if (railEl) railEl.scrollLeft = drag.startScroll;
+    drag = null;
+  }
+
+  function dropDrag(): boolean {
+    if (!drag) return false;
+    const { id, startScroll, scrollDelta, frame } = drag;
+    if (frame !== null) cancelAnimationFrame(frame);
+    // The drop slot was measured while the order stood still; the dragged
+    // chip's current position is the order's own.
+    const fromIndex = sessionRegistry.activeSessions.findIndex((session) => session.sessionId === id);
+    const target = drag.boxes.length > 0 ? dropSlot(drag.boxes, drag.index, drag.pointerX - drag.startX + drag.scrollDelta) : fromIndex;
+    clearDragVisuals();
+    drag = null;
+    if (railEl) railEl.scrollLeft = startScroll + scrollDelta;
+    if (fromIndex < 0 || fromIndex === target) return false;
+    suppressChipClick = true;
+    if (sessionRegistry.moveSession(fromIndex, target)) sessionRegistry.pushSessionOrder();
+    return true;
   }
 
   /**
@@ -215,19 +364,30 @@
   }
 
   /**
-   * The rail owns two gestures and nothing else. A sideways swipe with the tray
-   * open flows the row around the pinned chip. An upward swipe on a chip opens
-   * that chip's tray. A press that travels nowhere is left to the browser, so
-   * the chip's own click handler selects — the same click path the bar always
-   * had. Sideways movement with the tray closed is native rail scrolling.
+   * The rail owns three gestures and nothing else. A mouse drag on a chip with
+   * the tray closed reorders the row. A sideways swipe with the tray open flows
+   * the row around the pinned chip. An upward swipe on a chip opens that chip's
+   * tray. A press that travels nowhere is left to the browser, so the chip's own
+   * click handler selects — the same click path the bar always had. Touch never
+   * drags: its sideways movement with the tray closed is native rail scrolling.
    */
   function railPointerGesture(node: HTMLDivElement): () => void {
     const onDown = (event: PointerEvent) => {
       if (event.pointerType === 'mouse' && event.button !== 0) return;
       const target = event.target;
       const chip = target instanceof Element ? target.closest<HTMLElement>('[data-session-chip]') : null;
+      suppressChipClick = false;
+      if (event.pointerType === 'mouse' && chip) {
+        // The drag must keep receiving moves after the pointer leaves the chip.
+        try {
+          chip.setPointerCapture(event.pointerId);
+        } catch {
+          // Synthetic pointers cannot be captured.
+        }
+      }
       pointer = {
         pointerId: event.pointerId,
+        mouse: event.pointerType === 'mouse',
         chip,
         startX: event.clientX,
         startY: event.clientY,
@@ -237,12 +397,23 @@
     };
 
     const onMove = (event: PointerEvent) => {
+      if (drag) {
+        updateDrag(event.clientX);
+        return;
+      }
       if (!pointer || event.pointerId !== pointer.pointerId) return;
       const deltaX = event.clientX - pointer.startX;
       const deltaY = event.clientY - pointer.startY;
       if (!pointer.moved) {
         if (Math.hypot(deltaX, deltaY) <= SESSION_CHIP_SLOP) return;
         pointer.moved = true;
+        // A mouse needs no hold: moving it with a chip under the cursor lifts
+        // that chip for a reorder.
+        if (pointer.mouse && pointer.chip && !mobileActionsSessionId) {
+          lift(pointer.chip, pointer.startX);
+          updateDrag(event.clientX);
+          return;
+        }
         pointer.mode = resolveChipGesture({ trayOpen: !!mobileActionsSessionId, moved: true, deltaX, deltaY });
         if (pointer.mode === 'flow') {
           flowBaseX = pointer.startX + Math.sign(deltaX) * SESSION_CHIP_SLOP;
@@ -256,7 +427,14 @@
     const onUp = (event: PointerEvent) => {
       const active = pointer;
       pointer = null;
-      if (!active || event.pointerId !== active.pointerId) return;
+      if (!active || event.pointerId !== active.pointerId) {
+        cancelDrag();
+        return;
+      }
+      if (drag) {
+        dropDrag();
+        return;
+      }
       if (active.mode === 'flow') {
         endFlow();
         return;
@@ -270,7 +448,8 @@
     };
 
     const onCancel = () => {
-      if (pointer?.mode === 'flow') endFlow();
+      if (drag) cancelDrag();
+      else if (pointer?.mode === 'flow') endFlow();
       pointer = null;
     };
 
@@ -286,8 +465,16 @@
     };
   }
 
+  // The context menu ends the gesture: a drag must not outlive the menu that
+  // took the pointer.
+  $effect(() => {
+    if (!openContextMenuSessionId) return;
+    cancelDrag();
+  });
+
   // The tray decides: with it open the tray's chip pins at the rail centre and
-  // the row flows around it; with it closed the rail is one flat scrolling row.
+  // the row flows around it; with it closed the rail is one flat scrolling row
+  // that a mouse drag can reorder.
   $effect(() => {
     const trayId = mobileActionsSessionId;
     const ids = sessionRegistry.activeSessions.map((session) => session.sessionId);
@@ -515,6 +702,8 @@
             <span>New</span>
           </button>
         {/if}
+
+        <div class="session-chip-insert-line" bind:this={insertLineEl} hidden></div>
       </div>
     </div>
   </div>
@@ -558,6 +747,15 @@
     animation: session-pill-swipe-nudge 900ms ease-in-out;
   }
 
+  /* A mouse drag lifted this chip: it follows the pointer while the others
+     shift aside and the drop slot holds an insert line. */
+  :global(.session-chip-dragging) {
+    position: relative;
+    z-index: 6;
+    box-shadow: 0 10px 24px var(--shadow-color);
+    transition: box-shadow 160ms ease;
+  }
+
   /* Tray open: the tray's chip pins at the rail centre and the rest are laid
      out around it, gliding when a pass swaps neighbours. */
   :global(.session-chip-flow) {
@@ -572,5 +770,21 @@
     overflow: hidden;
     /* Flow mode owns the sideways gesture, so the browser must not claim it. */
     touch-action: none;
+  }
+
+  .session-chip-insert-line {
+    position: absolute;
+    top: 6px;
+    z-index: 7;
+    width: 3px;
+    height: 22px;
+    border-radius: 2px;
+    background: var(--chart-2);
+    box-shadow: 0 0 8px color-mix(in oklab, var(--chart-2) 80%, transparent);
+    pointer-events: none;
+  }
+
+  .session-chip-insert-line[hidden] {
+    display: none;
   }
 </style>
