@@ -332,7 +332,10 @@
             {/if}
           </div>
         {/if}
-        {#each visibleContent as block, i (blockKey(block, i))}
+        <!-- A subagent card owns its folded state, and each projection event
+             rebuilds its block object. Key the card by operation so data updates
+             replace its content instead of recreating it. -->
+        {#each visibleContent as block, i (block.type === 'subagent' ? `operation:${block.operationId}` : blockKey(block, i))}
           {@const blockStreaming = block.streaming ?? false}
           {#if block.type === 'subagent'}
             {@const operationToolCallId = block.placement && 'toolCallId' in block.placement ? block.placement.toolCallId : block.toolCallId}

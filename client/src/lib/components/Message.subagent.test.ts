@@ -158,6 +158,42 @@ describe('subagent transcript cards', () => {
     expect(completedTask?.querySelector('code')?.textContent).toBe('tests');
   });
 
+  it('keeps a settled spawn card folded when its data updates', async () => {
+    const callbacks: ((entries: IntersectionObserverEntry[]) => void)[] = [];
+    class RecordingIntersectionObserver {
+      callback: IntersectionObserverCallback;
+      constructor(callback: IntersectionObserverCallback) {
+        this.callback = callback;
+        callbacks.push((entries) => callback(entries, this as unknown as IntersectionObserver));
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+      takeRecords() {
+        return [];
+      }
+    }
+    const nativeObserver = globalThis.IntersectionObserver;
+    globalThis.IntersectionObserver = RecordingIntersectionObserver as unknown as typeof IntersectionObserver;
+
+    const delegation = (task: string): SubagentContent => operation({ operation: 'delegation', parameters: {}, result: { children: [{ path: ['team', 'worker'], task }] } });
+    const { target, update } = await render(delegation('Review the config.'));
+    expect(card(target, 'delegation').querySelector('.subagent-body')).not.toBeNull();
+
+    // The reader scrolled the settled card out of view: it folds.
+    const report = (isIntersecting: boolean) => callbacks[callbacks.length - 1]([{ isIntersecting }] as unknown as IntersectionObserverEntry[]);
+    report(true);
+    report(false);
+    await tick();
+    expect(card(target, 'delegation').querySelector('.subagent-body')).toBeNull();
+
+    // A projection event replaces the block object with the same operation.
+    await update(delegation('Review the config and the tests.'));
+
+    expect(card(target, 'delegation').querySelector('.subagent-body')).toBeNull();
+    globalThis.IntersectionObserver = nativeObserver;
+  });
+
   it('bounds long spawn tasks and offers show-more', async () => {
     const task = Array.from({ length: 25 }, (_, index) => `Task line ${index + 1}`).join('\n');
     const { target } = await render(
