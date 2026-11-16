@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ansiToHtml } from '$lib/ansi-to-html.js';
+  import CollapsibleText from './CollapsibleText.svelte';
 
   let {
     text,
@@ -19,10 +20,12 @@
     renderAnsi?: boolean;
   } = $props();
 
-  // Auto-expand while streaming so users can follow live output. Bounded
-  // callers keep the same height limit after streaming ends.
-  let expanded = $derived(streaming);
+  // Auto-expand while streaming so users can follow live output. The block
+  // stays open afterwards and folds the first time it fully scrolls out of
+  // view, matching the other streaming blocks.
+  let expanded = $state(false);
   let contentEl: HTMLPreElement | undefined = $state();
+  let bodyEl: HTMLElement | undefined = $state();
 
   let lines = $derived(text.split('\n'));
   // Counted without materializing the line array: output deltas arrive many
@@ -36,10 +39,7 @@
     for (let index = text.indexOf('\n'); index !== -1; index = text.indexOf('\n', index + 1)) count += 1;
     return count;
   });
-  let visualOverflow = $state(false);
-  let needsCollapse = $derived(!streaming && (lineCount > maxCollapsedLines || visualOverflow));
-  let clamped = $derived(needsCollapse && !expanded);
-  let scrollable = $derived(!clamped && (bounded || (expanded && needsCollapse)));
+  let needsCollapse = $derived(!streaming && lineCount > maxCollapsedLines);
   let displayText = $derived(needsCollapse && !expanded ? lines.slice(0, maxCollapsedLines).join('\n') : text);
 
   // Live deltas must not re-convert and re-replace the whole output per
@@ -81,53 +81,35 @@
     if (renderTimer !== null) clearTimeout(renderTimer);
   });
 
-  // A long unbroken line can exceed the visual height without increasing the
-  // logical line count. Measure bounded results so they get the same collapse
-  // affordance as multiline output.
+  // Auto-scroll to bottom while streaming
   $effect(() => {
-    const el = contentEl;
-    if (!bounded || !el) {
-      visualOverflow = false;
-      return;
-    }
-
-    // Re-measure when rendered content or expansion changes. Svelte runs
-    // effects after the DOM update, so scrollHeight reflects what is shown.
-    void rendered;
-    void expanded;
-    void clamped;
-    const updateOverflow = () => {
-      visualOverflow = el.scrollHeight > el.clientHeight;
-    };
-    updateOverflow();
-
-    if (typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(updateOverflow);
-    observer.observe(el);
-    return () => observer.disconnect();
-  });
-
-  // Auto-scroll to bottom while streaming and expanded
-  $effect(() => {
-    if (streaming && expanded && contentEl) {
+    if (streaming && bodyEl) {
       // Track rendered content so the scroll follows the throttle cadence.
       void rendered;
-      contentEl.scrollTop = contentEl.scrollHeight;
+      bodyEl.scrollTop = bodyEl.scrollHeight;
     }
   });
 </script>
 
 <div class="bounded-output" class:accent-purple={accent === 'purple'}>
   <!-- ansiToHtml escapes input text before creating fixed style spans. -->
-  <!-- eslint-disable svelte/no-at-html-tags -->
-  <pre class="bounded-output-text" class:clamped class:scrollable bind:this={contentEl}>{#if renderAnsi}{@html ansiToHtml(rendered ?? displayText)}{:else}{rendered ??
-        displayText}{/if}</pre>
-  <!-- eslint-enable svelte/no-at-html-tags -->
-  {#if needsCollapse}
-    <button class="bounded-output-toggle" onclick={() => (expanded = !expanded)}>
-      {expanded ? 'Show less' : `Show more… (${lineCount} lines)`}
-    </button>
-  {/if}
+  <CollapsibleText
+    bind:expanded
+    bind:bodyEl
+    {needsCollapse}
+    {lineCount}
+    collapsedHeight="160px"
+    alwaysCapped={bounded}
+    detectOverflow={bounded && !streaming}
+    autoExpand={streaming}
+    autoCollapseOffscreen
+  >
+    {#snippet body()}
+      <!-- eslint-disable svelte/no-at-html-tags -->
+      <pre class="bounded-output-text" bind:this={contentEl}>{#if renderAnsi}{@html ansiToHtml(rendered ?? displayText)}{:else}{rendered ?? displayText}{/if}</pre>
+      <!-- eslint-enable svelte/no-at-html-tags -->
+    {/snippet}
+  </CollapsibleText>
 </div>
 
 <style>
@@ -151,32 +133,11 @@
     font-variant-ligatures: none;
   }
 
-  .bounded-output-text.clamped {
-    max-height: 160px;
-    overflow: hidden;
-  }
-
-  .bounded-output-text.scrollable {
-    max-height: 160px;
-    overflow-y: auto;
-  }
-
-  .bounded-output-toggle {
-    display: inline-block;
-    margin-top: 4px;
-    padding: 0;
-    background: none;
-    border: none;
+  .bounded-output :global(.collapse-toggle) {
     color: var(--_accent);
-    font-size: 0.75rem;
-    cursor: pointer;
-    text-decoration: underline;
-    text-underline-offset: 2px;
-    opacity: 0.8;
   }
 
-  .bounded-output-toggle:hover {
-    opacity: 1;
+  .bounded-output :global(.collapse-toggle:hover) {
     color: var(--foreground);
   }
 </style>

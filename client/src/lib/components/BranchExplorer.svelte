@@ -559,7 +559,7 @@
   }
   .preview.preview-expanded {
     display: block;
-    max-height: 11rem;
+    max-height: min(50dvh, 20rem);
     overflow-y: auto;
     -webkit-line-clamp: unset;
     line-clamp: unset;

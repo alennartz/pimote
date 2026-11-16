@@ -167,7 +167,8 @@ describe('subagent transcript cards', () => {
         result: { children: [{ path: ['worker'], task }] },
       }),
     );
-    expect(card(target, 'delegation').querySelector('.subagent-text-section .code-block-toggle')?.textContent).toContain('Show more');
+    const showMore = Array.from(card(target, 'delegation').querySelectorAll('button')).find((button) => button.textContent?.includes('Show more'));
+    expect(showMore).toBeDefined();
   });
 
   it('uses one bounded Markdown section for awaited output after completion or message interruption', async () => {

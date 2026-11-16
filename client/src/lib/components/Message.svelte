@@ -5,6 +5,7 @@
   import ToolCall from './ToolCall.svelte';
   import ImagePreview from './ImagePreview.svelte';
   import BoundedOutput from './BoundedOutput.svelte';
+  import CollapsibleText from './CollapsibleText.svelte';
   import BashExecution, { type FinalBashExecutionMessage } from './BashExecution.svelte';
   import TtsButton from './TtsButton.svelte';
   import CopyButton from './CopyButton.svelte';
@@ -228,14 +229,11 @@
             {/if}
           </button>
           <div class="skill-content">
-            <div class="skill-text-container" class:skill-text-collapsed={skillNeedsCollapse && !skillExpanded} class:skill-text-expanded={skillNeedsCollapse && skillExpanded}>
-              <TextBlock text={skillBlock.body} />
-            </div>
-            {#if skillNeedsCollapse && !skillExpanded}
-              <button class="skill-toggle" onclick={() => (skillExpanded = true)}>Show more…</button>
-            {:else if skillNeedsCollapse && skillExpanded}
-              <button class="skill-toggle" onclick={() => (skillExpanded = false)}>Show less</button>
-            {/if}
+            <CollapsibleText bind:expanded={skillExpanded} needsCollapse={skillNeedsCollapse} collapsedHeight="65px" fade>
+              {#snippet body()}
+                <TextBlock text={skillBlock.body} />
+              {/snippet}
+            </CollapsibleText>
           </div>
         </div>
         {#if skillBlock.after}
@@ -395,18 +393,11 @@
             {#if streaming}
               <BoundedOutput text={userText} {streaming} accent="purple" />
             {:else}
-              <div
-                class="custom-text-container"
-                class:custom-text-collapsed={customNeedsCollapse && !customExpanded}
-                class:custom-text-expanded={customNeedsCollapse && customExpanded}
-              >
-                <TextBlock text={userText} />
-              </div>
-              {#if customNeedsCollapse && !customExpanded}
-                <button class="custom-toggle" onclick={() => (customExpanded = true)}> Show more… </button>
-              {:else if customNeedsCollapse && customExpanded}
-                <button class="custom-toggle" onclick={() => (customExpanded = false)}> Show less </button>
-              {/if}
+              <CollapsibleText bind:expanded={customExpanded} needsCollapse={customNeedsCollapse} collapsedHeight="200px" fade>
+                {#snippet body()}
+                  <TextBlock text={userText} />
+                {/snippet}
+              </CollapsibleText>
             {/if}
           </div>
         {/if}
@@ -724,48 +715,10 @@
   .skill-content {
     padding: 0 10px 8px;
     font-size: 0.85rem;
-  }
-
-  .skill-text-container {
-    position: relative;
-  }
-
-  .skill-text-collapsed {
-    max-height: 65px;
-    overflow: hidden;
-  }
-
-  .skill-text-collapsed::after {
-    content: '';
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    height: 32px;
-    pointer-events: none;
-    background: linear-gradient(to bottom, transparent, color-mix(in oklch, var(--skill-surface) 95%, transparent));
-  }
-
-  .skill-text-expanded {
-    max-height: 500px;
-    overflow-y: auto;
-  }
-
-  .skill-toggle {
-    display: inline-block;
-    margin-top: 4px;
-    padding: 0;
-    background: none;
-    border: none;
-    color: color-mix(in oklch, var(--skill-foreground) 92%, black);
-    font-size: 0.75rem;
-    cursor: pointer;
-    text-decoration: underline;
-    text-underline-offset: 2px;
-  }
-
-  .skill-toggle:hover {
-    color: var(--skill-foreground-hover);
+    --collapse-fade: color-mix(in oklch, var(--skill-surface) 95%, transparent);
+    --collapse-fade-height: 32px;
+    --collapse-toggle-color: color-mix(in oklch, var(--skill-foreground) 92%, black);
+    --collapse-toggle-hover: var(--skill-foreground-hover);
   }
 
   .skill-after {
@@ -819,48 +772,10 @@
   .custom-content {
     padding: 0 10px 8px;
     font-size: 0.85rem;
-  }
-
-  .custom-text-container {
-    position: relative;
-  }
-
-  .custom-text-collapsed {
-    max-height: 200px;
-    overflow: hidden;
-  }
-
-  .custom-text-collapsed::after {
-    content: '';
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    height: 48px;
-    pointer-events: none;
-    background: linear-gradient(to bottom, transparent, color-mix(in oklch, var(--custom-surface) 95%, transparent));
-  }
-
-  .custom-text-expanded {
-    max-height: 500px;
-    overflow-y: auto;
-  }
-
-  .custom-toggle {
-    display: inline-block;
-    margin-top: 4px;
-    padding: 0;
-    background: none;
-    border: none;
-    color: color-mix(in oklch, var(--custom-foreground) 92%, black);
-    font-size: 0.75rem;
-    cursor: pointer;
-    text-decoration: underline;
-    text-underline-offset: 2px;
-  }
-
-  .custom-toggle:hover {
-    color: var(--custom-foreground-hover);
+    --collapse-fade: color-mix(in oklch, var(--custom-surface) 95%, transparent);
+    --collapse-fade-height: 48px;
+    --collapse-toggle-color: color-mix(in oklch, var(--custom-foreground) 92%, black);
+    --collapse-toggle-hover: var(--custom-foreground-hover);
   }
 
   /* ---- Mobile: stack icon row above body, open menu to the right ---- */

@@ -29,7 +29,7 @@ describe('tool results', () => {
     target.querySelector<HTMLButtonElement>('.tool-header')?.click();
     await tick();
 
-    expect(target.querySelector('pre.bounded-output-text')?.classList.contains('scrollable')).toBe(true);
+    expect(target.querySelector('.tool-content [data-state]')?.getAttribute('data-state')).toBe('capped');
   });
 
   it.each(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp'])('renders live read output for %s', async (mimeType) => {

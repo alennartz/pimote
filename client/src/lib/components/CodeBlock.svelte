@@ -9,15 +9,14 @@
    *   - `markdown` — rendered through `TextBlock` (which inherits incremental
    *                  fenced-code highlighting for free).
    *
-   * Owns the collapse + copy chrome and the auto-expand-while-streaming
-   * behavior for both modes. Rather than re-clamping the moment streaming ends,
-   * a settled block stays expanded until it first fully scrolls out of view.
-   * In both modes, the copy button copies `content` verbatim (raw source,
-   * never rendered text),
-   * and a show-more/collapse wrapper bounds long content.
+   * Owns the copy chrome and the auto-expand-while-streaming behavior for both
+   * modes. Instead of re-clamping the moment streaming ends, a settled block
+   * stays expanded until it first fully scrolls out of view. In both modes, the
+   * copy button copies `content` verbatim (raw source, never rendered text),
+   * and `CollapsibleText` bounds long content.
    */
   import { createIncrementalHighlighter } from '$lib/code-highlight.js';
-  import { observeFullyOffscreen } from '$lib/auto-collapse.js';
+  import CollapsibleText from './CollapsibleText.svelte';
   import TextBlock from './TextBlock.svelte';
   import Copy from '@lucide/svelte/icons/copy';
   import Check from '@lucide/svelte/icons/check';
@@ -46,34 +45,9 @@
 
   let codeEl: HTMLElement | undefined = $state();
   let bodyEl: HTMLElement | undefined = $state();
-  let rootEl: HTMLElement | undefined = $state();
 
   let lineCount = $derived(content.split('\n').length);
   let needsCollapse = $derived(lineCount > MAX_COLLAPSED_LINES);
-
-  // Auto-expand while streaming (ThinkingBlock / ToolCall-edit pattern). Once
-  // streaming settles the block stays expanded and only collapses the first
-  // time it fully scrolls out of view (see the delayed-collapse effect below),
-  // instead of re-clamping immediately.
-  let expanded = $state(false);
-
-  $effect(() => {
-    if (streaming) {
-      expanded = true;
-    }
-  });
-
-  $effect(() => {
-    if (streaming) return;
-    if (!expanded) return;
-    if (!rootEl) return;
-    return observeFullyOffscreen(rootEl, () => {
-      expanded = false;
-    });
-  });
-
-  let clamped = $derived(needsCollapse && !expanded);
-  let scrollable = $derived(needsCollapse && expanded);
 
   // Code mode: drive the <code> element via the throttled highlighter.
   const highlighter = createIncrementalHighlighter();
@@ -101,7 +75,8 @@
   // highlighter, so we'd scroll against a stale height. Observe the rendered
   // content's actual size instead and pin to the bottom whenever it grows.
   $effect(() => {
-    if (!streaming || !scrollable || !bodyEl) return;
+    if (!streaming || !bodyEl) return;
+    if (typeof ResizeObserver === 'undefined') return;
     const body = bodyEl;
     const target = body.firstElementChild ?? body;
     const observer = new ResizeObserver(() => {
@@ -130,7 +105,7 @@
   }
 </script>
 
-<div class="code-block" data-mode={mode} bind:this={rootEl}>
+<div class="code-block" data-mode={mode}>
   <button type="button" class="copy-button code-copy-btn" class:copied aria-label={copied ? 'Copied' : copyLabel} title={copyLabel} onclick={copy}>
     {#if copied}
       <Check size={14} />
@@ -139,19 +114,17 @@
     {/if}
   </button>
 
-  {#if mode === 'code'}
-    <pre class="code-block-body code-block-code" class:clamped class:scrollable bind:this={bodyEl}><code class="hljs" bind:this={codeEl}></code></pre>
-  {:else}
-    <div class="code-block-body code-block-markdown" class:clamped class:scrollable bind:this={bodyEl}>
-      <TextBlock text={content} {streaming} />
-    </div>
-  {/if}
-
-  {#if needsCollapse}
-    <button class="code-block-toggle" onclick={() => (expanded = !expanded)}>
-      {expanded ? 'Show less' : `Show more… (${lineCount} lines)`}
-    </button>
-  {/if}
+  <CollapsibleText bind:bodyEl {needsCollapse} {lineCount} collapsedHeight="calc(20 * 1.5 * 0.875em + 24px)" autoExpand={streaming} autoCollapseOffscreen>
+    {#snippet body()}
+      {#if mode === 'code'}
+        <pre class="code-block-body code-block-code"><code class="hljs" bind:this={codeEl}></code></pre>
+      {:else}
+        <div class="code-block-body code-block-markdown">
+          <TextBlock text={content} {streaming} />
+        </div>
+      {/if}
+    {/snippet}
+  </CollapsibleText>
 </div>
 
 <style>
@@ -159,11 +132,13 @@
     position: relative;
   }
 
-  .code-block-body {
-    margin: 0;
+  .code-block :global(.collapse-body) {
     border-radius: 0;
     background: var(--surface-sunken);
-    border: none;
+  }
+
+  .code-block-body {
+    margin: 0;
     padding: 12px;
     padding-right: 56px;
   }
@@ -186,39 +161,10 @@
     white-space: pre;
   }
 
-  .code-block-body.clamped {
-    max-height: calc(20 * 1.5 * 0.875em + 24px);
-    overflow: hidden;
-  }
-
-  .code-block-body.scrollable {
-    max-height: 400px;
-    overflow-y: auto;
-  }
-
   .code-copy-btn {
     position: absolute;
     top: 6px;
     right: 6px;
     z-index: 1;
-  }
-
-  .code-block-toggle {
-    display: inline-block;
-    margin-top: 4px;
-    padding: 0;
-    background: none;
-    border: none;
-    color: var(--muted-foreground);
-    font-size: 0.75rem;
-    cursor: pointer;
-    text-decoration: underline;
-    text-underline-offset: 2px;
-    opacity: 0.8;
-  }
-
-  .code-block-toggle:hover {
-    opacity: 1;
-    color: var(--foreground);
   }
 </style>

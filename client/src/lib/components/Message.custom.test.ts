@@ -63,7 +63,7 @@ describe('custom messages', () => {
     const header = target.querySelector<HTMLButtonElement>('.custom-header');
     const showMore = Array.from(target.querySelectorAll('button')).find((button) => button.textContent?.includes('Show more'));
     expect(showMore).toBeDefined();
-    expect(target.querySelector('.custom-text-collapsed')).not.toBeNull();
+    expect(target.querySelector('.custom-content [data-state="clamped"]')).not.toBeNull();
 
     header?.click();
     await tick();
@@ -73,12 +73,12 @@ describe('custom messages', () => {
     header?.click();
     await tick();
 
-    expect(target.querySelector('.custom-text-collapsed')).not.toBeNull();
+    expect(target.querySelector('.custom-content [data-state="clamped"]')).not.toBeNull();
     const restoredShowMore = Array.from(target.querySelectorAll('button')).find((button) => button.textContent?.includes('Show more'));
     restoredShowMore?.click();
     await tick();
 
-    expect(target.querySelector('.custom-text-expanded')).not.toBeNull();
+    expect(target.querySelector('.custom-content [data-state="expanded"]')).not.toBeNull();
     header?.click();
     await tick();
 

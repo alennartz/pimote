@@ -182,7 +182,7 @@
     padding: 8px 12px;
     background: var(--surface-sunken);
     border-top: 1px solid var(--border);
-    max-height: 300px;
+    max-height: min(70dvh, 40rem);
     overflow-y: auto;
   }
 

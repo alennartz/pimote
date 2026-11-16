@@ -97,7 +97,7 @@ describe('BashExecution presentation contract', () => {
     const output = 'A'.repeat(10_000);
     const view = render(runningExecution({ output, status: 'complete', result: { output, exitCode: 0, cancelled: false, truncated: false } }));
 
-    expect(view.target.querySelector('pre.bounded-output-text')?.classList.contains('scrollable')).toBe(true);
+    expect(view.target.querySelector('.bash-output [data-state]')?.getAttribute('data-state')).toBe('capped');
 
     view.destroy();
   });
