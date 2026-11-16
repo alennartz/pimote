@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Wire Protocol Performance Review — Pimote</title>
+    <style>
+      :root {
+        --accent: #4f6df5;
+        --bg: #ffffff;
+        --bg-soft: #f6f7f9;
+        --text: #1c2430;
+        --text-muted: #5b6675;
+        --border: #e3e7ec;
+        --code-bg: #f2f4f7;
+        --bad: #d64545;
+        --good: #5b8a3c;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --accent: #8fa2ff;
+          --bg: #14171c;
+          --bg-soft: #1b2027;
+          --text: #e4e8ee;
+          --text-muted: #9aa4b1;
+          --border: #2a313a;
+          --code-bg: #1e242c;
+          --bad: #ff7b7b;
+          --good: #9fd07c;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          16.5px/1.65 system-ui,
+          -apple-system,
+          'Segoe UI',
+          Roboto,
+          sans-serif;
+      }
+      .wrap {
+        max-width: 76ch;
+        margin: 0 auto;
+        padding: 2.5rem 1.25rem 5rem;
+      }
+      h1 {
+        font-size: 1.7rem;
+        line-height: 1.25;
+        margin: 0 0 0.35rem;
+      }
+      .dek {
+        color: var(--text-muted);
+        margin: 0 0 0.3rem;
+      }
+      .meta {
+        color: var(--text-muted);
+        font-size: 0.85rem;
+        margin-bottom: 1.8rem;
+      }
+      h2 {
+        font-size: 1.22rem;
+        margin: 2.4rem 0 0.7rem;
+        padding-bottom: 0.3rem;
+        border-bottom: 1px solid var(--border);
+      }
+      h3 {
+        font-size: 1.02rem;
+        margin: 1.7rem 0 0.4rem;
+      }
+      p {
+        margin: 0.6rem 0;
+      }
+      code {
+        font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+      }
+      p code,
+      li code,
+      td code {
+        background: var(--code-bg);
+        border-radius: 4px;
+        padding: 0.05rem 0.3rem;
+        font-size: 0.85em;
+      }
+      pre {
+        background: var(--code-bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 0.7rem 0.9rem;
+        overflow-x: auto;
+        font-size: 0.84rem;
+        line-height: 1.5;
+      }
+      .item {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.9rem 1.1rem;
+        margin: 0.9rem 0;
+        background: var(--bg-soft);
+      }
+      .item.bad {
+        border-left: 4px solid var(--bad);
+      }
+      .item.good {
+        border-left: 4px solid var(--good);
+      }
+      .tag {
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+        display: block;
+        margin-bottom: 0.25rem;
+      }
+      .loc {
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 0.8rem;
+        color: var(--text-muted);
+        word-break: break-all;
+      }
+      .fix {
+        margin: 0.45rem 0 0;
+        font-size: 0.95rem;
+      }
+      .fix strong {
+        color: var(--good);
+      }
+      ul.clean {
+        padding-left: 1.2rem;
+      }
+      ul.clean li {
+        margin: 0.3rem 0;
+      }
+      .callout {
+        border: 1px solid var(--border);
+        border-left: 4px solid var(--accent);
+        background: var(--bg-soft);
+        border-radius: 8px;
+        padding: 0.9rem 1.1rem;
+        margin: 1.2rem 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Wire Protocol Performance Review</h1>
+      <p class="dek">What a protocol-change allowance would buy: the egregious items, the genuinely low-hanging fixes, and what is already right.</p>
+      <p class="meta">
+        Scope: <code>shared/src/protocol.ts</code>, server wire paths (<code>ws-handler</code>, <code>session-surface</code>, <code>event-buffer</code>), client consumption
+      </p>
+
+      <div class="callout">
+        <strong>Verdict:</strong> the protocol's shape is sound — cursors, epochs, mid-run resync partials, and windowed folder listings are all well designed. The egregious items
+        are about <em>payload</em>, not shape: megabyte-scale inline base64 images inside transcript content, whole-session snapshots in a single JSON frame, and zero wire
+        compression. The cheapest structural win is server-side delta micro-batching, which converts the per-frame fixed costs the client audit could only mitigate.
+      </div>
+
+      <h2>Egregious</h2>
+
+      <div class="item bad">
+        <span class="tag">1 · Payload</span>
+        <strong>Inline base64 images ride inside transcript content</strong>
+        <div class="loc">shared/src/protocol.ts:184 — MAX_IMAGE_BASE64_LENGTH = 4 MB</div>
+        <p>
+          Prompt images and tool-result images travel as base64 data-URL strings inside <code>PimoteCommand</code> and inside <code>PimoteAgentMessage</code> content blocks. Every
+          image is then replayed on every <code>open_session</code>, copied into every snapshot and replay buffer entry, held in the client's reactive session state, and re-parsed
+          by the browser per render as a data URL. One 4 MB image inflates the socket frame by 4 MB of base64 plus the JSON escaping around it — and it re-ships on each attach and
+          resync.
+        </p>
+        <p class="fix">
+          <strong>Fix:</strong> a small HTTP upload endpoint returning a content address, with transcript blocks carrying <code>{ type: 'image', ref }</code>; the client fetches
+          bytes over HTTP (cacheable, streamable, out of the replay path). This is the single biggest wire-size lever the protocol change unlocks.
+        </p>
+      </div>
+
+      <div class="item bad">
+        <span class="tag">2 · Payload</span>
+        <strong>Whole-session snapshot in one JSON frame</strong>
+        <div class="loc">server/src/ws-handler.ts:1294 — <code>{ state, messages }</code>; full_resync same shape</div>
+        <p>
+          Open, reconnect-without-valid-cursor, and mid-run resync all deliver the complete transcript as one text frame. The client <code>JSON.parse</code>s it synchronously on
+          the main thread; a long session means a multi-megabyte parse stall at exactly the moment the user is waiting for first paint. Reconnect restores fan out one full snapshot
+          per previously-open session, in parallel.
+        </p>
+        <p class="fix">
+          <strong>Fix:</strong> page the transcript the way folders already are — snapshot returns state + the last N messages + a fetch-more cursor; earlier history loads on
+          demand (the client already renders append-windowed lists). Chunking the frame also bounds the parse stall.
+        </p>
+      </div>
+
+      <div class="item bad">
+        <span class="tag">3 · Transport</span>
+        <strong>No wire compression</strong>
+        <div class="loc">server/src/server.ts:253 — <code>new WebSocketServer({ noServer: true })</code>, permessage-deflate unset</div>
+        <p>
+          Transcript JSON is highly repetitive and compresses roughly 5–10×. Today every replay frame crosses the WAN at full size. The CPU tradeoff that justifies leaving it off
+          on a LAN does not hold for the PWA-over-internet case this project targets.
+        </p>
+        <p class="fix"><strong>Fix:</strong> enable <code>perMessageDeflate</code> (config-gated, off-by-default on loopback if desired). One line; no protocol change at all.</p>
+      </div>
+
+      <h2>Low-hanging with protocol changes</h2>
+
+      <div class="item">
+        <span class="tag">4 · Frame density</span>
+        <strong>Micro-batch streaming deltas</strong>
+        <p>
+          Every text delta, tool-output chunk, bash chunk, and subagent content delta is its own frame, sent the moment it is mapped. A dense turn — one subagent run plus bash —
+          produces hundreds of frames per second, and each frame costs a server send plus a client <code>JSON.parse</code>, dispatch, and Svelte flush. The client audit fixed the
+          per-event <em>work</em>; the per-event <em>overhead</em> lives here.
+        </p>
+        <p class="fix">
+          <strong>Fix:</strong> coalesce per session on a 16–33 ms tick into one <code>{ type: 'events', events: [...] }</code> envelope. Frame count drops 5–20×; latency cost is
+          one tick. Client keeps single-event handling for everything else, so the change is additive.
+        </p>
+      </div>
+
+      <div class="item">
+        <span class="tag">5 · Round-trips</span>
+        <strong>Piggyback meta and commands on events</strong>
+        <p>
+          The client requests <code>get_session_meta</code> after <code>agent_end</code>, again after <code>turn_end</code> (the same turn, so two round-trips carrying the same
+          answer), and after compaction; <code>get_commands</code> adds another round-trip on every session open. <code>updateMeta</code> then loops every session sharing the
+          folder.
+        </p>
+        <p class="fix">
+          <strong>Fix:</strong> attach a compact meta block (context usage, lifetime cost, branch) to <code>agent_end</code>, and a commands list or version to
+          <code>open_session</code>. The client drops all three request paths.
+        </p>
+      </div>
+
+      <div class="item">
+        <span class="tag">6 · Server CPU</span>
+        <strong>Serialize fan-out once, and stop stringify-scanning snapshots</strong>
+        <div class="loc">
+          ws-handler.ts:2475 sends <code>JSON.stringify(event)</code> per client; session-surface.ts:311 stringifies every snapshot message per <code>message_end</code> during an
+          attach window
+        </div>
+        <p>
+          An event is stringified once <em>per attached client</em>; with several tabs or devices the same bytes are rebuilt N times. Separately, the snapshot-attach dedupe
+          compares messages by full-JSON equality — two stringify calls per stored message per final event, inside a window that also streams.
+        </p>
+        <p class="fix">
+          <strong>Fix:</strong> serialize at the surface and share the string with listeners; replace the JSON-equality dedupe with identity checks (<code>entryId</code> /
+          <code>clientMessageId</code>), which the messages already carry.
+        </p>
+      </div>
+
+      <h2>Structural, not low-hanging</h2>
+      <ul class="clean">
+        <li>
+          <strong>Wall-clock replay cursors</strong> (DR-077). The clock base exists so a cursor from a retired buffer resyncs safely instead of replaying wrong history. An epoch +
+          monotonic sequence would remove clock dependence, but the current scheme is a deliberate correctness trade, not a perf defect.
+        </li>
+        <li>
+          <strong>Folder info awaited inline in <code>open_session</code></strong> — <code>resolveFolderInfo</code> can run cold git probes before the snapshot ships, delaying
+          replay delivery. Folder rows already arrive via <code>folders_changed</code> deltas, so the open response could ship the snapshot first.
+        </li>
+        <li>
+          <strong>Streaming events are not buffered</strong> — reconnecting mid-stream falls back to a full resync by design (streaming deltas are live-only). A bounded tail of
+          recent deltas in the buffer would shrink resyncs, at the cost of buffer memory and complexity. Documented tradeoff; fine to keep.
+        </li>
+      </ul>
+
+      <h2>Already right</h2>
+      <ul class="clean">
+        <li>
+          Cursor-based replay on reconnect (no redundant snapshot when the cursor is valid), with a safe <code>snapshot_required</code> fallback and stale-cursor invalidation.
+        </li>
+        <li>Windowed, epoch-guarded folder listings with reconciled deltas and monotonic order tokens — the pattern finding #2 should copy.</li>
+        <li>Mid-run <code>full_resync</code> partials (streaming message + running tool ids) instead of synthetic events.</li>
+        <li>Child views with independent cursors, keeping subagent traffic out of root replay positions.</li>
+        <li>Optimistic composer with <code>clientMessageId</code>-stamped echoes — no round-trip in the send path.</li>
+      </ul>
+    </div>
+  </body>
+</html>
