@@ -30,7 +30,7 @@ patch-dependencies:
 	npm run patch:dependencies
 
 ## Build everything in dependency order: shared → SDK → server, then client
-build: patch-dependencies build-shared build-sdk build-server build-client
+build: patch-dependencies build-sdk build-shared build-server build-client
 
 build-shared: patch-dependencies
 	npm run build:shared

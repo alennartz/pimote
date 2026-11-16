@@ -45,7 +45,7 @@
     "packages/sdk"
   ],
   "scripts": {
-    "build": "npm run patch:dependencies && npm run build:shared && npm run build --workspace=@pimote/sdk && npm run build --workspace=@pimote/server && npm run build --workspace=client",
+    "build": "npm run patch:dependencies && npm run build --workspace=@pimote/sdk && npm run build:shared && npm run build --workspace=@pimote/server && npm run build --workspace=client",
     "patch:dependencies": "node ./scripts/patch-dependencies.mjs",
     "build:shared": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('shared/dist', { recursive: true, force: true }); rmSync('shared/tsconfig.tsbuildinfo', { force: true });\" && tsc -b shared --force",
     "start": "node ./bin/pimote.js start",
