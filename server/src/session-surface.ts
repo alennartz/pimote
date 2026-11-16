@@ -234,10 +234,6 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 }
 
-function parseDataUrlImages(images: string[] | undefined): readonly { type: 'image'; data: string; mimeType: string }[] | undefined {
-  return resolveImageInputs(images);
-}
-
 function commandToken(message: string): string | undefined {
   const token = message.trim().split(/\s+/, 1)[0];
   if (!token.startsWith('/')) return undefined;
@@ -689,15 +685,10 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
         const promptIntent =
           caller?.queueOwnership && caller.clientId && session.isStreaming ? caller.queueOwnership.intend('steering', caller.clientId, command.message) : undefined;
         try {
-          const disposition = await dispatchPrompt(
-            session,
-            command.message,
-            parseDataUrlImages(command.images),
-            command.streamingBehavior === 'blocking' ? 'followUp' : 'steer',
-            () => {
-              if (command.clientMessageId !== undefined) eventBuffer.expectPromptEcho(command.clientMessageId);
-            },
-          );
+          const images = await resolveImageInputs(command.images);
+          const disposition = await dispatchPrompt(session, command.message, images, command.streamingBehavior === 'blocking' ? 'followUp' : 'steer', () => {
+            if (command.clientMessageId !== undefined) eventBuffer.expectPromptEcho(command.clientMessageId);
+          });
           if (promptIntent && disposition !== 'queued') caller?.queueOwnership?.cancel(promptIntent);
           return { outcome: disposition };
         } catch (error) {
@@ -711,7 +702,8 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
         if (options.kind === 'child' && slash) throw new Error(`slash command /${slash} is not available on a child surface`);
         const intent = caller?.queueOwnership && caller.clientId ? caller.queueOwnership.intend('steering', caller.clientId, command.message) : undefined;
         try {
-          const result = await dispatchPrompt(session, command.message, parseDataUrlImages(command.images), 'steer', () => undefined);
+          const images = await resolveImageInputs(command.images);
+          const result = await dispatchPrompt(session, command.message, images, 'steer', () => undefined);
           if (intent && result !== 'queued') caller?.queueOwnership?.cancel(intent);
           return { outcome: result };
         } catch (error) {

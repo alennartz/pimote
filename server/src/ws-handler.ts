@@ -80,11 +80,6 @@ export interface WsGlobalSettingsDependencies {
   capabilities?: () => ServerCapabilitiesEvent;
 }
 
-/** Parse data-URL encoded images into the shape the pi SDK expects. */
-function parseDataUrlImages(images?: string[]): { type: 'image'; data: string; mimeType: string }[] | undefined {
-  return resolveImageInputs(images);
-}
-
 /**
  * Hand user input to pi and resolve with pi's dispatch outcome. Input that
  * meets an active run joins the `streamingBehavior` queue; input that meets an
@@ -101,7 +96,7 @@ function isForwardedNew(message: string): boolean {
 function dispatchPrompt(
   session: Pick<AgentSession, 'prompt'>,
   text: string,
-  images: ReturnType<typeof parseDataUrlImages>,
+  images: Awaited<ReturnType<typeof resolveImageInputs>>,
   streamingBehavior: 'steer' | 'followUp',
   onStarted: () => void,
 ): Promise<PromptOutcome> {
@@ -2050,7 +2045,8 @@ export class WsHandler {
     };
     let dispatch: Promise<PromptOutcome>;
     try {
-      dispatch = dispatchPrompt(slot.session, input.text, parseDataUrlImages(input.images), input.behavior, () => {
+      const images = await resolveImageInputs(input.images);
+      dispatch = dispatchPrompt(slot.session, input.text, images, input.behavior, () => {
         if (input.clientMessageId !== undefined) slot.sessionState.eventBuffer.expectPromptEcho(input.clientMessageId);
       });
     } catch (err) {

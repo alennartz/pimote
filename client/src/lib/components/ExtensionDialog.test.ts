@@ -89,6 +89,12 @@ async function clickOutside(): Promise<void> {
 afterEach(async () => {
   if (component) await unmount(component);
   component = undefined;
+  // Bits UI defers its global body-scroll unlock so another dialog can acquire
+  // the same lock in the following tick. Let that owned cleanup finish before
+  // jsdom tears down this test's document.
+  if (document.body.style.overflow === 'hidden') {
+    await vi.waitFor(() => expect(document.body.style.overflow).not.toBe('hidden'));
+  }
   document.body.innerHTML = '';
   state.send.mockClear();
   emit({ type: 'extension_ui_resolved', sessionId: 's1', requestId: `editor-${requestId}` });

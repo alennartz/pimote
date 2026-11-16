@@ -1,6 +1,6 @@
 import type http from 'node:http';
 import { MAX_IMAGE_BASE64_LENGTH } from '../../shared/dist/index.js';
-import { getRegisteredImage, registerImage } from './image-registry.js';
+import { getRegisteredImage, persistImageRef, registerImage } from './image-registry.js';
 
 const MAX_IMAGE_BYTES = Math.floor((MAX_IMAGE_BASE64_LENGTH * 3) / 4);
 const IMAGE_REF_PATTERN = /^\/i\/([a-f0-9]{64})$/;
@@ -55,6 +55,15 @@ export async function handleImageHttpRoute(req: http.IncomingMessage, res: http.
       replyJson(res, 400, { error: 'invalid_image' });
       return true;
     }
+    try {
+      if (!(await persistImageRef(url))) {
+        replyJson(res, 500, { error: 'image_store_failed' });
+        return true;
+      }
+    } catch {
+      replyJson(res, 500, { error: 'image_store_failed' });
+      return true;
+    }
     replyJson(res, 201, { url });
     return true;
   }
@@ -66,7 +75,7 @@ export async function handleImageHttpRoute(req: http.IncomingMessage, res: http.
     replyJson(res, 404, { error: 'image_not_found' });
     return true;
   }
-  const image = getRegisteredImage(match[1]);
+  const image = await getRegisteredImage(match[1]);
   if (!image) {
     if (req.method === 'HEAD') {
       res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
