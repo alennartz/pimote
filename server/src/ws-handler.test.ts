@@ -1110,6 +1110,24 @@ describe('WsHandler', () => {
       expect(findEvents(sent, 'full_resync_branch_chunk')).toHaveLength(1);
     });
 
+    it('splits a large in-flight message out of the full-resync start frame', async () => {
+      const slot = createMockSlot({ id: 'large-stream-resync' });
+      slot.session.isStreaming = true;
+      slot.session.state = { streamingMessage: { role: 'assistant', content: [{ type: 'text', text: 'y'.repeat(400_000) }] }, pendingToolCalls: new Set() };
+      const { handler, sent } = createTestHandler('large-stream-client', { sessions: new Map([['large-stream-resync', slot]]) });
+
+      await handler.handleMessage(JSON.stringify({ type: 'open_session', id: 'large-stream-open', sessionId: 'large-stream-resync', folderPath: '/home/user/project' }));
+
+      const start = findEvents(sent, 'full_resync_start')[0] as any;
+      const chunks = findEvents(sent, 'full_resync_data_chunk') as any[];
+      expect(start).toMatchObject({ totalMessages: 0, hasStreamingMessage: true });
+      expect(start).not.toHaveProperty('streamingMessage');
+      expect(chunks.length).toBeGreaterThan(1);
+      expect(chunks[0]).toMatchObject({ field: 'streamingMessage' });
+      expect(chunks.every((chunk) => Buffer.byteLength(JSON.stringify(chunk)) < 64 * 1024)).toBe(true);
+      expect(JSON.parse(chunks.map((chunk) => chunk.data).join('')).content[0].text).toBe('y'.repeat(400_000));
+    });
+
     it('includes the session folder row in the response so restore keeps folder icon facts', async () => {
       const session = createMockSlot({
         id: 'session-1',

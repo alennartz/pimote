@@ -16,7 +16,10 @@ import type {
   FullResyncChunkEvent,
   FullResyncBranchChunkEvent,
   FullResyncJsonChunkEvent,
+  FullResyncDataChunkEvent,
+  PimoteActiveSubagentContent,
   PimoteAgentMessage,
+  StreamingMessage,
 } from '@pimote/shared';
 import { SvelteMap } from 'svelte/reactivity';
 import { JSONParser } from '@streamparser/json';
@@ -27,15 +30,28 @@ import { updateStore } from './update.svelte.js';
 
 type EventListener = (event: PimoteEvent) => void;
 
+type FullResyncDataField = FullResyncDataChunkEvent['field'];
+
+interface PendingJsonField {
+  offset: number;
+  parser: JSONParser | null;
+  complete: boolean;
+  failed: boolean;
+}
+
 interface PendingFullResync {
   readonly start: FullResyncStartEvent;
   readonly messages: PimoteAgentMessage[];
   readonly branchEntryIds: string[];
+  readonly activeSubagentContent: PimoteActiveSubagentContent[];
+  readonly runningToolCallIds: string[];
   messageMode: 'array' | 'json' | null;
   messageStreamComplete: boolean;
   jsonOffset: number;
   jsonParser: JSONParser | null;
   messageParseFailed: boolean;
+  streamingMessage: StreamingMessage | null;
+  jsonFields: Map<FullResyncDataField, PendingJsonField>;
 }
 
 /** Keep child-view cursors in a namespace separate from root replay cursors. */
@@ -410,6 +426,10 @@ export class ConnectionStore {
       this.appendFullResyncJsonChunk(event as FullResyncJsonChunkEvent);
       return;
     }
+    if (event.type === 'full_resync_data_chunk') {
+      this.appendFullResyncDataChunk(event as FullResyncDataChunkEvent);
+      return;
+    }
 
     // Track root replay cursors only. Child view messages carry a
     // `viewCursor` and must never advance the root EventBuffer position.
@@ -459,11 +479,24 @@ export class ConnectionStore {
       start,
       messages: [],
       branchEntryIds: [],
+      activeSubagentContent: [],
+      runningToolCallIds: [],
       messageMode: null,
       messageStreamComplete: start.totalMessages === 0,
       jsonOffset: 0,
       jsonParser: null,
       messageParseFailed: false,
+      streamingMessage: start.streamingMessage ?? null,
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity -- per-snapshot parse state, not read by UI
+      jsonFields: new Map([
+        ...(start.hasStreamingMessage && start.streamingMessage === undefined ? [['streamingMessage', { offset: 0, parser: null, complete: false, failed: false }] as const] : []),
+        ...(start.hasActiveSubagentContent && start.activeSubagentContent === undefined
+          ? [['activeSubagentContent', { offset: 0, parser: null, complete: false, failed: false }] as const]
+          : []),
+        ...(start.hasRunningToolCallIds && start.runningToolCallIds === undefined
+          ? [['runningToolCallIds', { offset: 0, parser: null, complete: false, failed: false }] as const]
+          : []),
+      ]),
     };
     this.pendingFullResync.set(start.sessionId, pending);
     if (this.fullResyncComplete(pending)) this.finishFullResync(pending);
@@ -521,6 +554,50 @@ export class ConnectionStore {
     if (this.fullResyncComplete(pending)) this.finishFullResync(pending);
   }
 
+  private appendFullResyncDataChunk(chunk: FullResyncDataChunkEvent): void {
+    const pending = this.pendingFullResync.get(chunk.sessionId);
+    if (!pending || pending.start.snapshotId !== chunk.snapshotId) return;
+    const field = pending.jsonFields.get(chunk.field);
+    if (!field || field.complete || chunk.offset !== field.offset || typeof chunk.data !== 'string') {
+      this.pendingFullResync.delete(chunk.sessionId);
+      return;
+    }
+    const paths = chunk.field === 'streamingMessage' ? ['$'] : ['$.*'];
+    const parser = (field.parser ??= new JSONParser({ paths, keepStack: false }));
+    parser.onValue = (info) => {
+      if (chunk.field === 'streamingMessage') {
+        if (!info.value || typeof info.value !== 'object' || Array.isArray(info.value)) return;
+        const message = info.value as { role?: unknown; content?: unknown };
+        if (typeof message.role === 'string' && Array.isArray(message.content)) pending.streamingMessage = info.value as unknown as StreamingMessage;
+      } else if (chunk.field === 'activeSubagentContent') {
+        if (info.value && typeof info.value === 'object' && !Array.isArray(info.value)) pending.activeSubagentContent.push(info.value as PimoteActiveSubagentContent);
+      } else if (typeof info.value === 'string') {
+        pending.runningToolCallIds.push(info.value);
+      }
+    };
+    parser.onError = () => {
+      field.failed = true;
+    };
+    try {
+      parser.write(chunk.data);
+    } catch {
+      field.failed = true;
+    }
+    if (field.failed) {
+      this.pendingFullResync.delete(chunk.sessionId);
+      return;
+    }
+    field.offset += chunk.data.length;
+    if (chunk.final) {
+      if (chunk.field === 'streamingMessage' && !pending.streamingMessage) {
+        this.pendingFullResync.delete(chunk.sessionId);
+        return;
+      }
+      field.complete = true;
+    }
+    if (this.fullResyncComplete(pending)) this.finishFullResync(pending);
+  }
+
   private appendFullResyncBranchChunk(chunk: FullResyncBranchChunkEvent): void {
     const pending = this.pendingFullResync.get(chunk.sessionId);
     if (!pending || pending.start.snapshotId !== chunk.snapshotId || pending.start.totalBranchEntryIds === undefined) return;
@@ -534,7 +611,11 @@ export class ConnectionStore {
 
   private fullResyncComplete(pending: PendingFullResync): boolean {
     const branchCount = pending.start.totalBranchEntryIds;
-    return pending.messageStreamComplete && (branchCount === undefined || pending.branchEntryIds.length === branchCount);
+    return (
+      pending.messageStreamComplete &&
+      [...pending.jsonFields.values()].every((field) => field.complete) &&
+      (branchCount === undefined || pending.branchEntryIds.length === branchCount)
+    );
   }
 
   private finishFullResync(pending: PendingFullResync): void {
@@ -545,14 +626,22 @@ export class ConnectionStore {
       sessionId: start.sessionId,
       state: start.state,
       messages,
-      ...(start.activeSubagentContent !== undefined ? { activeSubagentContent: start.activeSubagentContent } : {}),
+      ...(start.activeSubagentContent !== undefined
+        ? { activeSubagentContent: start.activeSubagentContent }
+        : start.hasActiveSubagentContent
+          ? { activeSubagentContent: pending.activeSubagentContent }
+          : {}),
       ...(start.branchEntryIds !== undefined
         ? { branchEntryIds: start.branchEntryIds }
         : start.totalBranchEntryIds !== undefined
           ? { branchEntryIds: pending.branchEntryIds }
           : {}),
-      ...(start.streamingMessage !== undefined ? { streamingMessage: start.streamingMessage } : {}),
-      ...(start.runningToolCallIds !== undefined ? { runningToolCallIds: start.runningToolCallIds } : {}),
+      ...(start.streamingMessage !== undefined ? { streamingMessage: start.streamingMessage } : pending.streamingMessage ? { streamingMessage: pending.streamingMessage } : {}),
+      ...(start.runningToolCallIds !== undefined
+        ? { runningToolCallIds: start.runningToolCallIds }
+        : start.hasRunningToolCallIds
+          ? { runningToolCallIds: pending.runningToolCallIds }
+          : {}),
     };
     this.emitEvent(event);
   }

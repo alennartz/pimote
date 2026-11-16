@@ -156,9 +156,9 @@
 
       <div class="callout">
         <strong>Implementation status:</strong> all six findings below are addressed. Image bytes now use content-addressed HTTP refs backed by a 64 MiB memory LRU and an XDG disk
-        cache capped at 1 GiB; large resyncs use ordered JSON-message and branch-ID fragments; WebSocket compression is enabled without context takeover; streaming updates batch at
-        16 ms (up to 128 events); metadata and commands ride lifecycle/open responses; and observer fan-out shares serialized events. The three items under “Structural, not
-        low-hanging” were not changed.
+        cache capped at 1 GiB; large resyncs use ordered message, branch-ID, active-operation, and in-flight-message fragments; WebSocket compression is enabled without context
+        takeover; streaming updates batch at 16 ms (up to 128 events); metadata and commands ride lifecycle/open responses; and observer fan-out shares serialized events. The three
+        items under “Structural, not low-hanging” were not changed.
       </div>
       <div class="callout">
         <strong>Verdict:</strong> the protocol's shape is sound — cursors, epochs, mid-run resync partials, and windowed folder listings are well designed. The initial review found
@@ -194,9 +194,9 @@
           per previously-open session, in parallel.
         </p>
         <p class="fix">
-          <strong>Implemented:</strong> large snapshots send a start envelope, UTF-8-safe serialized message fragments, and separate branch-ID chunks. The client parses each
-          fragment incrementally and emits one ordinary <code>full_resync</code> only after the snapshot completes. This keeps even one unusually large message out of a single
-          frame without dropping history.
+          <strong>Implemented:</strong> large snapshots send a start envelope, UTF-8-safe serialized message fragments, plus separate branch-ID, active-operation, running-tool, and
+          in-flight-message fragments. The client parses each fragment incrementally and emits one ordinary <code>full_resync</code> only after the snapshot completes. This keeps
+          even one unusually large message out of a single frame without dropping history.
         </p>
       </div>
 

@@ -1740,6 +1740,9 @@ export interface FullResyncStartEvent {
   snapshotId: string;
   totalMessages: number;
   totalBranchEntryIds?: number;
+  hasStreamingMessage?: boolean;
+  hasActiveSubagentContent?: boolean;
+  hasRunningToolCallIds?: boolean;
   state: SessionState;
   activeSubagentContent?: readonly PimoteActiveSubagentContent[];
   branchEntryIds?: readonly string[];
@@ -1770,6 +1773,17 @@ export interface FullResyncJsonChunkEvent {
   type: 'full_resync_json_chunk';
   sessionId: string;
   snapshotId: string;
+  offset: number;
+  data: string;
+  final: boolean;
+}
+
+/** UTF-8-safe fragment of a large resync field. */
+export interface FullResyncDataChunkEvent {
+  type: 'full_resync_data_chunk';
+  sessionId: string;
+  snapshotId: string;
+  field: 'streamingMessage' | 'activeSubagentContent' | 'runningToolCallIds';
   offset: number;
   data: string;
   final: boolean;
@@ -2033,6 +2047,7 @@ export type PimoteEvent =
   | FullResyncChunkEvent
   | FullResyncBranchChunkEvent
   | FullResyncJsonChunkEvent
+  | FullResyncDataChunkEvent
   | SubagentSnapshotEvent
   | SubagentViewSnapshot
   | SubagentViewEvent

@@ -127,6 +127,97 @@ describe('ConnectionStore — chunked event handling', () => {
     c.disconnect();
   });
 
+  it('assembles a large in-flight message before exposing the resync', async () => {
+    const c = new ConnectionStore();
+    const received: Array<{ type: string; streamingMessage?: unknown; activeSubagentContent?: unknown[]; runningToolCallIds?: string[] }> = [];
+    c.onEvent((event) => received.push(event as { type: string; streamingMessage?: unknown; activeSubagentContent?: unknown[]; runningToolCallIds?: string[] }));
+    c.connect();
+    const ws = instances.at(-1)!;
+    ws.readyState = FakeWebSocket.OPEN;
+    ws.onopen!();
+    burst(ws);
+    await flush();
+
+    const streamingMessage = { role: 'assistant', content: [{ type: 'text', text: 'partial answer 😀' }] };
+    const serialized = JSON.stringify(streamingMessage);
+    const split = serialized.indexOf('answer');
+    ws.onmessage!({
+      data: JSON.stringify({
+        type: 'full_resync_start',
+        sessionId: 's1',
+        snapshotId: 'snapshot-stream',
+        totalMessages: 0,
+        hasStreamingMessage: true,
+        hasActiveSubagentContent: true,
+        hasRunningToolCallIds: true,
+        state: {},
+      }),
+    });
+    ws.onmessage!({
+      data: JSON.stringify({
+        type: 'full_resync_data_chunk',
+        sessionId: 's1',
+        snapshotId: 'snapshot-stream',
+        field: 'streamingMessage',
+        offset: 0,
+        data: serialized.slice(0, split),
+        final: false,
+      }),
+    });
+    expect(received.filter((event) => event.type === 'full_resync')).toHaveLength(0);
+    ws.onmessage!({
+      data: JSON.stringify({
+        type: 'full_resync_data_chunk',
+        sessionId: 's1',
+        snapshotId: 'snapshot-stream',
+        field: 'streamingMessage',
+        offset: split,
+        data: serialized.slice(split),
+        final: true,
+      }),
+    });
+    expect(received.filter((event) => event.type === 'full_resync')).toHaveLength(0);
+    const active = [
+      {
+        parentMessageId: 'message-0',
+        contentIndex: 0,
+        operationId: 'op-1',
+        kind: 'send',
+        data: { operation: 'send', parameters: { message: 'request' }, result: { response: '' } },
+      },
+    ];
+    const activeJson = JSON.stringify(active);
+    ws.onmessage!({
+      data: JSON.stringify({
+        type: 'full_resync_data_chunk',
+        sessionId: 's1',
+        snapshotId: 'snapshot-stream',
+        field: 'activeSubagentContent',
+        offset: 0,
+        data: activeJson,
+        final: true,
+      }),
+    });
+    const runningJson = JSON.stringify(['tool-1']);
+    ws.onmessage!({
+      data: JSON.stringify({
+        type: 'full_resync_data_chunk',
+        sessionId: 's1',
+        snapshotId: 'snapshot-stream',
+        field: 'runningToolCallIds',
+        offset: 0,
+        data: runningJson,
+        final: true,
+      }),
+    });
+
+    const completed = received.find((event) => event.type === 'full_resync');
+    expect(completed?.streamingMessage).toEqual(streamingMessage);
+    expect(completed?.activeSubagentContent).toEqual(active);
+    expect(completed?.runningToolCallIds).toEqual(['tool-1']);
+    c.disconnect();
+  });
+
   it('dispatches event batches in order and advances each root cursor', async () => {
     const c = new ConnectionStore();
     const received: string[] = [];

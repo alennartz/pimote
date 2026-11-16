@@ -2633,7 +2633,7 @@ export class WsHandler {
     if (estimatedBytes <= maxChunkBytes) {
       this.sendEvent(snapshot);
     } else {
-      const { type: _type, sessionId: _sessionId, messages, branchEntryIds, ...snapshotFields } = snapshot;
+      const { type: _type, sessionId: _sessionId, messages, branchEntryIds, streamingMessage, activeSubagentContent, runningToolCallIds, ...snapshotFields } = snapshot;
       const snapshotId = randomUUID();
       const start: FullResyncStartEvent = {
         type: 'full_resync_start',
@@ -2641,6 +2641,9 @@ export class WsHandler {
         snapshotId,
         totalMessages: messages.length,
         ...(branchEntryIds !== undefined ? { totalBranchEntryIds: branchEntryIds.length } : {}),
+        ...(streamingMessage !== undefined ? { hasStreamingMessage: true } : {}),
+        ...(activeSubagentContent !== undefined ? { hasActiveSubagentContent: true } : {}),
+        ...(runningToolCallIds !== undefined ? { hasRunningToolCallIds: true } : {}),
         ...snapshotFields,
       };
       this.sendEvent(start);
@@ -2701,6 +2704,28 @@ export class WsHandler {
         }
         flushIds();
       }
+
+      const sendJsonFieldChunks = (field: 'streamingMessage' | 'activeSubagentContent' | 'runningToolCallIds', serialized: string) => {
+        let offset = 0;
+        while (offset < serialized.length) {
+          let end = Math.min(offset + 8192, serialized.length);
+          const lastCodeUnit = serialized.charCodeAt(end - 1);
+          if (end < serialized.length && lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff) end -= 1;
+          this.sendEvent({
+            type: 'full_resync_data_chunk',
+            sessionId: pimoteSessionId,
+            snapshotId,
+            field,
+            offset,
+            data: serialized.slice(offset, end),
+            final: end === serialized.length,
+          });
+          offset = end;
+        }
+      };
+      if (streamingMessage !== undefined) sendJsonFieldChunks('streamingMessage', JSON.stringify(streamingMessage));
+      if (activeSubagentContent !== undefined) sendJsonFieldChunks('activeSubagentContent', JSON.stringify(activeSubagentContent));
+      if (runningToolCallIds !== undefined) sendJsonFieldChunks('runningToolCallIds', JSON.stringify(runningToolCallIds));
     }
 
     this.sendSubagentSnapshot(slot);
