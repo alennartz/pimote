@@ -2491,6 +2491,38 @@ describe('WsHandler', () => {
       expect(findResponse(sent, 'global-reload')?.success).toBe(true);
     });
 
+    it('defers a reload that arrives during a run until the session is idle', async () => {
+      let releaseIdle: (() => void) | undefined;
+      const slot = createMockSlot({ id: 'session-reload', connectedClientId: 'client-1' });
+      const session = slot.session as any;
+      session.isStreaming = true;
+      session.waitForIdle = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseIdle = resolve;
+          }),
+      );
+      session.reload = vi.fn(async () => {});
+      const reloadPimoteExtensions = vi.fn(async () => {});
+      const { handler, sent } = createTestHandler('client-1', {
+        sessions: new Map([['session-reload', slot]]),
+        reloadPimoteExtensions,
+      });
+
+      await handler.handleMessage(JSON.stringify({ type: 'prompt', sessionId: 'session-reload', message: '/reload', id: 'deferred-reload' }));
+
+      expect(findResponse(sent, 'deferred-reload')?.success).toBe(true);
+      expect(reloadPimoteExtensions).not.toHaveBeenCalled();
+      expect(session.reload).not.toHaveBeenCalled();
+
+      session.isStreaming = false;
+      releaseIdle!();
+
+      await vi.waitFor(() => expect(session.reload).toHaveBeenCalledOnce());
+      expect(reloadPimoteExtensions).toHaveBeenCalledOnce();
+      expect(findEvents(sent, 'full_resync')).toHaveLength(1);
+    });
+
     it('waits for reload and sends a full resync with refreshed thinking levels', async () => {
       let finishReload: (() => void) | undefined;
       const reload = vi.fn(

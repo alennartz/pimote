@@ -293,6 +293,8 @@ export class WsHandler {
   private readonly boundSubagentViewListeners = new Map<ManagedSlot, (change: SubagentViewChange, incarnation?: string, viewCursor?: number) => void>();
   /** Token owned by this socket for each concrete root host. */
   private readonly subagentConnectionTokens = new Map<ManagedSlot, { host: NonNullable<ManagedSlot['subagentHost']>; token: number }>();
+  /** Slots with a `/reload` waiting for their next idle boundary. */
+  private readonly deferredReloads = new Set<ManagedSlot>();
   readonly clientId: string;
 
   constructor(
@@ -2001,12 +2003,14 @@ export class WsHandler {
     }
 
     if (trimmed === '/reload') {
-      // Global Pimote extensions reload first so the current Pi runtime sees
-      // the replacement folder sources before its own extension resync.
-      await this.reloadPimoteExtensions?.();
-      await session.reload();
-      this.sendReloadToObservers(sessionId, slot);
-      this.sendSilentDownloadSnapshot(slot);
+      if (session.isStreaming || session.isCompacting) {
+        // Pi refuses a reload that lands on a live run or compaction. Answer
+        // now and reload at the next idle boundary.
+        this.sendResponse(id, true);
+        this.deferReloadUntilIdle(sessionId, slot);
+        return true;
+      }
+      await this.reloadSession(sessionId, slot);
       this.sendResponse(id, true);
       return true;
     }
@@ -2752,6 +2756,34 @@ export class WsHandler {
       sessionId: pimoteSessionId,
       commands: getSessionCommands(slot.session),
     };
+  }
+
+  /** Reload the global Pimote extensions, then the Pi runtime, so the runtime
+   * resyncs over the replacement folder sources. */
+  private async reloadSession(sessionId: string, slot: ManagedSlot): Promise<void> {
+    await this.reloadPimoteExtensions?.();
+    await slot.session.reload();
+    // The refresh targets this connection; a closed socket has nothing to show.
+    if (this.ws.readyState !== 1) return;
+    this.sendReloadToObservers(sessionId, slot);
+    this.sendSilentDownloadSnapshot(slot);
+  }
+
+  /** Run a `/reload` that arrived mid-run once the session reaches idle. */
+  private deferReloadUntilIdle(sessionId: string, slot: ManagedSlot): void {
+    if (this.deferredReloads.has(slot)) return;
+    this.deferredReloads.add(slot);
+    void (async () => {
+      try {
+        await slot.session.waitForIdle();
+        if (this.sessionManager.getSession(sessionId) !== slot) return;
+        await this.reloadSession(sessionId, slot);
+      } catch (error) {
+        console.warn(`[WsHandler] Deferred reload failed for ${sessionId}:`, error);
+      } finally {
+        this.deferredReloads.delete(slot);
+      }
+    })();
   }
 
   /** Reload keeps the historical full transcript refresh for the requesting
