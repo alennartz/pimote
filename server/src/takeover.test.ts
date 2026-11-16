@@ -54,12 +54,15 @@ describe('findExternalPiProcesses', () => {
   it('excludes pi sub-processes of the current process (server sub-agents)', async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'pimote-takeover-test-'));
 
-    // Create a symlink named 'pi' pointing to 'sleep' so isPiProcess matches argv[0]
-    const { symlink } = await import('node:fs/promises');
-    const piLink = join(tempDir, 'pi');
-    await symlink('/usr/bin/sleep', piLink);
+    // A stub script named 'pi' makes isPiProcess match argv[0]. A symlink to
+    // sleep breaks on uutils coreutils (Ubuntu 26+), which refuses to run
+    // under a foreign argv[0].
+    const { writeFile, chmod } = await import('node:fs/promises');
+    const piStub = join(tempDir, 'pi');
+    await writeFile(piStub, '#!/bin/sh\nsleep 60\n');
+    await chmod(piStub, 0o755);
 
-    const child = spawn(piLink, ['60'], { cwd: tempDir, stdio: 'ignore', detached: true });
+    const child = spawn(piStub, ['60'], { cwd: tempDir, stdio: 'ignore', detached: true });
     child.unref();
     spawnedProcesses.push(child);
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -75,9 +78,11 @@ describe('findExternalPiProcesses', () => {
   it('excludes pi sub-processes of another pi process (external pi sub-agents)', async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'pimote-takeover-test-'));
 
-    const { symlink, writeFile, chmod, readFile } = await import('node:fs/promises');
-    const piLink = join(tempDir, 'pi');
-    await symlink('/usr/bin/sleep', piLink);
+    const { writeFile, chmod, readFile } = await import('node:fs/promises');
+    // Stub script for the same reason as above: survives uutils coreutils.
+    const piStub = join(tempDir, 'pi');
+    await writeFile(piStub, '#!/bin/sh\nsleep 60\n');
+    await chmod(piStub, 0o755);
 
     const pidFile = join(tempDir, 'pids');
     const childDir = join(tempDir, 'child');
@@ -95,11 +100,11 @@ describe('findExternalPiProcesses', () => {
         '#!/bin/sh',
         // Inner layer: runs detached from the test process
         "sh -c '",
-        `  (cd "${childDir}" && "${piLink}" 60) &`, // child pi (backgrounded)
+        `  (cd "${childDir}" && "${piStub}" 60) &`, // child pi (backgrounded)
         `  child_pid=$!`,
         `  parent_pid=$$`,
         `  echo "$parent_pid $child_pid" > "${pidFile}"`,
-        `  exec "${piLink}" 60`, // parent execs into pi
+        `  exec "${piStub}" 60`, // parent execs into pi
         "' &",
         // Outer shell exits immediately — orphans the inner tree
         'exit 0',
