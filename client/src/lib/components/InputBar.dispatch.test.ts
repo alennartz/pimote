@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
 import type { PimoteCommand, PimoteResponse } from '@pimote/shared';
 import InputBar from './InputBar.svelte';
@@ -12,6 +12,18 @@ import { pushSharedImages, sharedImagesRequest } from '$lib/stores/input-bar.sve
 // from the dispatch outcome the server reports (started | queued | handled).
 
 const mounted: ReturnType<typeof mount>[] = [];
+const uploadedImageRef = `/i/${'a'.repeat(64)}`;
+
+beforeEach(() => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).startsWith('data:')) return { ok: true, blob: async () => new Blob([]) };
+      if (String(input) === '/api/images') return { ok: true, json: async () => ({ url: uploadedImageRef }) };
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    }),
+  );
+});
 
 function setupSession(streaming: boolean) {
   sessionRegistry.addSession('s1', '/workspace/s1', 's1');
@@ -38,7 +50,7 @@ async function submit(text: string, images: string[] = []) {
   await tick();
   const button = target.querySelector<HTMLButtonElement>('button[title="Steer"], button[title="Send"]')!;
   button.click();
-  for (let i = 0; i < 4; i++) await tick();
+  for (let i = 0; i < 10; i++) await tick();
   return textarea;
 }
 
@@ -65,6 +77,7 @@ afterEach(async () => {
   for (const component of mounted.splice(0)) await unmount(component);
   document.body.replaceChildren();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   sessionRegistry.clearSubagentRoot('s1');
   sessionRegistry.sessions = {};
   sessionRegistry.viewedSessionId = null;
@@ -134,7 +147,7 @@ describe('child steering dispatch', () => {
 
     await submit('Inspect this', [imageUrl]);
 
-    expect(sent[0]).toMatchObject({ type: 'subagent_prompt', message: 'Inspect this', images: [imageUrl] });
+    expect(sent[0]).toMatchObject({ type: 'subagent_prompt', message: 'Inspect this', images: [uploadedImageRef] });
     expect(child.messages[0].content).toEqual([
       { type: 'text', text: 'Inspect this' },
       { type: 'image', image: { data: 'AQIDBA==', mimeType: 'image/webp' } },
@@ -199,7 +212,7 @@ describe('prompt dispatch outcome', () => {
 
     await submit('Look at this', [imageUrl]);
 
-    expect(sent[0]).toMatchObject({ type: 'prompt', message: 'Look at this', images: [imageUrl] });
+    expect(sent[0]).toMatchObject({ type: 'prompt', message: 'Look at this', images: [uploadedImageRef] });
     expect(session.messages[0].content).toEqual([
       { type: 'text', text: 'Look at this' },
       { type: 'image', image: { data: 'AQIDBA==', mimeType: 'image/png' } },
@@ -412,7 +425,7 @@ describe('steer dispatch outcome', () => {
     const image = 'data:image/png;base64,AAA';
     const sent = respond({ outcome: 'queued' });
     const textarea = await submit('turn left', [image]);
-    expect(sent[0]).toMatchObject({ type: 'steer', sessionId: 's1', message: 'turn left', images: [image] });
+    expect(sent[0]).toMatchObject({ type: 'steer', sessionId: 's1', message: 'turn left', images: [uploadedImageRef] });
     expect(textarea.value).toBe('');
     expect(document.querySelectorAll('img[alt="Staged"]')).toHaveLength(0);
     expect(session.pendingSteeringMessages).toEqual(['turn left']);

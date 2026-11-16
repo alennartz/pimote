@@ -249,6 +249,18 @@ describe('createServer — app name branding', () => {
     expect(spaFallback).toContain('<meta name="application-name" content="Desk Pi" />');
   });
 
+  it('serves content-addressed images and enables WebSocket compression', async () => {
+    const base = await startWith({});
+    const bytes = Buffer.from([8, 6, 7, 5, 3, 0, 9]);
+    const upload = await fetch(`${base}/api/images`, { method: 'POST', headers: { 'Content-Type': 'image/png' }, body: bytes });
+    expect(upload.status).toBe(201);
+    const { url } = (await upload.json()) as { url: string };
+    const image = await fetch(new URL(url, base));
+    expect(image.status).toBe(200);
+    expect(Buffer.from(await image.arrayBuffer())).toEqual(bytes);
+    expect(server!.wss.options.perMessageDeflate).toMatchObject({ threshold: 1024, clientNoContextTakeover: true, serverNoContextTakeover: true });
+  });
+
   it('falls back to the default name when the config has none', async () => {
     const base = await startWith({});
 

@@ -27,7 +27,7 @@ async function enterAndSubmit(target: HTMLElement, text: string) {
   const send = target.querySelector('button[title="Send"], button[title="Steer"]') as HTMLButtonElement;
   expect(send.disabled).toBe(false);
   send.click();
-  await tick();
+  for (let i = 0; i < 8; i++) await tick();
 }
 
 afterEach(() => {

@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
 import ToolCall from './ToolCall.svelte';
+import { ensureHljs } from '$lib/code-highlight.js';
 
 let destroy: (() => void) | undefined;
 
@@ -12,6 +13,7 @@ afterEach(() => {
 
 describe('bash tool visualization', () => {
   it('renders the command as bash-highlighted code in the top section', async () => {
+    await ensureHljs();
     const target = document.createElement('div');
     const component = mount(ToolCall, {
       target,

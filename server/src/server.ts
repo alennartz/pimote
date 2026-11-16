@@ -22,6 +22,7 @@ import crypto from 'node:crypto';
 import type { UpdateAvailableEvent, VersionMismatchEvent, ServerCapabilitiesEvent } from '../../shared/dist/index.js';
 import type { UpdateChecker } from './update-check.js';
 import { resolveUserName } from './user-profiles.js';
+import { handleImageHttpRoute } from './image-http.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 /** Directory holding the built client bundle. Resolved per call so tests can point it elsewhere. */
@@ -158,6 +159,9 @@ export async function createServer(
     console.warn(`[pimote] Could not read client build version from ${clientDir()}/_app/version.json`);
   }
   const httpServer = http.createServer(async (req, res) => {
+    // Content-addressed image bodies stay off the WebSocket transcript path.
+    if (await handleImageHttpRoute(req, res)) return;
+
     // 1. Health check
     if (req.method === 'GET' && req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -250,7 +254,14 @@ export async function createServer(
     if (folderRegistry) WsHandler.broadcastFoldersChanged(folderListing, change.changedPaths, change.removedPaths, clientRegistry);
   });
 
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({
+    noServer: true,
+    perMessageDeflate: {
+      threshold: 1024,
+      clientNoContextTakeover: true,
+      serverNoContextTakeover: true,
+    },
+  });
   const clientRegistry: ClientRegistry = new Map();
 
   // Liveness heartbeat — see ws-heartbeat.ts for why this exists. 20s sits

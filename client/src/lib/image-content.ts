@@ -7,21 +7,23 @@ export function imageFromDataUrl(dataUrl: string): PimoteImageContent | undefine
 }
 
 export function imageToDataUrl(image: PimoteImageContent): string {
-  return `data:${image.mimeType};base64,${image.data}`;
+  if (image.data !== undefined) return `data:${image.mimeType};base64,${image.data}`;
+  return image.url ?? '';
 }
 
 export function imageFromToolData(value: unknown): PimoteImageContent | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const candidate = value as { type?: unknown; data?: unknown; mimeType?: unknown };
-  if (candidate.type !== 'image' || typeof candidate.data !== 'string' || typeof candidate.mimeType !== 'string') return undefined;
-  if (!candidate.mimeType.startsWith('image/') || candidate.data.length > MAX_IMAGE_BASE64_LENGTH) return undefined;
+  const candidate = value as { type?: unknown; data?: unknown; url?: unknown; mimeType?: unknown };
+  if (candidate.type !== 'image' || typeof candidate.mimeType !== 'string' || !candidate.mimeType.startsWith('image/')) return undefined;
+  if (typeof candidate.url === 'string' && /^\/i\/[a-f0-9]{64}$/.test(candidate.url)) return { url: candidate.url, mimeType: candidate.mimeType };
+  if (typeof candidate.data !== 'string' || candidate.data.length > MAX_IMAGE_BASE64_LENGTH) return undefined;
   return { data: candidate.data, mimeType: candidate.mimeType };
 }
 
 export function imageContentBlocksFromDataUrls(dataUrls: readonly string[]): PimoteMessageContent[] {
   return dataUrls.flatMap((dataUrl): PimoteMessageContent[] => {
     const image = imageFromDataUrl(dataUrl);
-    if (!image) return [];
+    if (!image?.data) return [];
     if (image.data.length > MAX_IMAGE_BASE64_LENGTH) {
       return [{ type: 'text', text: IMAGE_TOO_LARGE_PLACEHOLDER }];
     }

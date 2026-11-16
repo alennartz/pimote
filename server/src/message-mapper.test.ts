@@ -23,9 +23,11 @@ describe('mapAgentMessage', () => {
       expect(result.content).toEqual([{ type: 'text', text: 'Hello' }]);
     });
 
-    it('preserves inline images in user messages', () => {
+    it('maps user images to content-addressed refs without carrying bytes on the wire', () => {
       const result = m({ role: 'user', content: [{ type: 'image', data: 'AQIDBA==', mimeType: 'image/png' }] });
-      expect(result).toMatchObject({ role: 'user', content: [{ type: 'image', image: { data: 'AQIDBA==', mimeType: 'image/png' } }] });
+      const image = result.content[0];
+      expect(image).toMatchObject({ type: 'image', image: { url: expect.stringMatching(/^\/i\/[a-f0-9]{64}$/), mimeType: 'image/png' } });
+      expect(image).not.toHaveProperty('image.data');
     });
 
     it('replaces images above the transcript limit with a readable placeholder', () => {
@@ -65,7 +67,7 @@ describe('mapAgentMessage', () => {
       expect(result.content[0]).toMatchObject({
         type: 'tool_result',
         result: 'Read image file [image/webp]',
-        images: [{ data: 'AQIDBA==', mimeType: 'image/webp' }],
+        images: [{ url: expect.stringMatching(/^\/i\/[a-f0-9]{64}$/), mimeType: 'image/webp' }],
       });
     });
 

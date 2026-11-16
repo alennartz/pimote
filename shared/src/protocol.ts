@@ -180,7 +180,7 @@ export type PimoteActiveSubagentContent = {
   data: PimoteSubagentStartData;
 };
 
-/** Maximum base64 image payload included in transcript content. */
+/** Maximum base64 image payload accepted by image input and tool-result mapping. */
 export const MAX_IMAGE_BASE64_LENGTH = 4 * 1024 * 1024;
 
 /** Display text used when an image exceeds the transcript payload limit. */
@@ -188,8 +188,13 @@ export const IMAGE_TOO_LARGE_PLACEHOLDER = '[Image omitted: exceeds the 4 MiB di
 
 /** Inline image data carried in a projected transcript message. */
 export interface PimoteImageContent {
-  data: string;
+  /** Content-addressed URL served by the server (`/i/<sha256-hex>`). The wire
+   *  never carries image bytes, so transcripts replay without image payloads. */
+  url?: string;
   mimeType: string;
+  /** Inline base64. Only set on client-staged optimistic entries before the
+   *  server echo replaces them with URL references. */
+  data?: string;
 }
 
 /** Common fields for projected message content. */
@@ -357,6 +362,7 @@ interface CommandBase {
 export interface PromptCommand extends CommandBase {
   type: 'prompt';
   message: string;
+  /** Content-addressed image paths (`/i/<sha256>`). Legacy data URLs remain accepted. */
   images?: string[];
   streamingBehavior?: 'streaming' | 'blocking';
   /** Sender-chosen id for the optimistic transcript entry. When the prompt
@@ -383,6 +389,7 @@ export interface PromptResponseData {
 export interface SteerCommand extends CommandBase {
   type: 'steer';
   message: string;
+  /** Content-addressed image paths (`/i/<sha256>`). Legacy data URLs remain accepted. */
   images?: string[];
 }
 
@@ -767,6 +774,11 @@ export interface OpenSessionResponseData {
   sessionId: string;
   folderPath?: string;
   restoreMode?: RestoreMode;
+  /** Initial supplemental session state, included to avoid extra reads. */
+  meta?: SessionMeta;
+  commands?: CommandInfo[];
+  /** New-session transcript snapshot; existing-session snapshots use the event stream. */
+  initialSnapshot?: FullResyncEvent;
   /** The session's folder row. New sessions also receive it in the
    *  session_opened event; existing-session restores (live reclaim, disk
    *  reopen) emit no session_opened, so this is the only wire moment their
@@ -1024,6 +1036,7 @@ export interface SubagentCloseViewCommand extends SubagentCommandBase {
 export interface SubagentPromptCommand extends SubagentCommandBase {
   type: 'subagent_prompt';
   message: string;
+  /** Content-addressed image paths (`/i/<sha256>`). Legacy data URLs remain accepted. */
   images?: string[];
   streamingBehavior?: 'streaming' | 'blocking';
   clientMessageId?: string;
@@ -1032,6 +1045,7 @@ export interface SubagentPromptCommand extends SubagentCommandBase {
 export interface SubagentSteerCommand extends SubagentCommandBase {
   type: 'subagent_steer';
   message: string;
+  /** Content-addressed image paths (`/i/<sha256>`). Legacy data URLs remain accepted. */
   images?: string[];
 }
 
@@ -1318,6 +1332,8 @@ export interface AgentSettledEvent extends SessionEventBase {
   /** True when the run ended via user abort rather than completing.
    *  Absent on events from older servers. */
   aborted?: boolean;
+  /** Session metadata after this completed turn, avoiding a follow-up request. */
+  meta?: SessionMeta;
 }
 
 /** Authoritative pending input snapshot, including explicit abort queue removal. */
@@ -1470,6 +1486,8 @@ export interface AutoCompactionEndEvent extends SessionEventBase {
   aborted: boolean;
   willRetry: boolean;
   errorMessage?: string;
+  /** Session metadata after compaction, avoiding a follow-up request. */
+  meta?: SessionMeta;
 }
 
 export interface AutoRetryStartEvent extends SessionEventBase {
@@ -1599,6 +1617,9 @@ export interface SessionReplacedEvent {
   oldSessionId: string;
   newSessionId: string;
   folder: FolderInfo;
+  /** Supplemental state piggybacked with the replacement snapshot. */
+  meta?: SessionMeta;
+  commands?: CommandInfo[];
 }
 
 export interface SessionStateChangedEvent {
@@ -1688,6 +1709,12 @@ export interface BufferedEventsEvent {
   events: PimoteSessionEvent[];
 }
 
+/** Live transport envelope for several adjacent streaming events. */
+export interface EventBatchEvent {
+  type: 'event_batch';
+  events: PimoteEvent[];
+}
+
 export interface FullResyncEvent {
   type: 'full_resync';
   sessionId: string;
@@ -1701,6 +1728,39 @@ export interface FullResyncEvent {
   streamingMessage?: StreamingMessage;
   /** Tool calls executing at snapshot time; their updates and ends follow live. */
   runningToolCallIds?: string[];
+}
+
+/** Start of a chunked full transcript resync. Clients emit one ordinary
+ *  `full_resync` only after all chunks arrive. */
+export interface FullResyncStartEvent {
+  type: 'full_resync_start';
+  sessionId: string;
+  snapshotId: string;
+  totalMessages: number;
+  totalBranchEntryIds?: number;
+  state: SessionState;
+  activeSubagentContent?: readonly PimoteActiveSubagentContent[];
+  branchEntryIds?: readonly string[];
+  streamingMessage?: StreamingMessage;
+  runningToolCallIds?: string[];
+}
+
+/** Ordered transcript page for an in-progress full resync. */
+export interface FullResyncChunkEvent {
+  type: 'full_resync_chunk';
+  sessionId: string;
+  snapshotId: string;
+  offset: number;
+  messages: PimoteAgentMessage[];
+}
+
+/** Ordered native branch-id page for an in-progress full resync. */
+export interface FullResyncBranchChunkEvent {
+  type: 'full_resync_branch_chunk';
+  sessionId: string;
+  snapshotId: string;
+  offset: number;
+  ids: string[];
 }
 
 /** Root-scoped hierarchy snapshot at a provider cursor boundary. */
@@ -1937,6 +1997,7 @@ export interface VersionMismatchEvent {
 
 export type PimoteEvent =
   | PimoteSessionEvent
+  | EventBatchEvent
   | ExtensionUiRequestEvent
   | ExtensionUiResolvedEvent
   | SessionConflictEvent
@@ -1956,6 +2017,9 @@ export type PimoteEvent =
   | SessionRestoreEvent
   | BufferedEventsEvent
   | FullResyncEvent
+  | FullResyncStartEvent
+  | FullResyncChunkEvent
+  | FullResyncBranchChunkEvent
   | SubagentSnapshotEvent
   | SubagentViewSnapshot
   | SubagentViewEvent

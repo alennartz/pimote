@@ -102,7 +102,7 @@ function createMockSlot(
     bindExtensions: async () => {},
     modelRuntime: { getAvailable: async () => [] },
     clearQueue: () => ({ steering: [], followUp: [] }),
-    sessionManager: { buildContextEntries: () => [], getBranch: () => [], getCwd: () => overrides.folderPath ?? '/home/user/project' },
+    sessionManager: { buildContextEntries: () => [], getBranch: () => [], getEntries: () => [], getCwd: () => overrides.folderPath ?? '/home/user/project' },
   };
 
   const sessionState: SessionState = {
@@ -696,6 +696,7 @@ describe('observer command boundary', () => {
     (slot.session as any).sessionManager = {
       getTree: () => [],
       getLeafId: () => null,
+      getEntries: () => [],
     };
     await open(first);
 
@@ -1079,6 +1080,30 @@ describe('WsHandler', () => {
       expect(resp!.success).toBe(true);
     });
 
+    it('splits a large transcript resync into bounded message chunks', async () => {
+      const slot = createMockSlot({ id: 'large-resync' });
+      const entries = Array.from({ length: 20 }, (_, index) => ({
+        type: 'message',
+        id: `entry-${index}`,
+        parentId: index === 0 ? null : `entry-${index - 1}`,
+        timestamp: '2026-01-01T00:00:00.000Z',
+        message: { role: 'user', content: 'x'.repeat(20_000), timestamp: index + 1 },
+      }));
+      slot.session.sessionManager.getBranch = () => entries as ReturnType<typeof slot.session.sessionManager.getBranch>;
+      slot.session.sessionManager.buildContextEntries = () => entries as ReturnType<typeof slot.session.sessionManager.buildContextEntries>;
+      const { handler, sent } = createTestHandler('large-client', { sessions: new Map([['large-resync', slot]]) });
+
+      await handler.handleMessage(JSON.stringify({ type: 'open_session', id: 'large-open', sessionId: 'large-resync', folderPath: '/home/user/project' }));
+
+      const starts = findEvents(sent, 'full_resync_start');
+      const chunks = findEvents(sent, 'full_resync_chunk');
+      expect(starts).toHaveLength(1);
+      expect(starts[0]).toMatchObject({ sessionId: 'large-resync', totalMessages: 20 });
+      expect(chunks.length).toBeGreaterThan(1);
+      expect(chunks.map((chunk) => (chunk as any).messages.length).reduce((sum, count) => sum + count, 0)).toBe(20);
+      expect(chunks.every((chunk) => Buffer.byteLength(JSON.stringify(chunk)) <= 256 * 1024 + 512)).toBe(true);
+    });
+
     it('includes the session folder row in the response so restore keeps folder icon facts', async () => {
       const session = createMockSlot({
         id: 'session-1',
@@ -1108,6 +1133,8 @@ describe('WsHandler', () => {
         nature: 'persona',
         shortcutCount: 2,
       });
+      expect(resp!.data as any).toMatchObject({ meta: { gitBranch: null, lifetimeCostUsd: 0 } });
+      expect((resp!.data as any).commands).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'new' })]));
     });
 
     it('returns the session response before a requested status refresh settles', async () => {
@@ -1214,10 +1241,12 @@ describe('WsHandler', () => {
             sessionId: reopenedSessionId,
             sessionName: undefined,
             autoCompactionEnabled: false,
+            resourceLoader: { getSkills: () => ({ skills: [], diagnostics: [] }) },
+            promptTemplates: [],
             bindExtensions: async () => {},
             modelRuntime: { getAvailable: async () => [] },
             clearQueue: () => ({ steering: [], followUp: [] }),
-            sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
+            sessionManager: { buildContextEntries: () => [], getBranch: () => [], getEntries: () => [] },
           } as any,
         });
         sessions.set(reopenedSessionId, reopened);
@@ -1286,10 +1315,12 @@ describe('WsHandler', () => {
             sessionId: reopenedSessionId,
             sessionName: undefined,
             autoCompactionEnabled: false,
+            resourceLoader: { getSkills: () => ({ skills: [], diagnostics: [] }) },
+            promptTemplates: [],
             bindExtensions: async () => {},
             modelRuntime: { getAvailable: async () => [] },
             clearQueue: () => ({ steering: [], followUp: [] }),
-            sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
+            sessionManager: { buildContextEntries: () => [], getBranch: () => [], getEntries: () => [] },
           } as any,
         });
         sessions.set(reopenedSessionId, reopened);
@@ -1339,10 +1370,12 @@ describe('WsHandler', () => {
             sessionId: 'session-deep',
             sessionName: undefined,
             autoCompactionEnabled: false,
+            resourceLoader: { getSkills: () => ({ skills: [], diagnostics: [] }) },
+            promptTemplates: [],
             bindExtensions: async () => {},
             modelRuntime: { getAvailable: async () => [] },
             clearQueue: () => ({ steering: [], followUp: [] }),
-            sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
+            sessionManager: { buildContextEntries: () => [], getBranch: () => [], getEntries: () => [] },
           } as any,
         });
         sessions.set('session-deep', reopened);
@@ -2230,9 +2263,11 @@ describe('WsHandler', () => {
           }
         },
         modelRuntime: { getAvailable: async () => [] },
+        resourceLoader: { getSkills: () => ({ skills: [], diagnostics: [] }) },
+        promptTemplates: [],
         clearQueue: () => ({ steering: [], followUp: [] }),
         navigateTree: async () => ({ cancelled: false }),
-        sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
+        sessionManager: { buildContextEntries: () => [], getBranch: () => [], getEntries: () => [] },
       } as any;
 
       const slot = createMockSlot({
@@ -2316,7 +2351,7 @@ describe('WsHandler', () => {
         sessionId: 'orphan-old',
         bindExtensions: async () => {},
         clearQueue: () => ({ steering: [], followUp: [] }),
-        sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
+        sessionManager: { buildContextEntries: () => [], getBranch: () => [], getEntries: () => [] },
       } as any;
       const slot = createMockSlot({ id: 'orphan-old', session: mockAgentSession, connectedClientId: null });
       (slot.runtime as any).newSession = async () => {
@@ -2353,9 +2388,11 @@ describe('WsHandler', () => {
           capturedBindings = bindings;
         },
         modelRuntime: { getAvailable: async () => [] },
+        resourceLoader: { getSkills: () => ({ skills: [], diagnostics: [] }) },
+        promptTemplates: [],
         clearQueue: () => ({ steering: [], followUp: [] }),
         navigateTree: async () => ({ cancelled: false }),
-        sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
+        sessionManager: { buildContextEntries: () => [], getBranch: () => [], getEntries: () => [] },
       } as any;
 
       const slot = createMockSlot({
@@ -3034,6 +3071,8 @@ describe('WsHandler', () => {
           sessionFile: undefined,
           sessionId: 'session-tree-reconnect',
           autoCompactionEnabled: false,
+          resourceLoader: { getSkills: () => ({ skills: [], diagnostics: [] }) },
+          promptTemplates: [],
           bindExtensions: async () => {},
           modelRuntime: { getAvailable: async () => [] },
           clearQueue: () => ({ steering: [], followUp: [] }),
@@ -3045,6 +3084,7 @@ describe('WsHandler', () => {
           sessionManager: {
             buildContextEntries: () => branchEntries,
             getBranch: () => branchEntries,
+            getEntries: () => branchEntries,
             getCwd: () => '/home/user/project',
           },
         } as any,
@@ -5160,6 +5200,8 @@ describe('panel resync requests', () => {
       sessionFile: undefined,
       sessionName: undefined,
       autoCompactionEnabled: false,
+      resourceLoader: { getSkills: () => ({ skills: [], diagnostics: [] }) },
+      promptTemplates: [],
       bindExtensions: async (bindings: any) => {
         if (bindings.commandContextActions) {
           capturedOnReset = async () => {
@@ -5171,7 +5213,7 @@ describe('panel resync requests', () => {
       modelRuntime: { getAvailable: async () => [] },
       clearQueue: () => ({ steering: [], followUp: [] }),
       navigateTree: async () => ({ cancelled: false }),
-      sessionManager: { buildContextEntries: () => [], getBranch: () => [] },
+      sessionManager: { buildContextEntries: () => [], getBranch: () => [], getEntries: () => [] },
     } as any;
 
     const slot = createMockSlot({ id: 'old-session', session: mockAgentSession, connectedClientId: null, eventBus: bus });
@@ -5224,7 +5266,7 @@ describe('call_bind — dormant session reopen', () => {
       bindExtensions,
       modelRuntime: { getAvailable: async () => [] },
       clearQueue: () => ({ steering: [], followUp: [] }),
-      sessionManager: { buildContextEntries: () => [], getBranch: () => [], getCwd: () => '/home/user/project' },
+      sessionManager: { buildContextEntries: () => [], getBranch: () => [], getEntries: () => [], getCwd: () => '/home/user/project' },
     } as any;
   }
 

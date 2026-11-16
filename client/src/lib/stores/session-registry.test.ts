@@ -9,6 +9,7 @@ import {
   newSessionInProject,
   closeSession,
   replaceSessionWithFresh,
+  MAX_TOOL_PARTIAL_CHARS,
 } from './session-registry.svelte.js';
 import { connection } from './connection.svelte.js';
 import { commandStore } from './command-store.svelte.js';
@@ -424,23 +425,19 @@ describe('SessionRegistry', () => {
       expect(session.streamingKey).toBeNull();
     });
 
-    it('refreshes session metadata after each completed turn while the session remains working', async () => {
+    it('applies metadata piggybacked on lifecycle events without a follow-up request', () => {
       registry.addSession('s1', '/path', 'proj');
-      const send = vi
-        .spyOn(connection, 'send')
-        .mockResolvedValueOnce({ id: 'meta-1', success: true, data: { meta: { gitBranch: null, contextUsage: null, lifetimeCostUsd: 1.23 } } } as any)
-        .mockResolvedValueOnce({ id: 'meta-2', success: true, data: { meta: { gitBranch: null, contextUsage: null, lifetimeCostUsd: 2.34 } } } as any);
-
+      const send = vi.spyOn(connection, 'send');
       try {
         registry.handleEvent(makeSessionEvent('agent_start', 's1'));
-        registry.handleEvent(makeSessionEvent('turn_end', 's1'));
+        registry.handleEvent(makeSessionEvent('auto_compaction_end', 's1', { meta: { gitBranch: null, contextUsage: null, lifetimeCostUsd: 1.23 } }));
         expect(registry.sessions['s1'].status).toBe('working');
-        await vi.waitFor(() => expect(registry.sessions['s1'].lifetimeCostUsd).toBe(1.23));
+        expect(registry.sessions['s1'].lifetimeCostUsd).toBe(1.23);
 
-        registry.handleEvent(makeSessionEvent('turn_end', 's1'));
-        expect(registry.sessions['s1'].status).toBe('working');
-        await vi.waitFor(() => expect(registry.sessions['s1'].lifetimeCostUsd).toBe(2.34));
-        expect(send).toHaveBeenCalledTimes(2);
+        registry.handleEvent(makeSessionEvent('agent_settled', 's1', { meta: { gitBranch: null, contextUsage: null, lifetimeCostUsd: 2.34 } }));
+        expect(registry.sessions['s1'].status).toBe('idle');
+        expect(registry.sessions['s1'].lifetimeCostUsd).toBe(2.34);
+        expect(send).not.toHaveBeenCalled();
       } finally {
         send.mockRestore();
       }
@@ -766,6 +763,18 @@ describe('SessionRegistry', () => {
       expect(execs['tc1'].args).toEqual({ path: '/foo' });
       expect(execs['tc1'].partialResult).toBe('');
       expect(execs['tc1'].status).toBe('running');
+    });
+
+    it('bounds live tool partial output even when one update exceeds the remaining limit', () => {
+      registry.addSession('s1', '/path', 'proj');
+      registry.handleEvent(makeSessionEvent('tool_execution_start', 's1', { toolCallId: 'tc1', toolName: 'read', args: {} }));
+      registry.handleEvent(makeSessionEvent('tool_execution_update', 's1', { toolCallId: 'tc1', content: 'a'.repeat(MAX_TOOL_PARTIAL_CHARS - 2) }));
+      registry.handleEvent(makeSessionEvent('tool_execution_update', 's1', { toolCallId: 'tc1', content: 'bcdef' }));
+      registry.handleEvent(makeSessionEvent('tool_execution_update', 's1', { toolCallId: 'tc1', content: 'more' }));
+
+      const partial = registry.sessions['s1'].toolExecutions['tc1'].partialResult;
+      expect(partial.length).toBe(MAX_TOOL_PARTIAL_CHARS);
+      expect(partial.endsWith('bc')).toBe(true);
     });
 
     it('tool_execution_update appends to partialResult', () => {
@@ -2454,6 +2463,34 @@ describe('parallel new sessions', () => {
       }
     }
     sessionRegistry.goHome();
+  });
+
+  it('uses the initial snapshot and session facts carried by the open response', async () => {
+    const snapshot = {
+      type: 'full_resync',
+      sessionId: 'parallel-initial',
+      state: { model: null, thinkingLevel: 'off', availableThinkingLevels: [], isStreaming: false, isCompacting: false, autoCompactionEnabled: true, messageCount: 1 },
+      messages: [makeUserMessage('first message')],
+    };
+    const send = vi.spyOn(connection, 'send').mockResolvedValue({
+      id: 'open',
+      success: true,
+      data: {
+        sessionId: 'parallel-initial',
+        folderPath: '/repos/initial',
+        meta: { gitBranch: 'main', contextUsage: null, lifetimeCostUsd: 1.5 },
+        commands: [{ name: 'reload', description: 'Reload', hasArgCompletions: false }],
+        initialSnapshot: snapshot,
+      },
+    } as any);
+
+    await openNewSession('/repos/initial');
+
+    expect(sessionRegistry.sessions['parallel-initial'].messages).toEqual([makeUserMessage('first message')]);
+    expect(sessionRegistry.sessions['parallel-initial'].lifetimeCostUsd).toBe(1.5);
+    expect(commandStore.getCommands('parallel-initial')).toEqual([{ name: 'reload', description: 'Reload', hasArgCompletions: false }]);
+    expect(send.mock.calls[0]?.[0]).toMatchObject({ type: 'open_session' });
+    expect(send.mock.calls.some(([command]) => ['get_state', 'get_messages', 'get_session_meta', 'get_commands'].includes(command.type))).toBe(false);
   });
 
   it('reconciles parallel responses independently and preserves the viewed request', async () => {

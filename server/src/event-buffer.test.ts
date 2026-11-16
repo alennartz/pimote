@@ -621,6 +621,35 @@ describe('EventBuffer', () => {
       expect(buffer.replay(0)).toEqual(liveEvents);
     });
 
+    it('replaces inline tool-result image bytes with registered refs', () => {
+      const buffer = new EventBuffer(10);
+      const liveEvents: PimoteSessionEvent[] = [];
+      const result = {
+        content: [{ type: 'image', data: 'AQIDBA==', mimeType: 'image/png' }],
+        structuredContent: { type: 'image', data: 'AQIDBA==', mimeType: 'image/png' },
+      };
+
+      buffer.onEvent(makeSdkEvent('tool_execution_end', { toolCallId: 'read-image', result }), SESSION_ID, (event) => liveEvents.push(event));
+
+      expect(liveEvents[0]).toMatchObject({
+        type: 'tool_execution_end',
+        result: {
+          content: [{ type: 'image', url: expect.stringMatching(/^\/i\/[a-f0-9]{64}$/), mimeType: 'image/png' }],
+          structuredContent: { type: 'image', url: expect.stringMatching(/^\/i\/[a-f0-9]{64}$/), mimeType: 'image/png' },
+        },
+      });
+      expect(JSON.stringify(liveEvents[0])).not.toContain('AQIDBA==');
+      expect(buffer.replay(0)).toEqual(liveEvents);
+    });
+
+    it('piggybacks session metadata on terminal lifecycle events', () => {
+      const meta = { gitBranch: 'main', contextUsage: { percent: 12, contextWindow: 64000 }, lifetimeCostUsd: 4.5 };
+      const buffer = new EventBuffer(10, undefined, 0, undefined, () => meta);
+      const liveEvents: PimoteSessionEvent[] = [];
+      buffer.onEvent(makeSdkEvent('agent_settled', { aborted: false }), SESSION_ID, (event) => liveEvents.push(event));
+      expect(liveEvents[0]).toMatchObject({ type: 'agent_settled', meta });
+    });
+
     it('forwards aborted on agent_settled and omits it for a finished run', () => {
       const buffer = new EventBuffer(10);
       const liveEvents: PimoteSessionEvent[] = [];

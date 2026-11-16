@@ -54,6 +54,74 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('ConnectionStore — chunked event handling', () => {
+  it('assembles full-resync chunks before exposing one snapshot event', async () => {
+    const c = new ConnectionStore();
+    const received: Array<{ type: string; messages?: unknown[] }> = [];
+    c.onEvent((event) => received.push(event as { type: string; messages?: unknown[] }));
+    c.connect();
+    const ws = instances.at(-1)!;
+    ws.readyState = FakeWebSocket.OPEN;
+    ws.onopen!();
+    burst(ws);
+    await flush();
+
+    ws.onmessage!({ data: JSON.stringify({ type: 'full_resync_start', sessionId: 's1', snapshotId: 'snapshot-1', totalMessages: 2, totalBranchEntryIds: 2, state: {} }) });
+    ws.onmessage!({
+      data: JSON.stringify({
+        type: 'full_resync_chunk',
+        sessionId: 's1',
+        snapshotId: 'snapshot-1',
+        offset: 0,
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'first' }] }],
+      }),
+    });
+    expect(received.filter((event) => event.type === 'full_resync')).toHaveLength(0);
+
+    ws.onmessage!({
+      data: JSON.stringify({
+        type: 'full_resync_chunk',
+        sessionId: 's1',
+        snapshotId: 'snapshot-1',
+        offset: 1,
+        messages: [{ role: 'assistant', content: [{ type: 'text', text: 'second' }] }],
+      }),
+    });
+    expect(received.filter((event) => event.type === 'full_resync')).toHaveLength(0);
+    ws.onmessage!({ data: JSON.stringify({ type: 'full_resync_branch_chunk', sessionId: 's1', snapshotId: 'snapshot-1', offset: 0, ids: ['entry-1', 'entry-2'] }) });
+    const snapshots = received.filter((event) => event.type === 'full_resync');
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]?.messages).toHaveLength(2);
+    expect(received.some((event) => event.type.startsWith('full_resync_'))).toBe(false);
+    c.disconnect();
+  });
+
+  it('dispatches event batches in order and advances each root cursor', async () => {
+    const c = new ConnectionStore();
+    const received: string[] = [];
+    c.onEvent((event) => received.push(event.type));
+    c.connect();
+    const ws = instances.at(-1)!;
+    ws.readyState = FakeWebSocket.OPEN;
+    ws.onopen!();
+    burst(ws);
+    await flush();
+
+    ws.onmessage!({
+      data: JSON.stringify({
+        type: 'event_batch',
+        events: [
+          { type: 'message_update', sessionId: 's1', cursor: 4, subtype: 'delta', contentIndex: 0, content: { type: 'text', text: 'a' } },
+          { type: 'message_update', sessionId: 's1', cursor: 5, subtype: 'delta', contentIndex: 0, content: { type: 'text', text: 'b' } },
+        ],
+      }),
+    });
+    expect(received).toEqual(['message_update', 'message_update']);
+    expect(c.getRootCursor('s1')).toBe(5);
+    c.disconnect();
+  });
+});
+
 describe('ConnectionStore — definitive restore rejections', () => {
   /** Deliver the response to the first open_session the socket received. */
   const respondTo = (ws: FakeWebSocket, error: string) => {

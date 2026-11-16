@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PimoteSessionManager, sendSlotEvent, type EventSocket, type ManagedSlot, type SessionObserver } from './session-manager.js';
+import { PimoteSessionManager, sendBatchedEvent, sendSlotEvent, type EventSocket, type ManagedSlot, type SessionObserver } from './session-manager.js';
 import type { PimoteEvent } from '../../shared/dist/index.js';
 
 const runtimeDispose = vi.hoisted(() => vi.fn(async () => {}));
@@ -73,6 +73,96 @@ describe('session observer fan-out', () => {
     expect(second.sent).toEqual([JSON.stringify(event)]);
     expect(first.cursor).toBe(4);
     expect(second.cursor).toBe(4);
+  });
+
+  it('coalesces adjacent streaming deltas into one ordered batch and advances the cursor', async () => {
+    vi.useFakeTimers();
+    try {
+      const first = observer('client-a', 3);
+      const slot = slotWith(first);
+      const delta = (cursor: number, text: string): PimoteEvent => ({
+        type: 'message_update',
+        sessionId: 'session-1',
+        cursor,
+        contentIndex: 0,
+        subtype: 'delta',
+        content: { type: 'text', text },
+      });
+      const firstDelta = delta(4, 'a');
+      const secondDelta = delta(5, 'b');
+
+      sendSlotEvent(slot, firstDelta);
+      sendSlotEvent(slot, secondDelta);
+      expect(first.sent).toEqual([]);
+      expect(first.cursor).toBe(3);
+
+      await vi.advanceTimersByTimeAsync(16);
+      expect(first.sent).toHaveLength(1);
+      expect(JSON.parse(first.sent[0]!)).toEqual({ type: 'event_batch', events: [firstDelta, secondDelta] });
+      expect(first.cursor).toBe(5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('flushes pending deltas before an immediate lifecycle event', () => {
+    vi.useFakeTimers();
+    try {
+      const first = observer('client-a', 3);
+      const slot = slotWith(first);
+      const delta: PimoteEvent = {
+        type: 'message_update',
+        sessionId: 'session-1',
+        cursor: 4,
+        contentIndex: 0,
+        subtype: 'delta',
+        content: { type: 'text', text: 'partial' },
+      };
+      sendSlotEvent(slot, delta);
+      sendSlotEvent(slot, { ...event, cursor: 5 });
+
+      expect(first.sent.map((raw) => (JSON.parse(raw) as { type: string }).type)).toEqual(['event_batch', 'agent_start']);
+      expect(first.cursor).toBe(5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('batches an owned child-view delta and flushes it before a view close', () => {
+    vi.useFakeTimers();
+    try {
+      const first = observer('client-a');
+      const event: PimoteEvent = {
+        type: 'subagent_view_event',
+        sessionId: 'session-1',
+        childSessionId: 'child-1',
+        path: ['worker'],
+        incarnation: 'inc-1',
+        attachmentGeneration: 'gen-1',
+        viewCursor: 7,
+        event: {
+          type: 'message_update',
+          sessionId: 'child-1',
+          cursor: 7,
+          contentIndex: 0,
+          subtype: 'delta',
+          content: { type: 'text', text: 'delta' },
+        },
+      };
+      sendBatchedEvent(first.ws, event);
+      expect(first.sent).toEqual([]);
+      sendBatchedEvent(first.ws, {
+        type: 'subagent_view_closed',
+        sessionId: 'session-1',
+        path: ['worker'],
+        incarnation: 'inc-1',
+        attachmentGeneration: 'gen-1',
+        reason: 'released',
+      });
+      expect(first.sent.map((raw) => (JSON.parse(raw) as { type: string }).type)).toEqual(['event_batch', 'subagent_view_closed']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('leaves observer cursors unchanged for an ephemeral event without a cursor', () => {

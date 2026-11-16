@@ -1,7 +1,7 @@
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import type { SubagentTopologyEvent as ProviderTopologyEvent } from '@pimote/sdk/subagents';
-import type { PimoteSessionEvent, SubagentTopologyEvent } from '../../shared/dist/index.js';
+import type { PimoteSessionEvent, SessionMeta, SubagentTopologyEvent } from '../../shared/dist/index.js';
 import { limitToolExecutionResultImages, mapAgentMessage, mapAgentMessageUsage, mapCustomEntry, type CustomEntryVisibility } from './message-mapper.js';
 
 export interface TreeNavigationStartEvent {
@@ -52,6 +52,7 @@ export class EventBuffer {
     /** Entry ids of the session's context messages, attached to each final
      *  agent_end so clients can target messages that arrived by streaming. */
     private readonly getMessageEntryIds?: () => string[],
+    private readonly getSessionMeta?: () => SessionMeta | undefined,
   ) {
     this.buffer = new Array(capacity);
     this._cursor = baseCursor;
@@ -310,7 +311,8 @@ export class EventBuffer {
           reason: sdkEvent.reason,
         };
 
-      case 'compaction_end':
+      case 'compaction_end': {
+        const meta = this.getSessionMeta?.();
         return {
           ...base,
           type: 'auto_compaction_end',
@@ -318,7 +320,9 @@ export class EventBuffer {
           aborted: sdkEvent.aborted,
           willRetry: sdkEvent.willRetry,
           ...(sdkEvent.errorMessage ? { errorMessage: sdkEvent.errorMessage } : {}),
+          ...(meta ? { meta } : {}),
         };
+      }
 
       case 'auto_retry_start':
         return {
@@ -354,9 +358,16 @@ export class EventBuffer {
       // terminal `agent_end` and after awaited `agent_end` listeners settle,
       // and only when no retry/compaction/queued-continuation is pending). It
       // drives the idle UI transition + completion notification.
-      case 'agent_settled':
+      case 'agent_settled': {
         this.pendingPromptEcho = undefined;
-        return { ...base, type: 'agent_settled', ...(sdkEvent.aborted ? { aborted: true } : {}) };
+        const meta = this.getSessionMeta?.();
+        return {
+          ...base,
+          type: 'agent_settled',
+          ...(sdkEvent.aborted ? { aborted: true } : {}),
+          ...(meta ? { meta } : {}),
+        };
+      }
 
       case 'entry_appended':
         if (sdkEvent.entry.type !== 'custom' || !this.isCustomEntryVisible?.(sdkEvent.entry.customType)) {

@@ -19,6 +19,7 @@ import type {
   StreamingMessage,
   SessionState,
   SessionMeta,
+  OpenSessionResponseData,
   BufferedEventsEvent,
   MessageStartEvent,
   MessageUpdateEvent,
@@ -77,6 +78,7 @@ import { getActiveSessions } from './persistence.js';
 import { summarizeAssistantRowUsage, type ToolResultUsageIndex } from '../assistant-row-usage.js';
 import {
   applySubagentContentEvent,
+  applySubagentContentDeltaInPlace,
   applySubagentContentToStreaming,
   hydrateSubagentContent,
   projectMessage,
@@ -386,6 +388,14 @@ function hydrateMessageEntryIds(session: Pick<PerSessionState, 'messages' | 'mes
 type ProjectedTranscript = Pick<PerSessionState, 'messages' | 'messageKeys' | 'optimisticEntries' | 'projectedSubagentContent'>;
 
 function applyProjectedEventToTranscript(transcript: ProjectedTranscript, event: SubagentContentEvent, generateKeys: (count: number) => string[]): void {
+  if (event.type === 'subagent_content_delta') {
+    const projected = applySubagentContentDeltaInPlace(transcript.projectedSubagentContent, event, transcript.messages);
+    if (projected) {
+      transcript.projectedSubagentContent = projected;
+      return;
+    }
+  }
+
   // Split confirmed from pending rows in one pass. The projection copies only
   // the message carrying the operation, so this stays a shallow re-fold.
   const pendingKeys = new Set(transcript.optimisticEntries.map((entry) => entry.key));
@@ -405,7 +415,7 @@ function applyProjectedEventToTranscript(transcript: ProjectedTranscript, event:
       confirmedKeys.push(key);
     }
   }
-  const projected = applySubagentContentEvent({ messages: confirmedMessages, active: transcript.projectedSubagentContent.active }, event);
+  const projected = applySubagentContentEvent({ ...transcript.projectedSubagentContent, messages: confirmedMessages }, event);
   const addedKeys = generateKeys(projected.messages.length - confirmedMessages.length);
   transcript.projectedSubagentContent = projected;
   transcript.messages = [...projected.messages, ...pendingMessages];
@@ -446,6 +456,7 @@ function applyChildNativeEvent(attachment: SubagentAttachmentState, event: Pimot
     attachment.transcript = attachment.messages;
     attachment.messageKeys = attachment.messages.map((_, index) => `child-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${index}`);
     attachment.optimisticEntries = [];
+    attachmentBashBytes.delete(attachment);
     attachment.bashExecutions = {};
     attachment.streamingMessage = full.streamingMessage ? { ...full.streamingMessage, content: full.streamingMessage.content.map((block) => ({ ...block })) } : null;
     attachment.streamingKey = full.streamingMessage ? `child-stream-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${attachment.childSessionId}` : null;
@@ -587,8 +598,12 @@ function applyChildNativeEvent(attachment: SubagentAttachmentState, event: Pimot
     case 'tool_execution_update': {
       const update = event as ToolExecutionUpdateEvent;
       const execution = attachment.toolExecutions[update.toolCallId];
-      if (execution && execution.partialResult.length <= MAX_TOOL_PARTIAL_CHARS) {
-        attachment.toolExecutions = { ...attachment.toolExecutions, [update.toolCallId]: { ...execution, partialResult: execution.partialResult + update.content } };
+      if (execution && execution.partialResult.length < MAX_TOOL_PARTIAL_CHARS) {
+        const remaining = MAX_TOOL_PARTIAL_CHARS - execution.partialResult.length;
+        attachment.toolExecutions = {
+          ...attachment.toolExecutions,
+          [update.toolCallId]: { ...execution, partialResult: execution.partialResult + update.content.slice(0, remaining) },
+        };
       }
       break;
     }
@@ -1086,6 +1101,12 @@ export class SessionRegistry {
   startSubagentBash(rootSessionId: string, path: AgentPath, execution: Pick<BashExecutionState, 'id' | 'command' | 'excludeFromContext'>): void {
     const attachment = this.getSubagentAttachment(rootSessionId, path);
     if (!attachment || attachment.closed) return;
+    let bytesByExecution = attachmentBashBytes.get(attachment);
+    if (!bytesByExecution) {
+      bytesByExecution = new Map(); // eslint-disable-line svelte/prefer-svelte-reactivity -- byte bookkeeping, never read reactively
+      attachmentBashBytes.set(attachment, bytesByExecution);
+    }
+    bytesByExecution.set(execution.id, 0);
     attachment.bashExecutions = {
       ...attachment.bashExecutions,
       [execution.id]: { ...execution, output: '', status: 'running' },
@@ -1096,6 +1117,7 @@ export class SessionRegistry {
     const attachment = this.getSubagentAttachment(rootSessionId, path);
     const execution = attachment?.bashExecutions[id];
     if (!attachment || !execution) return;
+    attachmentBashBytes.get(attachment)?.delete(id);
     const bounded = appendBoundedBashOutput('', result.output, MAX_BASH_LIVE_OUTPUT_BYTES);
     const boundedResult: BashResult = { ...result, output: bounded.output, truncated: result.truncated || bounded.truncated };
     attachment.bashExecutions = {
@@ -1114,6 +1136,7 @@ export class SessionRegistry {
     const attachment = this.getSubagentAttachment(rootSessionId, path);
     const execution = attachment?.bashExecutions[id];
     if (!attachment || !execution) return;
+    attachmentBashBytes.get(attachment)?.delete(id);
     attachment.bashExecutions = { ...attachment.bashExecutions, [id]: { ...execution, status: 'error', error } };
   }
 
@@ -1261,18 +1284,6 @@ export class SessionRegistry {
       if (textContent?.text) return textContent.text;
     }
     return undefined;
-  }
-
-  /** Refresh server-derived metadata after persisted session state changes. */
-  private refreshSessionMeta(sessionId: string): void {
-    connection
-      .send({ type: 'get_session_meta', sessionId })
-      .then((res) => {
-        if (res.success && res.data) {
-          this.updateMeta(sessionId, (res.data as { meta: SessionMeta }).meta);
-        }
-      })
-      .catch(() => {});
   }
 
   /** Add an optimistic user message so it renders immediately before the server round-trip.
@@ -1527,6 +1538,7 @@ export class SessionRegistry {
     attachment.transcript = attachment.messages;
     attachment.messageKeys = attachment.messages.map((_, index) => `child-${snapshot.sessionId}-${JSON.stringify(snapshot.path)}-${index}`);
     attachment.optimisticEntries = [];
+    attachmentBashBytes.delete(attachment);
     attachment.bashExecutions = {};
     attachment.streamingMessage = snapshot.streamingMessage ? { ...snapshot.streamingMessage, content: snapshot.streamingMessage.content.map((block) => ({ ...block })) } : null;
     attachment.streamingKey = snapshot.streamingMessage ? `child-stream-${snapshot.sessionId}-${JSON.stringify(snapshot.path)}-${snapshot.childSessionId}` : null;
@@ -1697,7 +1709,9 @@ export class SessionRegistry {
         this.flushCompletedBash(sessionId);
         // A user-aborted settle needs no attention flag: the abort came from
         // whoever was engaged with the session.
-        const settledAborted = (event as AgentSettledEvent).aborted === true;
+        const settledEvent = event as AgentSettledEvent;
+        if (settledEvent.meta) this.updateMeta(sessionId, settledEvent.meta);
+        const settledAborted = settledEvent.aborted === true;
         if (!this.userIsLookingAt(sessionId) && !settledAborted) {
           session.needsAttention = true;
         }
@@ -1723,15 +1737,10 @@ export class SessionRegistry {
         session.lastPositiveStreamingUsage = null;
         // Apply entry IDs so navigation targets work on messages received via streaming.
         if (endEvent.messageEntryIds) hydrateMessageEntryIds(session, endEvent.messageEntryIds);
-        // Refresh meta after the terminal attempt boundary.
-        this.refreshSessionMeta(sessionId);
         break;
       }
 
       case 'turn_end':
-        // Pi emits turn_end after persisting the completed turn, while the
-        // session can still be working through a queued continuation.
-        this.refreshSessionMeta(sessionId);
         break;
 
       case 'message_start': {
@@ -1895,8 +1904,9 @@ export class SessionRegistry {
       case 'tool_execution_update': {
         const upd = event as ToolExecutionUpdateEvent;
         const call = session.toolExecutions[upd.toolCallId];
-        if (call && call.partialResult.length <= MAX_TOOL_PARTIAL_CHARS) {
-          call.partialResult += upd.content;
+        if (call && call.partialResult.length < MAX_TOOL_PARTIAL_CHARS) {
+          const remaining = MAX_TOOL_PARTIAL_CHARS - call.partialResult.length;
+          call.partialResult += upd.content.slice(0, remaining);
         }
         break;
       }
@@ -1922,11 +1932,12 @@ export class SessionRegistry {
         session.isCompacting = true;
         break;
 
-      case 'auto_compaction_end':
+      case 'auto_compaction_end': {
         session.isCompacting = false;
-        // Context usage changes significantly after compaction.
-        this.refreshSessionMeta(sessionId);
+        const compacted = event as import('@pimote/shared').AutoCompactionEndEvent;
+        if (compacted.meta) this.updateMeta(sessionId, compacted.meta);
         break;
+      }
 
       case 'tree_navigation_start':
         session.isNavigatingTree = true;
@@ -2419,6 +2430,7 @@ export class SessionRegistry {
     const session = this.sessions[sessionId];
     const execution = session?.bashExecutions[id];
     if (!session || !execution) return;
+    this.bashOutputBytes.delete(this.bashOutputKey(sessionId, id));
 
     // If the model is still streaming, retain a completed transient entry until
     // agent_settled. Pi queues the native history entry until that same boundary;
@@ -2447,6 +2459,7 @@ export class SessionRegistry {
     const session = this.sessions[sessionId];
     const execution = session?.bashExecutions[id];
     if (!session || !execution) return;
+    this.bashOutputBytes.delete(this.bashOutputKey(sessionId, id));
 
     session.bashExecutions = {
       ...session.bashExecutions,
@@ -2663,16 +2676,16 @@ export const sessionRegistry = new SessionRegistry((event) => {
   coordinateDownloadUpdate(event, downloadUi);
 });
 
+function applyOpenSessionData(sessionId: string, data: OpenSessionResponseData): void {
+  if (data.meta) sessionRegistry.updateMeta(sessionId, data.meta);
+  if (data.commands) commandStore.setCommands(sessionId, data.commands);
+}
+
 async function fetchFullSessionData(sessionId: string): Promise<void> {
   const requestedSession = sessionRegistry.sessions[sessionId];
   const streamingRevision = requestedSession?.streamingRevision;
   try {
-    const [stateRes, msgRes, metaRes, cmdsRes] = await Promise.all([
-      connection.send({ type: 'get_state', sessionId }),
-      connection.send({ type: 'get_messages', sessionId }),
-      connection.send({ type: 'get_session_meta', sessionId }),
-      connection.send({ type: 'get_commands', sessionId }),
-    ]);
+    const [stateRes, msgRes] = await Promise.all([connection.send({ type: 'get_state', sessionId }), connection.send({ type: 'get_messages', sessionId })]);
 
     const session = sessionRegistry.sessions[sessionId];
     if (!session) return;
@@ -2708,35 +2721,8 @@ async function fetchFullSessionData(sessionId: string): Promise<void> {
       session.firstMessage = sessionRegistry.firstUserMessage(messages);
       sessionRegistry.rebuildToolExecutions(session);
     }
-
-    if (metaRes.success && metaRes.data) {
-      const meta = (metaRes.data as { meta: SessionMeta }).meta;
-      sessionRegistry.updateMeta(sessionId, meta);
-    }
-
-    if (cmdsRes.success && cmdsRes.data) {
-      const commands = (cmdsRes.data as { commands: import('@pimote/shared').CommandInfo[] }).commands;
-      commandStore.setCommands(sessionId, commands);
-    }
   } catch (err) {
     console.error('[SessionRegistry] Failed to fetch full session data:', err);
-  }
-}
-
-async function refreshSessionMetaAndCommands(sessionId: string): Promise<void> {
-  try {
-    const [metaRes, cmdsRes] = await Promise.all([connection.send({ type: 'get_session_meta', sessionId }), connection.send({ type: 'get_commands', sessionId })]);
-
-    if (metaRes.success && metaRes.data) {
-      sessionRegistry.updateMeta(sessionId, (metaRes.data as { meta: SessionMeta }).meta);
-    }
-
-    if (cmdsRes.success && cmdsRes.data) {
-      const commands = (cmdsRes.data as { commands: import('@pimote/shared').CommandInfo[] }).commands;
-      commandStore.setCommands(sessionId, commands);
-    }
-  } catch (err) {
-    console.error('[SessionRegistry] Failed to refresh session meta/commands:', err);
   }
 }
 
@@ -2867,17 +2853,15 @@ export async function openExistingSession(sessionId: string, folderPath: string 
     }
 
     sessionRegistry.setRestorable(sessionId, true);
-    const data = response.data as { folderPath?: string; folder?: FolderInfo } | undefined;
+    const data = response.data as OpenSessionResponseData | undefined;
     const resolvedFolder = data?.folderPath ?? folderPath;
     if (resolvedFolder) {
       sessionRegistry.setSessionFolder(sessionId, resolvedFolder);
       connection.addSubscribedSession(sessionId, resolvedFolder);
     }
     if (data?.folder) sessionRegistry.bindSessionFolder(sessionId, data.folder);
+    if (data) applyOpenSessionData(sessionId, data);
     cancelledNewSessionIds.delete(sessionId);
-    // Selection must not wait on meta/commands; the refresh already updates
-    // the registry when its responses arrive.
-    void refreshSessionMetaAndCommands(sessionId);
     if (shouldSwitch) sessionRegistry.selectSession(sessionId);
     attachedSessionIds.add(sessionId);
     return true;
@@ -2951,7 +2935,7 @@ async function reconcileNewSessionResponse(tempId: string, response: PimoteRespo
     return response;
   }
 
-  const data = response.data as { sessionId?: string; folderPath?: string; folder?: FolderInfo } | undefined;
+  const data = response.data as (OpenSessionResponseData & { sessionId?: string; folder?: FolderInfo }) | undefined;
   const realId = data?.sessionId;
   if (!realId) {
     cleanupFailedNewSession(tempId, request);
@@ -2977,17 +2961,21 @@ async function reconcileNewSessionResponse(tempId: string, response: PimoteRespo
   if (folderPath) sessionRegistry.setSessionFolder(realId, folderPath);
   if (folder) sessionRegistry.bindSessionFolder(realId, folder);
   connection.addSubscribedSession(realId, folderPath);
+  if (data) applyOpenSessionData(realId, data);
 
   // A lifecycle push can create and attach this real session before the
-  // command response. Preserve all transcript/meta state and avoid a second
-  // attachment or data fetch. Without a push, fetch the initial snapshot.
+  // command response. New-session opens carry their empty snapshot in the
+  // response; existing lifecycle attachments keep their already replayed data.
   const lifecycleAttachment = lifecycleAttachmentPromises.get(realId);
   const fetchInitialSnapshot = () => {
     if (attachedSessionIds.has(realId) || !sessionRegistry.sessions[realId]) return;
     attachedSessionIds.add(realId);
     void fetchFullSessionData(realId);
   };
-  if (lifecycleAttachment) {
+  if (data?.initialSnapshot) {
+    sessionRegistry.handleEvent(data.initialSnapshot);
+    attachedSessionIds.add(realId);
+  } else if (lifecycleAttachment) {
     void lifecycleAttachment.then((attached) => {
       if (!attached) fetchInitialSnapshot();
     });
@@ -3076,6 +3064,11 @@ connection.onEvent((event) => {
       const projectName = folder?.name ?? 'Unknown';
       sessionRegistry.replaceSession(replaced.oldSessionId, replaced.newSessionId, folder?.path ?? '', projectName);
       if (folder) sessionRegistry.bindSessionFolder(replaced.newSessionId, folder);
+      applyOpenSessionData(replaced.newSessionId, {
+        sessionId: replaced.newSessionId,
+        ...(replaced.meta ? { meta: replaced.meta } : {}),
+        ...(replaced.commands ? { commands: replaced.commands } : {}),
+      });
       connection.removeSubscribedSession(replaced.oldSessionId);
       connection.addSubscribedSession(replaced.newSessionId, folder?.path ?? '');
       commandStore.removeSession(replaced.oldSessionId);
@@ -3109,6 +3102,7 @@ connection.onSessionRestored = (sessionId, data) => {
   }
   if (data.folderPath) sessionRegistry.setSessionFolder(sessionId, data.folderPath);
   if (data.folder) sessionRegistry.bindSessionFolder(sessionId, data.folder);
+  applyOpenSessionData(sessionId, data);
   attachedSessionIds.add(sessionId);
 };
 
@@ -3175,8 +3169,6 @@ connection.onReconnected = () => {
     // allowing the user to submit another command. Never re-dispatch the text.
     if (sessionRegistry.hasPendingBash(session.sessionId)) {
       void fetchFullSessionData(session.sessionId);
-    } else {
-      void refreshSessionMetaAndCommands(session.sessionId);
     }
   }
   const viewedId = sessionRegistry.viewedSessionId;

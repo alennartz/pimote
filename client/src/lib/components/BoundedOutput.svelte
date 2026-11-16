@@ -28,12 +28,16 @@
   // Counted without materializing the line array: output deltas arrive many
   // times per second and the buffer can reach the live-output cap.
   let lineCount = $derived.by(() => {
+    // The content auto-expands while streaming, so its collapse count is not
+    // observable until it settles. Avoid rescanning the growing buffer per
+    // delta; count once on the settled value.
+    if (streaming) return 0;
     let count = 1;
     for (let index = text.indexOf('\n'); index !== -1; index = text.indexOf('\n', index + 1)) count += 1;
     return count;
   });
   let visualOverflow = $state(false);
-  let needsCollapse = $derived(lineCount > maxCollapsedLines || visualOverflow);
+  let needsCollapse = $derived(!streaming && (lineCount > maxCollapsedLines || visualOverflow));
   let clamped = $derived(needsCollapse && !expanded);
   let scrollable = $derived(!clamped && (bounded || (expanded && needsCollapse)));
   let displayText = $derived(needsCollapse && !expanded ? lines.slice(0, maxCollapsedLines).join('\n') : text);

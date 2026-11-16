@@ -40,6 +40,13 @@ describe('transcript image content', () => {
     expect(document.body.querySelector('[role="dialog"][aria-modal="true"] img')?.getAttribute('src')).toBe('data:image/png;base64,AQIDBA==');
   });
 
+  it('renders server-backed image refs without rebuilding an inline data URL', async () => {
+    const url = `/i/${'b'.repeat(64)}`;
+    const target = render({ role: 'assistant', content: [{ type: 'image', image: { url, mimeType: 'image/png' } }] });
+    await tick();
+    expect(target.querySelector<HTMLImageElement>('.assistant-message img')?.getAttribute('src')).toBe(url);
+  });
+
   it('renders image blocks in assistant messages', async () => {
     const target = render({
       role: 'assistant',

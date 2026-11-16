@@ -11,6 +11,11 @@ import type {
   SubagentViewEvent,
   SubagentViewSnapshot,
   SubagentViewClosedEvent,
+  FullResyncEvent,
+  FullResyncStartEvent,
+  FullResyncChunkEvent,
+  FullResyncBranchChunkEvent,
+  PimoteAgentMessage,
 } from '@pimote/shared';
 import { SvelteMap } from 'svelte/reactivity';
 import { version } from '$app/environment';
@@ -19,6 +24,12 @@ import type { UserSessionFacts } from './user-session-facts.js';
 import { updateStore } from './update.svelte.js';
 
 type EventListener = (event: PimoteEvent) => void;
+
+interface PendingFullResync {
+  readonly start: FullResyncStartEvent;
+  readonly messages: PimoteAgentMessage[];
+  readonly branchEntryIds: string[];
+}
 
 /** Keep child-view cursors in a namespace separate from root replay cursors. */
 function subagentViewKey(rootSessionId: string, path: AgentPath): string {
@@ -169,6 +180,8 @@ export class ConnectionStore {
   private ws: WebSocket | null = null;
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- in-flight request registry, not reactive UI state
   private pending = new Map<string, { resolve: (r: PimoteResponse) => void; reject: (e: Error) => void }>();
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- in-flight snapshot assembly, not reactive UI state
+  private pendingFullResync = new Map<string, PendingFullResync>();
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- event-listener set, not reactive UI state
   private listeners = new Set<EventListener>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -226,6 +239,7 @@ export class ConnectionStore {
   }
 
   private notifyDisconnected(): void {
+    this.pendingFullResync.clear();
     for (const cb of [...this.disconnectListeners]) {
       try {
         cb();
@@ -336,54 +350,7 @@ export class ConnectionStore {
       }
 
       // Event
-      const event = msg as PimoteEvent;
-
-      // Track root replay cursors only. Child view messages carry a
-      // `viewCursor` and must never advance the root EventBuffer position.
-      // For buffered_events envelopes (which have no cursor of their own),
-      // advance to the highest root cursor among the sub-events so a later
-      // reconnect does not replay the same parent events.
-      if (event.type === 'buffered_events' && 'events' in event && 'sessionId' in event) {
-        const buffered = event as { sessionId: string; events: Array<{ cursor?: number; type?: string }> };
-        let max = this.sessionCursors.get(buffered.sessionId) ?? 0;
-        for (const sub of buffered.events) {
-          if (sub.type === 'subagent_view_event') continue;
-          if (typeof sub.cursor === 'number' && sub.cursor > max) {
-            max = sub.cursor;
-          }
-        }
-        this.sessionCursors.set(buffered.sessionId, max);
-      } else if (event.type === 'subagent_view_snapshot') {
-        const snapshot = event as SubagentViewSnapshot;
-        const key = subagentViewKey(snapshot.sessionId, snapshot.path);
-        const previous = this.subagentViewCursors.get(key) ?? 0;
-        // Reconnect creates a fresh child surface whose cursor starts at zero.
-        // Reset this independent cursor instead of folding it into root replay.
-        if (snapshot.viewCursor === 0 || snapshot.viewCursor > previous) this.subagentViewCursors.set(key, snapshot.viewCursor);
-      } else if (event.type === 'subagent_view_event') {
-        const viewEvent = event as SubagentViewEvent;
-        const key = subagentViewKey(viewEvent.sessionId, viewEvent.path);
-        const previous = this.subagentViewCursors.get(key) ?? 0;
-        if (viewEvent.viewCursor > previous) this.subagentViewCursors.set(key, viewEvent.viewCursor);
-      } else if (event.type === 'subagent_view_closed') {
-        const closed = event as SubagentViewClosedEvent;
-        this.subagentViewCursors.delete(subagentViewKey(closed.sessionId, closed.path));
-      } else if ('cursor' in event && typeof event.cursor === 'number' && 'sessionId' in event && typeof event.sessionId === 'string') {
-        this.sessionCursors.set(event.sessionId, event.cursor);
-      }
-
-      if (event.type === 'user_sessions_changed') {
-        this.handleUserSessionsChanged(event as UserSessionsChangedEvent, ws);
-        return;
-      }
-
-      if (event.type === 'session_archived' && event.archived) {
-        this.removeSubscribedSession(event.sessionId);
-        this.onSessionArchived?.(event.sessionId);
-      }
-
-      // Notify listeners
-      this.emitEvent(event);
+      this.handleWireEvent(msg as PimoteEvent, ws);
     };
 
     this.ws.onclose = () => {
@@ -415,6 +382,124 @@ export class ConnectionStore {
    *  loop over the reconciled set; later events mid-connection open missing
    *  entries directly (their `fresh` is always false, so drops are
    *  unconditional). */
+  private handleWireEvent(event: PimoteEvent, ws: WebSocket): void {
+    if (event.type === 'event_batch') {
+      for (const batched of event.events) this.handleWireEvent(batched, ws);
+      return;
+    }
+    if (event.type === 'full_resync_start') {
+      this.beginFullResync(event as FullResyncStartEvent);
+      return;
+    }
+    if (event.type === 'full_resync_chunk') {
+      this.appendFullResyncChunk(event as FullResyncChunkEvent);
+      return;
+    }
+    if (event.type === 'full_resync_branch_chunk') {
+      this.appendFullResyncBranchChunk(event as FullResyncBranchChunkEvent);
+      return;
+    }
+
+    // Track root replay cursors only. Child view messages carry a
+    // `viewCursor` and must never advance the root EventBuffer position.
+    // For buffered_events envelopes (which have no cursor of their own),
+    // advance to the highest root cursor among the sub-events so a later
+    // reconnect does not replay the same parent events.
+    if (event.type === 'buffered_events' && 'events' in event && 'sessionId' in event) {
+      const buffered = event as { sessionId: string; events: Array<{ cursor?: number; type?: string }> };
+      let max = this.sessionCursors.get(buffered.sessionId) ?? 0;
+      for (const sub of buffered.events) {
+        if (sub.type === 'subagent_view_event') continue;
+        if (typeof sub.cursor === 'number' && sub.cursor > max) max = sub.cursor;
+      }
+      this.sessionCursors.set(buffered.sessionId, max);
+    } else if (event.type === 'subagent_view_snapshot') {
+      const snapshot = event as SubagentViewSnapshot;
+      const key = subagentViewKey(snapshot.sessionId, snapshot.path);
+      const previous = this.subagentViewCursors.get(key) ?? 0;
+      if (snapshot.viewCursor === 0 || snapshot.viewCursor > previous) this.subagentViewCursors.set(key, snapshot.viewCursor);
+    } else if (event.type === 'subagent_view_event') {
+      const viewEvent = event as SubagentViewEvent;
+      const key = subagentViewKey(viewEvent.sessionId, viewEvent.path);
+      const previous = this.subagentViewCursors.get(key) ?? 0;
+      if (viewEvent.viewCursor > previous) this.subagentViewCursors.set(key, viewEvent.viewCursor);
+    } else if (event.type === 'subagent_view_closed') {
+      const closed = event as SubagentViewClosedEvent;
+      this.subagentViewCursors.delete(subagentViewKey(closed.sessionId, closed.path));
+    } else if ('cursor' in event && typeof event.cursor === 'number' && 'sessionId' in event && typeof event.sessionId === 'string') {
+      this.sessionCursors.set(event.sessionId, event.cursor);
+    }
+
+    if (event.type === 'user_sessions_changed') {
+      this.handleUserSessionsChanged(event as UserSessionsChangedEvent, ws);
+      return;
+    }
+    if (event.type === 'session_archived' && event.archived) {
+      this.removeSubscribedSession(event.sessionId);
+      this.onSessionArchived?.(event.sessionId);
+    }
+    this.emitEvent(event);
+  }
+
+  private beginFullResync(start: FullResyncStartEvent): void {
+    if (!Number.isSafeInteger(start.totalMessages) || start.totalMessages < 0) return;
+    if (start.totalBranchEntryIds !== undefined && (!Number.isSafeInteger(start.totalBranchEntryIds) || start.totalBranchEntryIds < 0)) return;
+    const pending: PendingFullResync = { start, messages: [], branchEntryIds: [] };
+    this.pendingFullResync.set(start.sessionId, pending);
+    if (this.fullResyncComplete(pending)) this.finishFullResync(pending);
+  }
+
+  private appendFullResyncChunk(chunk: FullResyncChunkEvent): void {
+    const pending = this.pendingFullResync.get(chunk.sessionId);
+    if (!pending || pending.start.snapshotId !== chunk.snapshotId) return;
+    if (chunk.offset !== pending.messages.length || !Array.isArray(chunk.messages)) {
+      this.pendingFullResync.delete(chunk.sessionId);
+      return;
+    }
+    if (pending.messages.length + chunk.messages.length > pending.start.totalMessages) {
+      this.pendingFullResync.delete(chunk.sessionId);
+      return;
+    }
+    pending.messages.push(...chunk.messages);
+    if (this.fullResyncComplete(pending)) this.finishFullResync(pending);
+  }
+
+  private appendFullResyncBranchChunk(chunk: FullResyncBranchChunkEvent): void {
+    const pending = this.pendingFullResync.get(chunk.sessionId);
+    if (!pending || pending.start.snapshotId !== chunk.snapshotId || pending.start.totalBranchEntryIds === undefined) return;
+    if (chunk.offset !== pending.branchEntryIds.length || !Array.isArray(chunk.ids) || pending.branchEntryIds.length + chunk.ids.length > pending.start.totalBranchEntryIds) {
+      this.pendingFullResync.delete(chunk.sessionId);
+      return;
+    }
+    pending.branchEntryIds.push(...chunk.ids);
+    if (this.fullResyncComplete(pending)) this.finishFullResync(pending);
+  }
+
+  private fullResyncComplete(pending: PendingFullResync): boolean {
+    const branchCount = pending.start.totalBranchEntryIds;
+    return pending.messages.length === pending.start.totalMessages && (branchCount === undefined || pending.branchEntryIds.length === branchCount);
+  }
+
+  private finishFullResync(pending: PendingFullResync): void {
+    const { start, messages } = pending;
+    if (this.pendingFullResync.get(start.sessionId) === pending) this.pendingFullResync.delete(start.sessionId);
+    const event: FullResyncEvent = {
+      type: 'full_resync',
+      sessionId: start.sessionId,
+      state: start.state,
+      messages,
+      ...(start.activeSubagentContent !== undefined ? { activeSubagentContent: start.activeSubagentContent } : {}),
+      ...(start.branchEntryIds !== undefined
+        ? { branchEntryIds: start.branchEntryIds }
+        : start.totalBranchEntryIds !== undefined
+          ? { branchEntryIds: pending.branchEntryIds }
+          : {}),
+      ...(start.streamingMessage !== undefined ? { streamingMessage: start.streamingMessage } : {}),
+      ...(start.runningToolCallIds !== undefined ? { runningToolCallIds: start.runningToolCallIds } : {}),
+    };
+    this.emitEvent(event);
+  }
+
   private handleUserSessionsChanged(event: UserSessionsChangedEvent, ws: WebSocket): void {
     if (this.ws !== ws) return;
     if (!localMirrorCleared) {

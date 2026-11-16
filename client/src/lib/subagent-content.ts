@@ -13,9 +13,17 @@ import type {
 export type SubagentContentEvent = SubagentContentStartEvent | SubagentContentDeltaEvent | SubagentContentEndEvent;
 export type ActiveSubagentContent = Readonly<PimoteActiveSubagentContent>;
 
+export interface SubagentOperationLocation {
+  readonly messageIndex: number;
+  readonly contentIndex: number;
+}
+
 export interface SubagentContentState {
   readonly messages: readonly PimoteAgentMessage[];
   readonly active: readonly ActiveSubagentContent[];
+  /** Snapshot-built indices keep each live operation delta off the transcript scan. */
+  readonly messageIndexById?: ReadonlyMap<string, number>;
+  readonly operationLocations?: ReadonlyMap<string, SubagentOperationLocation>;
 }
 
 const cloneContent = (content: PimoteMessageContent): PimoteMessageContent => ({ ...content });
@@ -39,6 +47,29 @@ function parentIndex(messages: readonly PimoteAgentMessage[], parentMessageId: s
 
 function operationMessageIndex(messages: readonly PimoteAgentMessage[], operationId: string): number {
   return messages.findIndex((message) => operationBlock(message, operationId) >= 0);
+}
+
+function indexMessageIds(messages: readonly PimoteAgentMessage[]): Map<string, number> {
+  const index = new Map<string, number>();
+  messages.forEach((message, messageIndex) => {
+    index.set(`message-${messageIndex}`, messageIndex);
+    if (message.entryId) index.set(message.entryId, messageIndex);
+  });
+  return index;
+}
+
+function indexOperationLocations(messages: readonly PimoteAgentMessage[]): Map<string, SubagentOperationLocation> {
+  const index = new Map<string, SubagentOperationLocation>();
+  messages.forEach((message, messageIndex) => {
+    message.content.forEach((content, contentIndex) => {
+      if (content.type === 'subagent' && content.subagentState === 'active') index.set(content.operationId, { messageIndex, contentIndex });
+    });
+  });
+  return index;
+}
+
+function messageIndexFor(state: SubagentContentState, parentMessageId: string): number {
+  return state.messageIndexById?.get(parentMessageId) ?? parentIndex(state.messages, parentMessageId);
 }
 
 function applyDelta(data: PimoteSubagentStartData, delta: PimoteSubagentDeltaData): PimoteSubagentStartData {
@@ -80,7 +111,7 @@ function replaceActive(active: readonly ActiveSubagentContent[], next: ActiveSub
 
 /** Apply one projected lifecycle event to the in-flight assistant row. */
 export function applySubagentContentToStreaming(streaming: StreamingMessage, event: SubagentContentEvent): StreamingMessage {
-  const content = streaming.content.map(cloneContent);
+  const content = streaming.content.slice();
   const existing = content.findIndex((candidate) => candidate.type === 'subagent' && candidate.operationId === event.operationId);
   if (event.type === 'subagent_content_start') {
     const block = cloneContent(event.content);
@@ -108,10 +139,10 @@ export function applySubagentContentToStreaming(streaming: StreamingMessage, eve
  * re-cloning the transcript on every streamed delta. */
 export function applySubagentContentEvent(state: SubagentContentState, event: SubagentContentEvent): SubagentContentState {
   const source = state.messages;
-  let messageIndex = operationMessageIndex(source, event.operationId);
+  let messageIndex = state.operationLocations?.get(event.operationId)?.messageIndex ?? operationMessageIndex(source, event.operationId);
   let appendedParent = false;
   if (messageIndex < 0) {
-    const byParent = parentIndex(source, event.parentMessageId);
+    const byParent = messageIndexFor(state, event.parentMessageId);
     if (byParent >= 0) {
       messageIndex = byParent;
     } else {
@@ -142,8 +173,14 @@ export function applySubagentContentEvent(state: SubagentContentState, event: Su
     else content.splice(Math.min(event.contentIndex, content.length), 0, block);
     const messages = materialize();
     messages[messageIndex] = { ...message, content };
-    const next = activeFromBlock(messages[messageIndex], parentMessageId, existing >= 0 ? existing : Math.min(event.contentIndex, content.length - 1));
-    return { messages, active: next ? replaceActive(state.active, next) : state.active };
+    const nextContentIndex = existing >= 0 ? existing : Math.min(event.contentIndex, content.length - 1);
+    const next = activeFromBlock(messages[messageIndex], parentMessageId, nextContentIndex);
+    const active = next ? replaceActive(state.active, next) : state.active;
+    const messageIndexById = new Map(state.messageIndexById ?? indexMessageIds(source));
+    if (appendedParent) messageIndexById.set(parentMessageId, messageIndex);
+    const operationLocations = new Map(state.operationLocations ?? indexOperationLocations(source));
+    if (next) operationLocations.set(next.operationId, { messageIndex, contentIndex: nextContentIndex });
+    return { messages, active, messageIndexById, operationLocations };
   }
 
   const blockIndex = existing >= 0 ? existing : Math.min(event.contentIndex, content.length - 1);
@@ -163,7 +200,9 @@ export function applySubagentContentEvent(state: SubagentContentState, event: Su
       placement: nextBlock.placement ?? { entryId: event.parentMessageId },
       data: nextData,
     };
-    return { messages: materialize(), active: replaceActive(state.active, nextActive) };
+    const operationLocations = new Map(state.operationLocations ?? indexOperationLocations(source));
+    operationLocations.set(event.operationId, { messageIndex, contentIndex: blockIndex });
+    return { messages: materialize(), active: replaceActive(state.active, nextActive), messageIndexById: state.messageIndexById ?? indexMessageIds(source), operationLocations };
   }
 
   const nextBlock = cloneContent(event.content);
@@ -171,7 +210,47 @@ export function applySubagentContentEvent(state: SubagentContentState, event: Su
   else content.splice(Math.min(event.contentIndex, content.length), 0, nextBlock);
   const messages = materialize();
   messages[messageIndex] = { ...message, content };
-  return { messages, active: state.active.filter((item) => item.operationId !== event.operationId) };
+  const operationLocations = new Map(state.operationLocations ?? indexOperationLocations(source));
+  operationLocations.delete(event.operationId);
+  return {
+    messages,
+    active: state.active.filter((item) => item.operationId !== event.operationId),
+    messageIndexById: state.messageIndexById ?? indexMessageIds(source),
+    operationLocations,
+  };
+}
+
+/** Apply an active delta to the owning row in place. Used only by the live
+ *  reactive registry; snapshot and test callers keep the immutable reducer. */
+export function applySubagentContentDeltaInPlace(
+  state: SubagentContentState,
+  event: SubagentContentDeltaEvent,
+  transcriptMessages: readonly PimoteAgentMessage[] = state.messages,
+): SubagentContentState | null {
+  const location = state.operationLocations?.get(event.operationId);
+  if (!location) return null;
+  const messages = transcriptMessages as PimoteAgentMessage[];
+  const message = messages[location.messageIndex];
+  if (!message) return null;
+  const contentIndex = message.content.findIndex((content) => content.type === 'subagent' && content.operationId === event.operationId);
+  const block = message.content[contentIndex];
+  if (contentIndex < 0 || block?.type !== 'subagent') return null;
+
+  const nextData = applyDelta(block.data as PimoteSubagentStartData, event.data);
+  const nextBlock = { ...block, data: nextData, subagentState: 'active' as const };
+  const content = [...message.content];
+  content[contentIndex] = nextBlock;
+  messages[location.messageIndex] = { ...message, content };
+  const parentMessageId = message.entryId ?? `message-${location.messageIndex}`;
+  const nextActive: ActiveSubagentContent = {
+    parentMessageId,
+    contentIndex,
+    operationId: event.operationId,
+    kind: event.kind,
+    placement: nextBlock.placement ?? { entryId: event.parentMessageId },
+    data: nextData,
+  };
+  return { ...state, messages, active: replaceActive(state.active, nextActive) };
 }
 
 /** Load complete projected blocks and active operation snapshots together. */
@@ -193,7 +272,13 @@ export function hydrateSubagentContent(messages: readonly PimoteAgentMessage[], 
   });
   const byOperation = new Map<string, ActiveSubagentContent>();
   for (const item of [...discovered, ...active]) byOperation.set(item.operationId, item);
-  return { messages: hydratedMessages, active: [...byOperation.values()] };
+  const messageIndexById = indexMessageIds(hydratedMessages);
+  const operationLocations = indexOperationLocations(hydratedMessages);
+  for (const item of active) {
+    const messageIndex = messageIndexById.get(item.parentMessageId) ?? parentIndex(hydratedMessages, item.parentMessageId);
+    if (messageIndex >= 0) operationLocations.set(item.operationId, { messageIndex, contentIndex: item.contentIndex });
+  }
+  return { messages: hydratedMessages, active: [...byOperation.values()], messageIndexById, operationLocations };
 }
 
 /** Fold one finalized message's active subagent blocks into the projection
@@ -214,11 +299,30 @@ export function projectMessage(state: SubagentContentState, message: PimoteAgent
       data: content.data as PimoteSubagentStartData,
     });
   });
-  if (discovered.length === 0) return { messages, active: state.active };
+  const inserted = messages.length > state.messages.length;
+  const messageIndexById = (state.messageIndexById ?? indexMessageIds(state.messages)) as Map<string, number>;
+  const operationLocations = (state.operationLocations ?? indexOperationLocations(state.messages)) as Map<string, SubagentOperationLocation>;
+  // Normal transcript growth appends after every confirmed row. Re-index only
+  // when a caller inserts into the middle, not for each finalized message.
+  if (inserted && messageIndex < state.messages.length) {
+    for (const [id, index] of messageIndexById) if (index >= messageIndex) messageIndexById.set(id, index + 1);
+    for (const [operationId, location] of operationLocations) {
+      if (location.messageIndex >= messageIndex) operationLocations.set(operationId, { ...location, messageIndex: location.messageIndex + 1 });
+    }
+  }
+  messageIndexById.set(parentMessageId, messageIndex);
+  const discoveredIds = new Set(discovered.map((item) => item.operationId));
+  if (discoveredIds.size > 0) {
+    for (const item of state.active) {
+      if (item.parentMessageId === parentMessageId && !discoveredIds.has(item.operationId)) operationLocations.delete(item.operationId);
+    }
+  }
+  for (const item of discovered) operationLocations.set(item.operationId, { messageIndex, contentIndex: item.contentIndex });
+  if (discovered.length === 0) return { messages, active: state.active, messageIndexById, operationLocations };
   const byOperation = new Map<string, ActiveSubagentContent>();
   for (const item of discovered) byOperation.set(item.operationId, item);
   for (const item of state.active) byOperation.set(item.operationId, item);
-  return { messages, active: [...byOperation.values()] };
+  return { messages, active: [...byOperation.values()], messageIndexById, operationLocations };
 }
 
 /** Narrow a session feed to dedicated projected-content lifecycle events. */

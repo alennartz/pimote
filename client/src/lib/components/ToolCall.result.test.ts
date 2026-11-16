@@ -53,6 +53,22 @@ describe('tool results', () => {
     expect(target.querySelector('.tool-image-caption')).toBeNull();
   });
 
+  it('renders a content-addressed read image from tool result data', async () => {
+    const target = document.createElement('div');
+    const url = `/i/${'a'.repeat(64)}`;
+    const component = mount(ToolCall, {
+      target,
+      props: {
+        content: { type: 'tool_call', toolName: 'read', toolCallId: 'read-ref', args: { path: 'image' } },
+        result: 'Read image file [image/png]',
+        data: { type: 'image', url, mimeType: 'image/png' },
+      },
+    });
+    destroy = () => unmount(component);
+    await tick();
+    expect(target.querySelector<HTMLImageElement>('.tool-content img')?.getAttribute('src')).toBe(url);
+  });
+
   it('renders replayed read images from the tool result projection', async () => {
     const target = document.createElement('div');
     const note = 'Read image file [image/png]';

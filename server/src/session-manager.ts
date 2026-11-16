@@ -17,15 +17,25 @@ import type { PimoteConfig } from './config.js';
 import { EventBuffer } from './event-buffer.js';
 import { attributeDrained, QUEUE_KINDS, QueueOwnership, type QueueTexts } from './queue-ownership.js';
 import { extractMessageEntryIds, rendererRegisteredVisibility } from './message-mapper.js';
-import type { PimoteEvent, Card, DownloadItem, DownloadSnapshotUpdateEvent, DownloadUpdateEvent, SessionSettingsChangedEvent, SubagentSnapshot } from '../../shared/dist/index.js';
+import type {
+  PimoteEvent,
+  Card,
+  DownloadItem,
+  DownloadSnapshotUpdateEvent,
+  DownloadUpdateEvent,
+  SessionMeta,
+  SessionSettingsChangedEvent,
+  SubagentSnapshot,
+} from '../../shared/dist/index.js';
 import type { PushNotificationPayload, PushNotificationService } from './push-notification.js';
 import { applyPanelMessage, getMergedPanelCards } from './panel-state.js';
 import { createExtensionUIBridge } from './extension-ui-bridge.js';
 import { resolveAllSlotPendingUi, sendSlotEvent } from './session-slot.js';
-export { sendSlotEvent, waitForSlotUiResponse, resolveSlotPendingUi, resolveAllSlotPendingUi, replaySlotPendingUiRequests } from './session-slot.js';
+export { sendBatchedEvent, sendSlotEvent, waitForSlotUiResponse, resolveSlotPendingUi, resolveAllSlotPendingUi, replaySlotPendingUiRequests } from './session-slot.js';
 import { askActivity } from '@pimote/sdk/activity';
 import { getGitBranch } from './git-branch.js';
 import { completeFileRefs } from './file-references.js';
+import { makeSessionMeta } from './session-usage.js';
 import { LoginOrchestrator } from './login-orchestrator.js';
 import { createVoiceExtension } from './voice/index.js';
 import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
@@ -569,6 +579,7 @@ export function createSessionState(
     onSessionIdle?: (sessionId: string, slot: ManagedSlot) => void;
     sendEvent: (event: PimoteEvent) => void;
     notify: (payload: PushNotificationPayload) => Promise<void>;
+    getSessionMeta?: () => SessionMeta | undefined;
   },
   slotRef: { slot: ManagedSlot | null },
   folderPath: string,
@@ -578,7 +589,13 @@ export function createSessionState(
   // predecessor handed out (at most 1000 events per millisecond of lifetime),
   // so a client's stale cursor replays as stale instead of as caught up.
   const visibility = rendererRegisteredVisibility(session);
-  const eventBuffer = new EventBuffer(config.bufferSize, visibility, Date.now() * 1000, () => extractMessageEntryIds(session.sessionManager.getBranch(), visibility));
+  const eventBuffer = new EventBuffer(
+    config.bufferSize,
+    visibility,
+    Date.now() * 1000,
+    () => extractMessageEntryIds(session.sessionManager.getBranch(), visibility),
+    callbacks.getSessionMeta,
+  );
 
   const state: SessionState = {
     id: sessionId,
@@ -1352,6 +1369,7 @@ export class PimoteSessionManager {
           onSessionIdle: (sid, s) => this.handleSessionIdle(sid, s),
           sendEvent: (e) => sendSlotEvent(slot, e),
           notify: (payload) => this.pushNotificationService.notify(payload),
+          getSessionMeta: () => (slotRef.slot?.observers.size ? makeSessionMeta(session, this.getLastKnownGitBranch(sessionId)) : undefined),
         },
         slotRef,
         effectiveFolderPath,
@@ -1638,6 +1656,7 @@ export class PimoteSessionManager {
         onSessionIdle: (sid, s) => this.handleSessionIdle(sid, s),
         sendEvent: (e) => sendSlotEvent(slot, e),
         notify: (payload) => this.pushNotificationService.notify(payload),
+        getSessionMeta: () => (slot.observers.size ? makeSessionMeta(slot.runtime.session, this.getLastKnownGitBranch(slot.sessionState.id)) : undefined),
       },
       slotRef,
       slot.folderPath,

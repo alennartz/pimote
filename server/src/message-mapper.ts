@@ -8,6 +8,7 @@ import {
   type PimoteMessageContent,
   type PimoteUsage,
 } from '../../shared/dist/index.js';
+import { registerImage } from './image-registry.js';
 
 /** The SDK usage carried by assistant and tool-result messages. */
 type SdkUsage = NonNullable<Extract<AgentMessage, { role: 'assistant' | 'toolResult' }>['usage']>;
@@ -71,7 +72,8 @@ type AgentImageContent = Extract<AgentContentItem, { type: 'image' }>;
 
 function mapImageContent(item: AgentImageContent): PimoteImageContent | undefined {
   if (item.data.length > MAX_IMAGE_BASE64_LENGTH) return undefined;
-  return { data: item.data, mimeType: item.mimeType };
+  const url = registerImage(item.mimeType, Buffer.from(item.data, 'base64'));
+  return url ? { url, mimeType: item.mimeType } : undefined;
 }
 
 /** Limit image payloads in a live tool result before buffering or sending it. */
@@ -80,23 +82,45 @@ export function limitToolExecutionResultImages(result: unknown): unknown {
   const wrapper = result as { content?: unknown; structuredContent?: unknown };
   const content = Array.isArray(wrapper.content) ? [...wrapper.content] : [];
   const hasContent = Array.isArray(wrapper.content);
-  let replacedImage = false;
+  let changed = false;
   const boundedContent = content.map((block) => {
     if (!block || typeof block !== 'object' || Array.isArray(block)) return block;
-    const image = block as { type?: unknown; data?: unknown };
-    if (image.type !== 'image' || typeof image.data !== 'string' || image.data.length <= MAX_IMAGE_BASE64_LENGTH) return block;
-    replacedImage = true;
-    return { type: 'text', text: IMAGE_TOO_LARGE_PLACEHOLDER };
+    const image = block as { type?: unknown; data?: unknown; mimeType?: unknown };
+    if (image.type !== 'image' || typeof image.data !== 'string') return block;
+    changed = true;
+    if (image.data.length > MAX_IMAGE_BASE64_LENGTH || typeof image.mimeType !== 'string' || !image.mimeType.startsWith('image/')) {
+      return { type: 'text', text: IMAGE_TOO_LARGE_PLACEHOLDER };
+    }
+    const url = registerImage(image.mimeType, Buffer.from(image.data, 'base64'));
+    return url ? { type: 'image', url, mimeType: image.mimeType } : { type: 'text', text: IMAGE_TOO_LARGE_PLACEHOLDER };
   });
   const structured = wrapper.structuredContent;
-  const structuredImage = structured && typeof structured === 'object' && !Array.isArray(structured) ? (structured as { type?: unknown; data?: unknown }) : undefined;
-  const oversizedStructuredImage = structuredImage?.type === 'image' && typeof structuredImage.data === 'string' && structuredImage.data.length > MAX_IMAGE_BASE64_LENGTH;
-  if (!replacedImage && !oversizedStructuredImage) return result;
-  if (oversizedStructuredImage && !replacedImage) boundedContent.push({ type: 'text', text: IMAGE_TOO_LARGE_PLACEHOLDER });
+  const structuredImage =
+    structured && typeof structured === 'object' && !Array.isArray(structured) ? (structured as { type?: unknown; data?: unknown; mimeType?: unknown }) : undefined;
+  let structuredContent = structured;
+  let oversizedStructuredImage = false;
+  if (structuredImage?.type === 'image' && typeof structuredImage.data === 'string') {
+    changed = true;
+    if (structuredImage.data.length > MAX_IMAGE_BASE64_LENGTH || typeof structuredImage.mimeType !== 'string' || !structuredImage.mimeType.startsWith('image/')) {
+      oversizedStructuredImage = true;
+      structuredContent = undefined;
+    } else {
+      const url = registerImage(structuredImage.mimeType, Buffer.from(structuredImage.data, 'base64'));
+      if (url) structuredContent = { type: 'image', url, mimeType: structuredImage.mimeType };
+      else {
+        oversizedStructuredImage = true;
+        structuredContent = undefined;
+      }
+    }
+  }
+  if (!changed) return result;
+  if (oversizedStructuredImage && !boundedContent.some((block) => block && typeof block === 'object' && (block as { type?: unknown }).type === 'text')) {
+    boundedContent.push({ type: 'text', text: IMAGE_TOO_LARGE_PLACEHOLDER });
+  }
   return {
     ...(result as Record<string, unknown>),
     ...(hasContent || oversizedStructuredImage ? { content: boundedContent } : {}),
-    ...(oversizedStructuredImage ? { structuredContent: undefined } : {}),
+    ...(structuredContent !== structured || oversizedStructuredImage ? { structuredContent } : {}),
   };
 }
 

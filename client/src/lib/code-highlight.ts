@@ -3,9 +3,8 @@ function escapeHtml(text: string): string {
 }
 
 /** Syntax-highlighter module state. The module loads behind a dynamic import
- *  so hljs and its languages stay off the startup path; the import starts
- *  when this module first loads, and every live highlighter re-renders its
- *  last element once it lands. */
+ *  on the first language-bearing code fence, and every live highlighter
+ *  re-renders its last element once it lands. */
 type SyntaxHighlighterModule = typeof import('./syntax-highlighter.js');
 
 let hljsModule: SyntaxHighlighterModule | null = null;
@@ -17,15 +16,18 @@ const liveHighlighters = new Set<{ rerenderLast(): void }>();
  *  upgrades automatically when the module arrives. */
 export function ensureHljs(): Promise<SyntaxHighlighterModule> {
   if (hljsModule) return Promise.resolve(hljsModule);
-  hljsLoading ??= import('./syntax-highlighter.js').then((module) => {
-    hljsModule = module;
-    for (const highlighter of liveHighlighters) highlighter.rerenderLast();
-    return module;
-  });
+  hljsLoading ??= import('./syntax-highlighter.js')
+    .then((module) => {
+      hljsModule = module;
+      for (const highlighter of liveHighlighters) highlighter.rerenderLast();
+      return module;
+    })
+    .catch((error: unknown) => {
+      hljsLoading = null;
+      throw error;
+    });
   return hljsLoading;
 }
-
-if (typeof window !== 'undefined') void ensureHljs();
 
 /**
  * Highlight a complete code string to hljs HTML markup.
@@ -93,6 +95,7 @@ export function createIncrementalHighlighter(opts?: { intervalMs?: number }): In
   const highlighter = {
     schedule(el: HTMLElement, text: string, language: string | null) {
       pending = { el, text, language };
+      if (language && !hljsModule) void ensureHljs().catch(() => {});
       if (timer === null) {
         timer = setTimeout(() => {
           timer = null;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PimoteAgentMessage, StreamingMessage, SubagentContentDeltaEvent, SubagentContentEndEvent, SubagentContentStartEvent } from '../../../shared/src/protocol.js';
-import { applySubagentContentEvent, applySubagentContentToStreaming, hydrateSubagentContent } from './subagent-content.js';
+import { applySubagentContentDeltaInPlace, applySubagentContentEvent, applySubagentContentToStreaming, hydrateSubagentContent } from './subagent-content.js';
 
 const assistant: PimoteAgentMessage = {
   role: 'assistant',
@@ -68,6 +68,13 @@ describe('projected subagent content', () => {
       data: { operation: 'send', parameters: { message: 'Check config' }, result: { response: 'All present' } },
     });
     expect(state.active).toEqual([]);
+  });
+
+  it('applies a live delta to the indexed projected row', () => {
+    const state = applySubagentContentEvent(hydrateSubagentContent([assistant]), start);
+    const updated = applySubagentContentDeltaInPlace(state, request);
+    expect(updated?.messages[0]?.content[1]).toMatchObject({ data: { operation: 'send', parameters: { message: 'Check config' } } });
+    expect(updated?.active[0]).toMatchObject({ operationId: 'send-call', data: { parameters: { message: 'Check config' } } });
   });
 
   it('restores an active operation from a reconnect snapshot and continues its response', () => {

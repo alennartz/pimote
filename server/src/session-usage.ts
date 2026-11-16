@@ -1,5 +1,5 @@
-import type { SessionStats, SessionEntry } from '@earendil-works/pi-coding-agent';
-import type { PimoteUsageBreakdown } from '../../shared/dist/index.js';
+import type { AgentSession, SessionStats, SessionEntry } from '@earendil-works/pi-coding-agent';
+import type { PimoteUsageBreakdown, SessionMeta } from '../../shared/dist/index.js';
 
 interface CostTotals {
   input: number;
@@ -51,5 +51,19 @@ export function projectSessionUsage(entries: readonly SessionEntry[], stats: Pic
   return {
     tokens: { ...stats.tokens },
     cost,
+  };
+}
+
+/** Build the compact metadata snapshot piggybacked on lifecycle and open
+ *  responses, using Pi's authoritative session totals. */
+export function makeSessionMeta(session: AgentSession, gitBranch: string | null): SessionMeta {
+  const contextUsage = session.getContextUsage?.() ?? null;
+  const stats = session.getSessionStats?.() ?? ({ cost: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } as const);
+  const usageBreakdown = projectSessionUsage(session.sessionManager.getEntries(), stats);
+  return {
+    gitBranch,
+    contextUsage: contextUsage ? { percent: contextUsage.percent, contextWindow: contextUsage.contextWindow } : null,
+    lifetimeCostUsd: stats.cost,
+    usageBreakdown,
   };
 }

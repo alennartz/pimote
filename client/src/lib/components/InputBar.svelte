@@ -11,6 +11,7 @@
   import CommandAutocomplete from './CommandAutocomplete.svelte';
   import { extractFileRefPrefix, resolveFileRefSelection } from '$lib/file-ref-prefix.js';
   import { parseBangBashCommand } from '$lib/bash-command.js';
+  import { uploadImages } from '$lib/image-upload.js';
   import type { BashResponseData, CommandInfo, PromptResponseData } from '@pimote/shared';
   import Send from '@lucide/svelte/icons/send';
   import MessageSquare from '@lucide/svelte/icons/message-square';
@@ -548,9 +549,10 @@
         if (idx !== -1) currentPending!.splice(idx, 1);
       };
       try {
+        const imageRefs = isSlashCommand || submittedImages.length === 0 ? [] : await uploadImages(submittedImages);
         const dispatchResponse = isSlashCommand
           ? await sendSurface({ type: 'prompt', message: text })
-          : await sendSurface({ type: 'steer', message: text, ...(submittedImages.length > 0 ? { images: submittedImages } : {}) });
+          : await sendSurface({ type: 'steer', message: text, ...(imageRefs.length > 0 ? { images: imageRefs } : {}) });
         if (!dispatchResponse.success) {
           dropPill();
           restoreSubmittedComposer(sessionId, submittedDraft, submittedImages, undefined, isSlashCommand);
@@ -597,10 +599,11 @@
         else sessionRegistry.dropOptimisticUserMessage(sessionId, clientMessageId);
       };
       try {
+        const imageRefs = submittedImages.length > 0 ? await uploadImages(submittedImages) : [];
         const promptResponse = await sendSurface({
           type: 'prompt',
           message: text,
-          ...(submittedImages.length > 0 ? { images: submittedImages } : {}),
+          ...(imageRefs.length > 0 ? { images: imageRefs } : {}),
           ...(clientMessageId ? { clientMessageId } : {}),
         });
         if (!promptResponse.success) {

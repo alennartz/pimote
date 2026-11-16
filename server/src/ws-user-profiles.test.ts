@@ -52,7 +52,7 @@ function createMockSlot(id: string, folderPath = '/home/user/project'): ManagedS
     bindExtensions: async () => {},
     modelRuntime: { getAvailable: async () => [] },
     clearQueue: () => ({ steering: [], followUp: [] }),
-    sessionManager: { buildContextEntries: () => [], getBranch: () => [], getCwd: () => folderPath },
+    sessionManager: { buildContextEntries: () => [], getBranch: () => [], getEntries: () => [], getCwd: () => folderPath },
   };
 
   const sessionState: SessionState = {

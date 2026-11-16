@@ -1,4 +1,5 @@
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
+import { createHash } from 'node:crypto';
 import type {
   AutocompleteResponseItem,
   CommandInfo,
@@ -12,6 +13,7 @@ import type {
 import type { AgentPath, BorrowedAgentSession, SubagentPresentationProvider, SubagentProviderEvent } from '@pimote/sdk/subagents';
 import { EventBuffer, type IncomingSdkEvent } from './event-buffer.js';
 import { mapAgentMessage, mapContextEntries, type SdkSessionEntry } from './message-mapper.js';
+import { resolveImageInputs } from './image-registry.js';
 import { completeFileRefs } from './file-references.js';
 import { projectSessionUsage } from './session-usage.js';
 import { attributeDrained, type QueueOwnership } from './queue-ownership.js';
@@ -233,12 +235,7 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 function parseDataUrlImages(images: string[] | undefined): readonly { type: 'image'; data: string; mimeType: string }[] | undefined {
-  if (!images || images.length === 0) return undefined;
-  return images.map((url) => {
-    const match = url.match(/^data:(image\/[^;]+);base64,(.+)$/s);
-    if (!match) throw new Error('Invalid image data URL');
-    return { type: 'image' as const, data: match[2], mimeType: match[1] };
-  });
+  return resolveImageInputs(images);
 }
 
 function commandToken(message: string): string | undefined {
@@ -298,6 +295,31 @@ function isSubagentContentBlock(block: import('../../shared/dist/index.js').Pimo
   return block.type === 'subagent';
 }
 
+interface SnapshotMessageIndex {
+  readonly entryIds: ReadonlySet<string>;
+  readonly contentFingerprints: ReadonlySet<string>;
+}
+
+const snapshotMessageIndexes = new WeakMap<SessionSurfaceSnapshot, SnapshotMessageIndex>();
+
+function messageContentFingerprint(message: PimoteAgentMessage): string {
+  return `${message.role}:${createHash('sha256').update(JSON.stringify(message.content)).digest('hex')}`;
+}
+
+function indexSnapshotMessages(snapshot: SessionSurfaceSnapshot): SnapshotMessageIndex {
+  let index = snapshotMessageIndexes.get(snapshot);
+  if (index) return index;
+  const entryIds = new Set<string>();
+  const contentFingerprints = new Set<string>();
+  for (const message of snapshot.messages) {
+    if (message.entryId) entryIds.add(message.entryId);
+    contentFingerprints.add(messageContentFingerprint(message));
+  }
+  index = { entryIds, contentFingerprints };
+  snapshotMessageIndexes.set(snapshot, index);
+  return index;
+}
+
 /** A persisted final message already present in a snapshot needs no second
  * delivery from the listener that observed it at the snapshot boundary. */
 function messageIsInSnapshot(event: PimoteSessionEvent, snapshot: SessionSurfaceSnapshot): boolean {
@@ -308,10 +330,9 @@ function messageIsInSnapshot(event: PimoteSessionEvent, snapshot: SessionSurface
     );
   }
   if (event.type !== 'message_end' || event.clientMessageId !== undefined) return false;
-  const encoded = JSON.stringify(event.message);
-  return snapshot.messages.some(
-    (message) => JSON.stringify(message) === encoded || (message.role === event.message.role && JSON.stringify(message.content) === JSON.stringify(event.message.content)),
-  );
+  const index = indexSnapshotMessages(snapshot);
+  if (event.message.entryId !== undefined && index.entryIds.has(event.message.entryId)) return true;
+  return index.contentFingerprints.has(messageContentFingerprint(event.message));
 }
 
 /** Map a saved branch without applying compaction's context projection. */

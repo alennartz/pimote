@@ -22,17 +22,22 @@ let seamsLoading: Promise<VoiceCallSeams> | null = null;
 
 function ensureSeams(): Promise<VoiceCallSeams> {
   if (realSeams) return Promise.resolve(realSeams);
-  seamsLoading ??= import('./voice-call-seams.js').then((module) => {
-    const seams = module.createBrowserVoiceCallSeams({
-      connection,
-      getSessionId: () => storeRef?.state.sessionId ?? null,
-      onPeerReady: (sessionId: string) => {
-        storeRef?.handleServerEvent({ type: 'call_ready', sessionId });
-      },
+  seamsLoading ??= import('./voice-call-seams.js')
+    .then((module) => {
+      const seams = module.createBrowserVoiceCallSeams({
+        connection,
+        getSessionId: () => storeRef?.state.sessionId ?? null,
+        onPeerReady: (sessionId: string) => {
+          storeRef?.handleServerEvent({ type: 'call_ready', sessionId });
+        },
+      });
+      realSeams = seams;
+      return seams;
+    })
+    .catch((error: unknown) => {
+      seamsLoading = null;
+      throw error;
     });
-    realSeams = seams;
-    return seams;
-  });
   return seamsLoading;
 }
 
@@ -40,7 +45,7 @@ function ensureSeams(): Promise<VoiceCallSeams> {
 if (typeof window !== 'undefined') {
   const warm: (callback: () => void) => void =
     typeof requestIdleCallback === 'function' ? (callback) => requestIdleCallback(() => callback()) : (callback) => setTimeout(callback, 2000);
-  warm(() => void ensureSeams());
+  warm(() => void ensureSeams().catch((error: unknown) => console.warn('[voice] Failed to load call support:', error)));
 }
 
 const voiceSeams: VoiceCallSeams = {

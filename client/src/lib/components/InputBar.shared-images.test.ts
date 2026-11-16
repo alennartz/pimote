@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
 import type { PimoteResponse } from '@pimote/shared';
 import InputBar from './InputBar.svelte';
@@ -8,6 +8,18 @@ import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
 import { pushSharedImages, sharedImagesRequest } from '$lib/stores/input-bar.svelte.js';
 
 const mounted: ReturnType<typeof mount>[] = [];
+const uploadedImageRef = `/i/${'a'.repeat(64)}`;
+
+beforeEach(() => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).startsWith('data:')) return { ok: true, blob: async () => new Blob([]) };
+      if (String(input) === '/api/images') return { ok: true, json: async () => ({ url: uploadedImageRef }) };
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    }),
+  );
+});
 
 function setupSession(sessionId = 's1') {
   sessionRegistry.addSession(sessionId, `/workspace/${sessionId}`, sessionId);
@@ -24,7 +36,7 @@ function render() {
 }
 
 async function settle() {
-  for (let i = 0; i < 3; i++) await tick();
+  for (let i = 0; i < 10; i++) await tick();
 }
 
 function stagedImages(target: HTMLElement) {
@@ -41,6 +53,7 @@ afterEach(async () => {
   for (const component of mounted.splice(0)) await unmount(component);
   document.body.replaceChildren();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   sessionRegistry.sessions = {};
   sessionRegistry.viewedSessionId = null;
   connection.ready = false;
@@ -92,7 +105,7 @@ describe('InputBar Web Share images', () => {
     setupSession();
     const target = render();
     await settle();
-    pushSharedImages(['data:image/png;base64,after-send']);
+    pushSharedImages(['data:image/png;base64,AQIDBA==']);
     await settle();
 
     const textarea = target.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]')!;

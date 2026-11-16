@@ -6,10 +6,10 @@ import type {
   PimoteResponse,
   PimoteEvent,
   SessionState,
-  SessionMeta,
   BufferedEventsEvent,
   ConnectionRestoredEvent,
   FullResyncEvent,
+  FullResyncStartEvent,
   RestoreMode,
   SessionRestoreEvent,
   SessionClosedEvent,
@@ -39,6 +39,7 @@ import {
   requestSlotPanelResync,
   resolveAllSlotPendingUi,
   resolveSlotPendingUi,
+  sendBatchedEvent,
   runSlotLifecycle,
   isNestedSlotLifecycle,
   sendSlotEvent,
@@ -57,8 +58,9 @@ import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js'
 import type { PushNotificationService } from './push-notification.js';
 import type { FileSessionMetadataStore } from './session-metadata.js';
 import { mapAgentMessage, mapAgentMessageUsage, mapContextEntries, rendererRegisteredVisibility } from './message-mapper.js';
+import { resolveImageInputs } from './image-registry.js';
 import type { TreeNavigationStartEvent, TreeNavigationEndEvent } from './event-buffer.js';
-import { projectSessionUsage } from './session-usage.js';
+import { makeSessionMeta } from './session-usage.js';
 import { completeFileRefs } from './file-references.js';
 import { readEditableFile, writeEditableFile } from './file-edit.js';
 import { attributeDrained, type Intent } from './queue-ownership.js';
@@ -80,12 +82,7 @@ export interface WsGlobalSettingsDependencies {
 
 /** Parse data-URL encoded images into the shape the pi SDK expects. */
 function parseDataUrlImages(images?: string[]): { type: 'image'; data: string; mimeType: string }[] | undefined {
-  if (!images || images.length === 0) return undefined;
-  return images.map((url) => {
-    const match = url.match(/^data:(image\/[^;]+);base64,(.+)$/s);
-    if (!match) throw new Error('Invalid image data URL');
-    return { type: 'image' as const, data: match[2], mimeType: match[1] };
-  });
+  return resolveImageInputs(images);
 }
 
 /**
@@ -587,7 +584,19 @@ export class WsHandler {
               break;
             }
             const { sessionId, folderPath, folder } = await this.openNewSessionInFolder(command.folderPath);
-            this.sendResponse(id, true, { sessionId, folderPath, folder });
+            const newSlot = this.sessionManager.getSession(sessionId);
+            this.sendResponse(id, true, {
+              sessionId,
+              folderPath,
+              folder,
+              ...(newSlot
+                ? {
+                    meta: makeSessionMeta(newSlot.session, this.sessionManager.getLastKnownGitBranch(sessionId)),
+                    commands: getSessionCommands(newSlot.session),
+                    initialSnapshot: this.makeFullResyncEvent(sessionId, newSlot),
+                  }
+                : {}),
+            });
             await this.sendConflictEventIfNeeded(sessionId, folderPath);
             break;
           }
@@ -610,6 +619,8 @@ export class WsHandler {
                 folderPath: existing.folderPath,
                 restoreMode,
                 folder: await this.resolveFolderInfo(existing.folderPath),
+                meta: makeSessionMeta(existing.session, this.sessionManager.getLastKnownGitBranch(requestedSessionId)),
+                commands: getSessionCommands(existing.session),
               });
               return;
             }
@@ -642,6 +653,8 @@ export class WsHandler {
               folderPath: reopenedSlot.folderPath,
               restoreMode: 'disk_full_resync',
               folder: await this.resolveFolderInfo(reopenedSlot.folderPath),
+              meta: makeSessionMeta(reopenedSlot.session, this.sessionManager.getLastKnownGitBranch(sessionId)),
+              commands: getSessionCommands(reopenedSlot.session),
             });
           });
           break;
@@ -1850,18 +1863,7 @@ export class WsHandler {
       }
 
       case 'get_session_meta': {
-        // Older test doubles and sessions created by extensions can omit these
-        // accessors. Real AgentSession instances always provide both values.
-        const contextUsage = session.getContextUsage?.() ?? null;
-        const stats = session.getSessionStats?.() ?? ({ cost: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } as const);
-        const usageBreakdown = projectSessionUsage(session.sessionManager.getEntries(), stats);
-        const meta: SessionMeta = {
-          gitBranch: this.sessionManager.getLastKnownGitBranch(sessionId),
-          contextUsage: contextUsage ? { percent: contextUsage.percent, contextWindow: contextUsage.contextWindow } : null,
-          lifetimeCostUsd: stats.cost,
-          usageBreakdown,
-        };
-        this.sendResponse(id, true, { meta });
+        this.sendResponse(id, true, { meta: makeSessionMeta(session, this.sessionManager.getLastKnownGitBranch(sessionId)) });
         break;
       }
 
@@ -2144,6 +2146,8 @@ export class WsHandler {
       oldSessionId: oldId,
       newSessionId: newId,
       folder: await this.resolveFolderInfo(folderPath),
+      meta: makeSessionMeta(slot.session, this.sessionManager.getLastKnownGitBranch(newId)),
+      commands: getSessionCommands(slot.session),
     });
     this.sendSilentDownloadSnapshot(slot);
 
@@ -2473,8 +2477,12 @@ export class WsHandler {
   }
 
   private sendEvent(event: PimoteEvent): void {
+    sendBatchedEvent(this.ws as unknown as EventSocket, event);
+  }
+
+  private sendSerializedEvent(serialized: string): void {
     try {
-      this.ws.send(JSON.stringify(event));
+      this.ws.send(serialized);
     } catch (err) {
       console.error('[WsHandler] Failed to send event:', err);
     }
@@ -2610,7 +2618,80 @@ export class WsHandler {
   /** Send a full_resync event to the client for the given managed session.
    *  Used when the underlying pi session is reset (newSession, switchSession, fork, navigateTree). */
   private sendFullResyncForSession(pimoteSessionId: string, slot: ManagedSlot): void {
-    this.sendEvent(this.makeFullResyncEvent(pimoteSessionId, slot));
+    const snapshot = this.makeFullResyncEvent(pimoteSessionId, slot);
+    const maxChunkBytes = 256 * 1024;
+    let estimatedBytes = Buffer.byteLength(JSON.stringify({ ...snapshot, messages: [], branchEntryIds: [] }));
+    for (const message of snapshot.messages) {
+      estimatedBytes += Buffer.byteLength(JSON.stringify(message)) + 1;
+      if (estimatedBytes > maxChunkBytes) break;
+    }
+    if (estimatedBytes <= maxChunkBytes) {
+      for (const entryId of snapshot.branchEntryIds ?? []) {
+        estimatedBytes += Buffer.byteLength(JSON.stringify(entryId)) + 1;
+        if (estimatedBytes > maxChunkBytes) break;
+      }
+    }
+
+    // Small snapshots retain the compact legacy shape. Large transcripts are
+    // split before crossing the socket so the browser parses bounded frames.
+    if (estimatedBytes <= maxChunkBytes) {
+      this.sendEvent(snapshot);
+    } else {
+      const { type: _type, sessionId: _sessionId, messages, branchEntryIds, ...snapshotFields } = snapshot;
+      const snapshotId = randomUUID();
+      const start: FullResyncStartEvent = {
+        type: 'full_resync_start',
+        sessionId: pimoteSessionId,
+        snapshotId,
+        totalMessages: messages.length,
+        ...(branchEntryIds !== undefined ? { totalBranchEntryIds: branchEntryIds.length } : {}),
+        ...snapshotFields,
+      };
+      this.sendEvent(start);
+
+      let chunk: string[] = [];
+      let chunkBytes = 2;
+      let offset = 0;
+      const flushChunk = () => {
+        if (chunk.length === 0) return;
+        const shell = JSON.stringify({ type: 'full_resync_chunk', sessionId: pimoteSessionId, snapshotId, offset });
+        this.sendSerializedEvent(`${shell.slice(0, -1)},"messages":[${chunk.join(',')}]}`);
+        offset += chunk.length;
+        chunk = [];
+        chunkBytes = 2;
+      };
+      for (const message of messages) {
+        const encoded = JSON.stringify(message);
+        const messageBytes = Buffer.byteLength(encoded) + (chunk.length === 0 ? 0 : 1);
+        if (chunk.length > 0 && chunkBytes + messageBytes > maxChunkBytes) flushChunk();
+        chunk.push(encoded);
+        chunkBytes += messageBytes;
+      }
+      flushChunk();
+
+      if (branchEntryIds !== undefined) {
+        let ids: string[] = [];
+        let idBytes = 2;
+        let idOffset = 0;
+        const flushIds = () => {
+          if (ids.length === 0) return;
+          const shell = JSON.stringify({ type: 'full_resync_branch_chunk', sessionId: pimoteSessionId, snapshotId, offset: idOffset });
+          this.sendSerializedEvent(`${shell.slice(0, -1)},"ids":[${ids.join(',')}]}`);
+          idOffset += ids.length;
+          ids = [];
+          idBytes = 2;
+        };
+        for (const entryId of branchEntryIds) {
+          const encoded = JSON.stringify(entryId);
+          const entryBytes = Buffer.byteLength(encoded) + (ids.length === 0 ? 0 : 1);
+          if (ids.length > 0 && idBytes + entryBytes > maxChunkBytes) flushIds();
+          ids.push(encoded);
+          idBytes += entryBytes;
+        }
+        flushIds();
+      }
+    }
+
     this.sendSubagentSnapshot(slot);
     // Always send panel snapshot so the client clears stale cards after reconnect
     this.sendEvent({ type: 'panel_update', sessionId: pimoteSessionId, cards: getMergedPanelCards(slot.sessionState.panelState) });
