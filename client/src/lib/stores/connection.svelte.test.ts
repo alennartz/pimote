@@ -96,6 +96,37 @@ describe('ConnectionStore — chunked event handling', () => {
     c.disconnect();
   });
 
+  it('parses serialized transcript fragments incrementally across frames', async () => {
+    const c = new ConnectionStore();
+    const received: Array<{ type: string; messages?: unknown[] }> = [];
+    c.onEvent((event) => received.push(event as { type: string; messages?: unknown[] }));
+    c.connect();
+    const ws = instances.at(-1)!;
+    ws.readyState = FakeWebSocket.OPEN;
+    ws.onopen!();
+    burst(ws);
+    await flush();
+
+    const messages = [
+      { role: 'user', content: [{ type: 'text', text: 'first 😀' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'second' }] },
+    ];
+    const serialized = JSON.stringify(messages);
+    const boundary = serialized.indexOf('second');
+    ws.onmessage!({ data: JSON.stringify({ type: 'full_resync_start', sessionId: 's1', snapshotId: 'snapshot-json', totalMessages: 2, state: {} }) });
+    ws.onmessage!({
+      data: JSON.stringify({ type: 'full_resync_json_chunk', sessionId: 's1', snapshotId: 'snapshot-json', offset: 0, data: serialized.slice(0, boundary), final: false }),
+    });
+    expect(received.filter((event) => event.type === 'full_resync')).toHaveLength(0);
+    ws.onmessage!({
+      data: JSON.stringify({ type: 'full_resync_json_chunk', sessionId: 's1', snapshotId: 'snapshot-json', offset: boundary, data: serialized.slice(boundary), final: true }),
+    });
+
+    const snapshot = received.find((event) => event.type === 'full_resync');
+    expect(snapshot?.messages).toEqual(messages);
+    c.disconnect();
+  });
+
   it('dispatches event batches in order and advances each root cursor', async () => {
     const c = new ConnectionStore();
     const received: string[] = [];

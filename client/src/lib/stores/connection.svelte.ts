@@ -15,9 +15,11 @@ import type {
   FullResyncStartEvent,
   FullResyncChunkEvent,
   FullResyncBranchChunkEvent,
+  FullResyncJsonChunkEvent,
   PimoteAgentMessage,
 } from '@pimote/shared';
 import { SvelteMap } from 'svelte/reactivity';
+import { JSONParser } from '@streamparser/json';
 import { version } from '$app/environment';
 import { clearActiveSessions, getClientId, getUser, setClientId } from './persistence.js';
 import type { UserSessionFacts } from './user-session-facts.js';
@@ -29,6 +31,11 @@ interface PendingFullResync {
   readonly start: FullResyncStartEvent;
   readonly messages: PimoteAgentMessage[];
   readonly branchEntryIds: string[];
+  messageMode: 'array' | 'json' | null;
+  messageStreamComplete: boolean;
+  jsonOffset: number;
+  jsonParser: JSONParser | null;
+  messageParseFailed: boolean;
 }
 
 /** Keep child-view cursors in a namespace separate from root replay cursors. */
@@ -399,6 +406,10 @@ export class ConnectionStore {
       this.appendFullResyncBranchChunk(event as FullResyncBranchChunkEvent);
       return;
     }
+    if (event.type === 'full_resync_json_chunk') {
+      this.appendFullResyncJsonChunk(event as FullResyncJsonChunkEvent);
+      return;
+    }
 
     // Track root replay cursors only. Child view messages carry a
     // `viewCursor` and must never advance the root EventBuffer position.
@@ -444,7 +455,16 @@ export class ConnectionStore {
   private beginFullResync(start: FullResyncStartEvent): void {
     if (!Number.isSafeInteger(start.totalMessages) || start.totalMessages < 0) return;
     if (start.totalBranchEntryIds !== undefined && (!Number.isSafeInteger(start.totalBranchEntryIds) || start.totalBranchEntryIds < 0)) return;
-    const pending: PendingFullResync = { start, messages: [], branchEntryIds: [] };
+    const pending: PendingFullResync = {
+      start,
+      messages: [],
+      branchEntryIds: [],
+      messageMode: null,
+      messageStreamComplete: start.totalMessages === 0,
+      jsonOffset: 0,
+      jsonParser: null,
+      messageParseFailed: false,
+    };
     this.pendingFullResync.set(start.sessionId, pending);
     if (this.fullResyncComplete(pending)) this.finishFullResync(pending);
   }
@@ -452,15 +472,52 @@ export class ConnectionStore {
   private appendFullResyncChunk(chunk: FullResyncChunkEvent): void {
     const pending = this.pendingFullResync.get(chunk.sessionId);
     if (!pending || pending.start.snapshotId !== chunk.snapshotId) return;
-    if (chunk.offset !== pending.messages.length || !Array.isArray(chunk.messages)) {
+    if (pending.messageMode === 'json' || chunk.offset !== pending.messages.length || !Array.isArray(chunk.messages)) {
       this.pendingFullResync.delete(chunk.sessionId);
       return;
     }
+    pending.messageMode = 'array';
     if (pending.messages.length + chunk.messages.length > pending.start.totalMessages) {
       this.pendingFullResync.delete(chunk.sessionId);
       return;
     }
     pending.messages.push(...chunk.messages);
+    pending.messageStreamComplete = pending.messages.length === pending.start.totalMessages;
+    if (this.fullResyncComplete(pending)) this.finishFullResync(pending);
+  }
+
+  private appendFullResyncJsonChunk(chunk: FullResyncJsonChunkEvent): void {
+    const pending = this.pendingFullResync.get(chunk.sessionId);
+    if (!pending || pending.start.snapshotId !== chunk.snapshotId) return;
+    if (pending.messageMode === 'array' || chunk.offset !== pending.jsonOffset || typeof chunk.data !== 'string') {
+      this.pendingFullResync.delete(chunk.sessionId);
+      return;
+    }
+    pending.messageMode = 'json';
+    const parser = (pending.jsonParser ??= new JSONParser({ paths: ['$.*'], keepStack: false }));
+    parser.onValue = (info) => {
+      if (info.value && typeof info.value === 'object' && !Array.isArray(info.value)) pending.messages.push(info.value as PimoteAgentMessage);
+    };
+    parser.onError = () => {
+      pending.messageParseFailed = true;
+    };
+    try {
+      parser.write(chunk.data);
+    } catch {
+      pending.messageParseFailed = true;
+    }
+    if (pending.messageParseFailed || pending.messages.length > pending.start.totalMessages) {
+      this.pendingFullResync.delete(chunk.sessionId);
+      return;
+    }
+    pending.jsonOffset += chunk.data.length;
+    if (chunk.final) {
+      if (pending.messages.length !== pending.start.totalMessages) {
+        this.pendingFullResync.delete(chunk.sessionId);
+        return;
+      }
+      pending.messageStreamComplete = true;
+    }
     if (this.fullResyncComplete(pending)) this.finishFullResync(pending);
   }
 
@@ -477,7 +534,7 @@ export class ConnectionStore {
 
   private fullResyncComplete(pending: PendingFullResync): boolean {
     const branchCount = pending.start.totalBranchEntryIds;
-    return pending.messages.length === pending.start.totalMessages && (branchCount === undefined || pending.branchEntryIds.length === branchCount);
+    return pending.messageStreamComplete && (branchCount === undefined || pending.branchEntryIds.length === branchCount);
   }
 
   private finishFullResync(pending: PendingFullResync): void {

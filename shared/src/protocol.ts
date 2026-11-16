@@ -1765,6 +1765,16 @@ export interface FullResyncBranchChunkEvent {
   ids: string[];
 }
 
+/** UTF-8-safe fragment of the serialized root message array. */
+export interface FullResyncJsonChunkEvent {
+  type: 'full_resync_json_chunk';
+  sessionId: string;
+  snapshotId: string;
+  offset: number;
+  data: string;
+  final: boolean;
+}
+
 /** Root-scoped hierarchy snapshot at a provider cursor boundary. */
 type SubagentSnapshotEventBase = {
   type: 'subagent_snapshot';
@@ -2022,6 +2032,7 @@ export type PimoteEvent =
   | FullResyncStartEvent
   | FullResyncChunkEvent
   | FullResyncBranchChunkEvent
+  | FullResyncJsonChunkEvent
   | SubagentSnapshotEvent
   | SubagentViewSnapshot
   | SubagentViewEvent

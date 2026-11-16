@@ -156,9 +156,9 @@
 
       <div class="callout">
         <strong>Implementation status:</strong> all six findings below are addressed. Image bytes now use content-addressed HTTP refs backed by a 64 MiB memory LRU and an XDG disk
-        cache capped at 1 GiB; large resyncs use ordered message and branch-ID chunks; WebSocket compression is enabled without context takeover; streaming updates batch at 16 ms
-        (up to 128 events); metadata and commands ride lifecycle/open responses; and observer fan-out shares serialized events. The three items under “Structural, not low-hanging”
-        were not changed.
+        cache capped at 1 GiB; large resyncs use ordered JSON-message and branch-ID fragments; WebSocket compression is enabled without context takeover; streaming updates batch at
+        16 ms (up to 128 events); metadata and commands ride lifecycle/open responses; and observer fan-out shares serialized events. The three items under “Structural, not
+        low-hanging” were not changed.
       </div>
       <div class="callout">
         <strong>Verdict:</strong> the protocol's shape is sound — cursors, epochs, mid-run resync partials, and windowed folder listings are well designed. The initial review found
@@ -179,8 +179,8 @@
           resync.
         </p>
         <p class="fix">
-          <strong>Fix:</strong> a small HTTP upload endpoint returning a content address, with transcript blocks carrying <code>{ type: 'image', ref }</code>; the client fetches
-          bytes over HTTP (cacheable, streamable, out of the replay path). This is the single biggest wire-size lever the protocol change unlocks.
+          <strong>Implemented:</strong> <code>POST /api/images</code> accepts image bytes and returns a content-addressed <code>/i/&lt;sha256&gt;</code> path. Prompt commands carry
+          that path, and transcript plus tool-result blocks carry the same reference. A 64 MiB memory LRU backs a 1 GiB XDG disk cache; legacy native data URLs remain accepted.
         </p>
       </div>
 
@@ -194,8 +194,9 @@
           per previously-open session, in parallel.
         </p>
         <p class="fix">
-          <strong>Fix:</strong> page the transcript the way folders already are — snapshot returns state + the last N messages + a fetch-more cursor; earlier history loads on
-          demand (the client already renders append-windowed lists). Chunking the frame also bounds the parse stall.
+          <strong>Implemented:</strong> large snapshots send a start envelope, UTF-8-safe serialized message fragments, and separate branch-ID chunks. The client parses each
+          fragment incrementally and emits one ordinary <code>full_resync</code> only after the snapshot completes. This keeps even one unusually large message out of a single
+          frame without dropping history.
         </p>
       </div>
 
@@ -207,7 +208,7 @@
           Transcript JSON is highly repetitive and compresses roughly 5–10×. Today every replay frame crosses the WAN at full size. The CPU tradeoff that justifies leaving it off
           on a LAN does not hold for the PWA-over-internet case this project targets.
         </p>
-        <p class="fix"><strong>Fix:</strong> enable <code>perMessageDeflate</code> (config-gated, off-by-default on loopback if desired). One line; no protocol change at all.</p>
+        <p class="fix"><strong>Implemented:</strong> the WebSocket server negotiates <code>perMessageDeflate</code> above 1 KiB with both context-takeover options disabled.</p>
       </div>
 
       <h2>Low-hanging with protocol changes</h2>
@@ -221,8 +222,8 @@
           per-event <em>work</em>; the per-event <em>overhead</em> lives here.
         </p>
         <p class="fix">
-          <strong>Fix:</strong> coalesce per session on a 16–33 ms tick into one <code>{ type: 'events', events: [...] }</code> envelope. Frame count drops 5–20×; latency cost is
-          one tick. Client keeps single-event handling for everything else, so the change is additive.
+          <strong>Implemented:</strong> streaming events coalesce per observer socket for 16 ms, with a 128-event ceiling, into one <code>event_batch</code>. A non-streaming
+          lifecycle event flushes the batch first. The client applies batched events in order.
         </p>
       </div>
 
@@ -235,8 +236,9 @@
           folder.
         </p>
         <p class="fix">
-          <strong>Fix:</strong> attach a compact meta block (context usage, lifetime cost, branch) to <code>agent_end</code>, and a commands list or version to
-          <code>open_session</code>. The client drops all three request paths.
+          <strong>Implemented:</strong> <code>turn_end</code> carries persisted metadata; <code>agent_settled</code> covers aborts and runs without a turn end; compaction and
+          session-replacement events carry metadata. Successful <code>open_session</code> responses carry metadata and commands, plus an initial snapshot for new sessions. The
+          client no longer requests meta or commands after ordinary open or reconnect.
         </p>
       </div>
 
@@ -252,8 +254,8 @@
           compares messages by full-JSON equality — two stringify calls per stored message per final event, inside a window that also streams.
         </p>
         <p class="fix">
-          <strong>Fix:</strong> serialize at the surface and share the string with listeners; replace the JSON-equality dedupe with identity checks (<code>entryId</code> /
-          <code>clientMessageId</code>), which the messages already carry.
+          <strong>Implemented:</strong> <code>sendSlotEvent</code> serializes one event once for all observers. Snapshot attachment builds a SHA-256 content-fingerprint index once,
+          checks entry IDs when available, and avoids stringifying every snapshot message for each arriving final event.
         </p>
       </div>
 

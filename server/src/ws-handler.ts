@@ -2645,25 +2645,40 @@ export class WsHandler {
       };
       this.sendEvent(start);
 
-      let chunk: string[] = [];
-      let chunkBytes = 2;
-      let offset = 0;
-      const flushChunk = () => {
-        if (chunk.length === 0) return;
-        const shell = JSON.stringify({ type: 'full_resync_chunk', sessionId: pimoteSessionId, snapshotId, offset });
-        this.sendSerializedEvent(`${shell.slice(0, -1)},"messages":[${chunk.join(',')}]}`);
-        offset += chunk.length;
-        chunk = [];
-        chunkBytes = 2;
+      // Parse message objects incrementally on the client. Keep raw JSON
+      // fragments small even when one message contains a very large text block.
+      const jsonChunkTargetBytes = 32 * 1024;
+      let data = '';
+      let dataBytes = 0;
+      let dataOffset = 0;
+      const flushJsonChunk = (final: boolean) => {
+        if (data.length === 0 && !final) return;
+        this.sendEvent({ type: 'full_resync_json_chunk', sessionId: pimoteSessionId, snapshotId, offset: dataOffset, data, final });
+        dataOffset += data.length;
+        data = '';
+        dataBytes = 0;
       };
-      for (const message of messages) {
-        const encoded = JSON.stringify(message);
-        const messageBytes = Buffer.byteLength(encoded) + (chunk.length === 0 ? 0 : 1);
-        if (chunk.length > 0 && chunkBytes + messageBytes > maxChunkBytes) flushChunk();
-        chunk.push(encoded);
-        chunkBytes += messageBytes;
+      const appendJson = (value: string) => {
+        for (let offset = 0; offset < value.length; ) {
+          let end = Math.min(offset + 8192, value.length);
+          const last = value.charCodeAt(end - 1);
+          if (end < value.length && last >= 0xd800 && last <= 0xdbff) end -= 1;
+          const piece = value.slice(offset, end);
+          const pieceBytes = Buffer.byteLength(piece);
+          if (dataBytes > 0 && dataBytes + pieceBytes > jsonChunkTargetBytes) flushJsonChunk(false);
+          data += piece;
+          dataBytes += pieceBytes;
+          offset = end;
+          if (dataBytes >= jsonChunkTargetBytes) flushJsonChunk(false);
+        }
+      };
+      appendJson('[');
+      for (let index = 0; index < messages.length; index += 1) {
+        if (index > 0) appendJson(',');
+        appendJson(JSON.stringify(messages[index]));
       }
-      flushChunk();
+      appendJson(']');
+      flushJsonChunk(true);
 
       if (branchEntryIds !== undefined) {
         let ids: string[] = [];

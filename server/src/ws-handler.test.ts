@@ -1080,15 +1080,17 @@ describe('WsHandler', () => {
       expect(resp!.success).toBe(true);
     });
 
-    it('splits a large transcript resync into bounded message chunks', async () => {
+    it('splits even one oversized transcript message into bounded JSON fragments', async () => {
       const slot = createMockSlot({ id: 'large-resync' });
-      const entries = Array.from({ length: 20 }, (_, index) => ({
-        type: 'message',
-        id: `entry-${index}`,
-        parentId: index === 0 ? null : `entry-${index - 1}`,
-        timestamp: '2026-01-01T00:00:00.000Z',
-        message: { role: 'user', content: 'x'.repeat(20_000), timestamp: index + 1 },
-      }));
+      const entries = [
+        {
+          type: 'message',
+          id: 'large-entry',
+          parentId: null,
+          timestamp: '2026-01-01T00:00:00.000Z',
+          message: { role: 'user', content: 'x'.repeat(400_000), timestamp: 1 },
+        },
+      ];
       slot.session.sessionManager.getBranch = () => entries as ReturnType<typeof slot.session.sessionManager.getBranch>;
       slot.session.sessionManager.buildContextEntries = () => entries as ReturnType<typeof slot.session.sessionManager.buildContextEntries>;
       const { handler, sent } = createTestHandler('large-client', { sessions: new Map([['large-resync', slot]]) });
@@ -1096,12 +1098,16 @@ describe('WsHandler', () => {
       await handler.handleMessage(JSON.stringify({ type: 'open_session', id: 'large-open', sessionId: 'large-resync', folderPath: '/home/user/project' }));
 
       const starts = findEvents(sent, 'full_resync_start');
-      const chunks = findEvents(sent, 'full_resync_chunk');
+      const chunks = findEvents(sent, 'full_resync_json_chunk');
       expect(starts).toHaveLength(1);
-      expect(starts[0]).toMatchObject({ sessionId: 'large-resync', totalMessages: 20 });
+      expect(starts[0]).toMatchObject({ sessionId: 'large-resync', totalMessages: 1, totalBranchEntryIds: 1 });
       expect(chunks.length).toBeGreaterThan(1);
-      expect(chunks.map((chunk) => (chunk as any).messages.length).reduce((sum, count) => sum + count, 0)).toBe(20);
-      expect(chunks.every((chunk) => Buffer.byteLength(JSON.stringify(chunk)) <= 256 * 1024 + 512)).toBe(true);
+      expect(chunks.map((chunk) => (chunk as any).offset)).toEqual(
+        chunks.map((_, index) => chunks.slice(0, index).reduce((total, prior) => total + (prior as any).data.length, 0)),
+      );
+      expect(chunks.every((chunk) => Buffer.byteLength(JSON.stringify(chunk)) <= 64 * 1024)).toBe(true);
+      expect(JSON.parse(chunks.map((chunk) => (chunk as any).data).join(''))).toMatchObject([{ role: 'user', content: [{ text: 'x'.repeat(400_000) }] }]);
+      expect(findEvents(sent, 'full_resync_branch_chunk')).toHaveLength(1);
     });
 
     it('includes the session folder row in the response so restore keeps folder icon facts', async () => {
