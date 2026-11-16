@@ -296,7 +296,10 @@
     const index = displayEntries.findIndex((entry) => entry.key === key);
     if (index >= 0 && index < windowStart) {
       stick.stopScroll();
-      windowAnchor = { view: windowViewKey, key: displayEntries[Math.max(0, index - TRANSCRIPT_WINDOW_EXTEND_ROWS)].key };
+      windowAnchor = {
+        view: windowViewKey,
+        key: displayEntries[Math.max(0, index - TRANSCRIPT_PREPARE_ROWS)].key,
+      };
     }
     void tick().then(() => scrollToEntry(key));
   }
@@ -382,7 +385,8 @@
 
   function onScroll() {
     updateStickyTargets();
-    scheduleWindowExtend();
+    scheduleEdgeCheck();
+    schedulePreparation();
   }
 
   type DisplayEntry =
@@ -432,18 +436,26 @@
 
   // ---- Rendered window ----
   //
-  // Building a transcript row costs about a millisecond, so a view that mounts
-  // every row of a long session blocks the click that asked for it. The reader
-  // lands at the bottom, so a fresh view mounts the tail only, and older rows
-  // join when the reader scrolls up to reach them.
+  // Building a transcript row costs about a millisecond, and a view that mounts
+  // every row of a long session blocks the click that asked for it. A fresh
+  // view mounts the tail, and the rows above the reader's reach are prepared
+  // while the main thread is idle, so a scroll gesture never builds rows inside
+  // its own frame.
   //
   // The window start is a row key rather than an index: the tail slides
   // forward as messages arrive, and a key-anchored start stays put. The anchor
   // carries the view identity, so a view change needs no reset and a stale key
   // from the previous transcript cannot anchor the new one.
   const TRANSCRIPT_WINDOW_ROWS = 60;
-  const TRANSCRIPT_WINDOW_EXTEND_ROWS = 80;
-  const TRANSCRIPT_WINDOW_EXTEND_PX = 600;
+  /** One prepared page: small enough that building it never dominates a frame. */
+  const TRANSCRIPT_PREPARE_ROWS = 40;
+  /** Mounted content kept above the reader, about two prepared pages. */
+  const TRANSCRIPT_PREPARE_BUFFER_PX = 2400;
+  /** Depth at which the reader has outrun the prepared pages. */
+  const TRANSCRIPT_EDGE_PX = 600;
+  /** Pages mounted at once when a gesture outruns the buffer anyway. One page
+   *  clears the edge by far, and stays under a frame's long-task budget. */
+  const TRANSCRIPT_CATCH_UP_PAGES = 1;
 
   let windowAnchor = $state<{ view: string; key: string } | null>(null);
 
@@ -458,49 +470,91 @@
   });
   const visibleEntries = $derived(displayEntries.slice(windowStart));
 
-  /** Mount the rows one window taller, keeping the reader's place: the rows
-   *  inserted above the viewport add exactly the height the scroll offset gains. */
-  function extendWindow(): void {
+  function followingTail(): boolean {
+    const sc = scrollContainer;
+    if (!sc) return true;
+    return sc.scrollHeight - sc.clientHeight - sc.scrollTop <= STICK_TO_BOTTOM_OFFSET_PX;
+  }
+
+  /**
+   * Mount prepared pages above the window. A reader inside the transcript keeps
+   * their place: the rows inserted above add exactly the height their offset
+   * gains. A reader following the tail stays pinned, and the rows join the
+   * window above them without moving the tail.
+   */
+  function prepareWindow(pages = 1): void {
     const sc = scrollContainer;
     if (!sc || windowStart === 0) return;
-    const anchor = displayEntries[Math.max(0, windowStart - TRANSCRIPT_WINDOW_EXTEND_ROWS)];
+    const anchor = displayEntries[Math.max(0, windowStart - pages * TRANSCRIPT_PREPARE_ROWS)];
     if (!anchor) return;
-    const anchorTop = sc.scrollTop;
-    const anchorHeight = sc.scrollHeight;
-    // Growing the window is a browse into history: release the tail follow, or
-    // the content height change pulls the reader back to the bottom.
-    stick.stopScroll();
+    const pinned = followingTail();
+    const readerTop = sc.scrollTop;
+    const contentHeight = sc.scrollHeight;
+    // A reader inside the transcript is browsing history: release the tail
+    // follow, or the height change pulls them back to the bottom.
+    if (!pinned) stick.stopScroll();
     windowAnchor = { view: windowViewKey, key: anchor.key };
+    if (pinned) return;
     void tick().then(() => {
       const element = scrollContainer;
       if (!element) return;
-      const addedAbove = element.scrollHeight - anchorHeight;
-      if (addedAbove > 0) element.scrollTop = anchorTop + addedAbove;
+      const addedAbove = element.scrollHeight - contentHeight;
+      if (addedAbove > 0) element.scrollTop = readerTop + addedAbove;
     });
   }
 
-  /** Grow the window when the reader reaches the top of it. The gap to the
-   *  bottom is measured here rather than read from the follow loop: a frame can
-   *  run before that loop settles its escape, and a reader who lands at the top
-   *  in one jump must still reach the older rows. */
-  function maybeExtendWindow(): void {
+  /** History remains above the window, and the room above the reader is short. */
+  function needsPreparation(): boolean {
     const sc = scrollContainer;
-    if (!sc || windowStart === 0) return;
-    if (sc.scrollTop > TRANSCRIPT_WINDOW_EXTEND_PX) return;
-    // Still following the tail: the transcript slides, it does not grow.
-    if (sc.scrollHeight - sc.clientHeight - sc.scrollTop <= STICK_TO_BOTTOM_OFFSET_PX) return;
-    extendWindow();
+    if (!sc || windowStart === 0) return false;
+    return sc.scrollTop < TRANSCRIPT_PREPARE_BUFFER_PX;
   }
 
-  let windowFrame: number | null = null;
+  let prepareScheduled = false;
+  let prepareHandle: number | ReturnType<typeof setTimeout> | null = null;
 
-  /** Check on the next frame: the delay collapses a burst of scroll events into
-   *  one check. */
-  function scheduleWindowExtend(): void {
-    if (windowFrame !== null) return;
-    windowFrame = requestAnimationFrame(() => {
-      windowFrame = null;
-      maybeExtendWindow();
+  /**
+   * Keep the prepared pages ahead of the reader. Idle callbacks come first, so
+   * the rows are built in a frame the reader spends scrolling either.
+   */
+  function schedulePreparation(): void {
+    if (prepareScheduled) return;
+    prepareScheduled = true;
+    const prepare = () => {
+      prepareScheduled = false;
+      prepareHandle = null;
+      if (!needsPreparation()) return;
+      prepareWindow();
+      schedulePreparation();
+    };
+    // The timeout keeps browsers without idle callbacks, and hidden tabs, moving.
+    prepareHandle = typeof requestIdleCallback === 'function' ? requestIdleCallback(prepare, { timeout: 300 }) : setTimeout(prepare, 16);
+  }
+
+  function cancelPreparation(): void {
+    if (prepareHandle === null) return;
+    if (typeof cancelIdleCallback === 'function') cancelIdleCallback(prepareHandle as number);
+    clearTimeout(prepareHandle as ReturnType<typeof setTimeout>);
+    prepareHandle = null;
+    prepareScheduled = false;
+  }
+
+  let edgeFrame: number | null = null;
+
+  /**
+   * A gesture can outrun the prepared pages. Fill the gap at the next frame
+   * instead of leaving the reader at the edge of the transcript.
+   */
+  function scheduleEdgeCheck(): void {
+    if (edgeFrame !== null) return;
+    edgeFrame = requestAnimationFrame(() => {
+      edgeFrame = null;
+      const sc = scrollContainer;
+      if (!sc || windowStart === 0) return;
+      if (sc.scrollTop > TRANSCRIPT_EDGE_PX) return;
+      if (followingTail()) return;
+      prepareWindow(TRANSCRIPT_CATCH_UP_PAGES);
+      schedulePreparation();
     });
   }
 
@@ -568,7 +622,8 @@
   onDestroy(() => {
     clearInterval(activityInterval);
     if (stickyFrame !== null) cancelAnimationFrame(stickyFrame);
-    if (windowFrame !== null) cancelAnimationFrame(windowFrame);
+    if (edgeFrame !== null) cancelAnimationFrame(edgeFrame);
+    cancelPreparation();
     rowResizeObserver?.disconnect();
     rowResizeObserver = null;
   });

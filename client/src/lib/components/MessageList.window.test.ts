@@ -27,8 +27,10 @@ vi.stubGlobal(
 
 const ROW_HEIGHT = 40;
 const VIEWPORT_HEIGHT = 800;
-/** Near enough to the top that the next frame grows the window. */
+/** The edge the reader must never reach: the frame catches up here. */
 const NEAR_TOP_PX = 100;
+/** Parked inside the prepared buffer, away from the edge. */
+const INSIDE_BUFFER_PX = 1000;
 
 let component: ReturnType<typeof mount> | undefined;
 let target: HTMLDivElement;
@@ -95,7 +97,7 @@ async function readerScrollsToWindowTop(): Promise<{ top: number; height: number
   await settle(5);
   const before = { top: scrollPosition.top, height: container.scrollHeight };
   paint();
-  await settle();
+  await settle(40);
   flushSync();
   return before;
 }
@@ -152,6 +154,28 @@ describe('MessageList rendered window', () => {
     // The rows above push the offset down by exactly the height they add, so
     // the line the reader was on does not move.
     expect(scrollPosition.top - before.top).toBe(container.scrollHeight - before.height);
+  });
+
+  it('keeps rows prepared ahead of the reader, out of the scroll frame', async () => {
+    seedSession('s1', 400);
+    sessionRegistry.switchTo('s1');
+    mountList();
+    flushSync();
+    paint();
+    const rowsBefore = rowKeys().length;
+
+    // A reader who stops inside the buffer has already scrolled past the point
+    // where more rows were needed, so the preparation runs on its own.
+    scrollTo(INSIDE_BUFFER_PX);
+    await settle(5);
+    const topBefore = scrollPosition.top;
+    await settle(40);
+    flushSync();
+
+    expect(rowKeys().length).toBeGreaterThan(rowsBefore);
+    // Room above the reader, or the whole transcript, is mounted.
+    expect(scrollPosition.top >= 2400 || rowKeys()[0] === 'm0').toBe(true);
+    expect(scrollPosition.top).toBeGreaterThan(topBefore);
   });
 
   it('holds the mounted rows when the agent appends while the reader is above them', async () => {
