@@ -159,7 +159,6 @@ describe('BranchTreeStore', () => {
       childSessionId: 'child',
       path: ['worker'],
       incarnation: 'inc',
-      attachmentGeneration: 'gen',
       viewCursor: 1,
       event: { type: 'tree_navigation_start', sessionId: 'child', cursor: 1, targetId: 'u1', summarizing: false },
     } as PimoteEvent);
@@ -169,7 +168,6 @@ describe('BranchTreeStore', () => {
       childSessionId: 'child',
       path: ['worker'],
       incarnation: 'inc',
-      attachmentGeneration: 'gen',
       viewCursor: 2,
       event: { type: 'tree_navigation_end', sessionId: 'child', cursor: 2 },
     } as PimoteEvent);
@@ -180,7 +178,6 @@ describe('BranchTreeStore', () => {
       childSessionId: 'child',
       path: ['worker'],
       incarnation: 'inc',
-      attachmentGeneration: 'gen',
       viewCursor: 3,
       state: {} as never,
       messages: [],

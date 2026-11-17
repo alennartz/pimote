@@ -62,7 +62,7 @@ import type {
   SubagentViewSnapshot,
   SubagentViewEvent,
   SubagentViewClosedEvent,
-  SubagentOpenViewResponseData,
+  UserOpenViewRef,
 } from '@pimote/shared';
 
 import { connection, isSessionNotFoundError } from './connection.svelte.js';
@@ -123,14 +123,14 @@ function isSubagentTopologyEvent(event: WireSubagentTopologyEvent): boolean {
   return event.kind === 'node_added' || event.kind === 'node_updated' || event.kind === 'node_removed' || event.kind === 'runtime_replaced';
 }
 
-export type SubagentAttachmentCloseReason = SubagentViewClosedEvent['reason'];
+/** A local close keeps its own reason; the server never sends `released`. */
+export type SubagentAttachmentCloseReason = SubagentViewClosedEvent['reason'] | 'released';
 
 /** Client state for one root-relative child attachment. This state never enters
  * `sessions`, `activeSessions`, or URL routing. */
 export interface SubagentAttachmentState {
   readonly rootSessionId: string;
   readonly path: AgentPath;
-  attachmentGeneration: string;
   incarnation: string;
   childSessionId: string;
   state: SessionState;
@@ -176,8 +176,6 @@ export interface SubagentRootState {
   hierarchySnapshotReceived: boolean;
   projectedSubagentContent: SubagentContentState;
   attachments: Record<string, SubagentAttachmentState>;
-  /** Child events received before their open/snapshot response. */
-  pendingViewEvents: Record<string, SubagentViewEvent[]>;
 }
 
 export interface SubagentViewClosedNotice {
@@ -822,6 +820,8 @@ export class SessionRegistry {
   subagentNoticeVersion = $state(0);
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- in-flight child opens are request bookkeeping
   private pendingSubagentOpens = new Map<string, Promise<SubagentAttachmentState | null>>();
+  /** The user's open child views, as the server profile states them. */
+  private userViews: UserOpenViewRef[] = [];
   private _nextMessageKey: number = 0;
   // Byte accounting lives outside the reactive execution object so the public
   // state shape stays focused on rendering and existing callers remain stable.
@@ -940,7 +940,6 @@ export class SessionRegistry {
       hierarchySnapshotReceived: false,
       projectedSubagentContent: hydrateSubagentContent([]),
       attachments: {},
-      pendingViewEvents: {},
     };
   }
 
@@ -1205,7 +1204,6 @@ export class SessionRegistry {
     return {
       rootSessionId,
       path: copyAgentPath(snapshot.path),
-      attachmentGeneration: snapshot.attachmentGeneration,
       incarnation: snapshot.incarnation,
       childSessionId: snapshot.childSessionId,
       state,
@@ -1500,37 +1498,16 @@ export class SessionRegistry {
     }
   }
 
-  private applySubagentViewSnapshot(snapshot: SubagentViewSnapshot, source: 'event' | 'response' = 'event'): SubagentAttachmentState | null {
+  /** Apply one authoritative child snapshot. The server sends it ahead of the
+   *  open response, so ordering is by cursor and runtime identity alone. */
+  private applySubagentViewSnapshot(snapshot: SubagentViewSnapshot): SubagentAttachmentState | null {
     const root = this.ensureSubagentRoot(snapshot.sessionId);
     const key = subagentPathKey(snapshot.path);
     const current = root.attachments[key];
-    if (current && current.closed && source === 'event') return current;
-    if (current && current.attachmentGeneration !== snapshot.attachmentGeneration) {
-      // A response for an explicit reopen is the only authority that can
-      // replace a closed generation. A late event from the old socket cannot.
-      if (source !== 'response' && !current.closed) return current;
-    }
-    if (current && current.attachmentGeneration === snapshot.attachmentGeneration) {
-      const rebind = current.childSessionId !== snapshot.childSessionId || current.incarnation !== snapshot.incarnation;
-      // An open response can trail a rebind snapshot delivered by the live
-      // listener. Preserve the newer child identity rather than resurrecting
-      // the old runtime from the response continuation. A live snapshot at
-      // cursor zero is a fresh SessionSurface after reconnect, even when the
-      // borrowed runtime identity is unchanged.
-      const freshSurface = source === 'event' && snapshot.viewCursor === 0;
-      if (source === 'response' && !current.closed && snapshot.viewCursor < current.observerCursor) return current;
-      if (!rebind && !freshSurface && snapshot.viewCursor < current.observerCursor) return current;
-      if (!rebind && !freshSurface && snapshot.viewCursor === current.observerCursor && !current.closed) return current;
-    }
-    const attachment =
-      current &&
-      current.attachmentGeneration === snapshot.attachmentGeneration &&
-      current.childSessionId === snapshot.childSessionId &&
-      current.incarnation === snapshot.incarnation
-        ? current
-        : this.createSubagentAttachment(snapshot.sessionId, snapshot);
+    const rebind = current !== undefined && (current.childSessionId !== snapshot.childSessionId || current.incarnation !== snapshot.incarnation);
+    if (current && !current.closed && !rebind && snapshot.viewCursor <= current.observerCursor) return current;
+    const attachment = current && !rebind ? current : this.createSubagentAttachment(snapshot.sessionId, snapshot);
     const draftText = current?.draftText ?? '';
-    attachment.attachmentGeneration = snapshot.attachmentGeneration;
     attachment.incarnation = snapshot.incarnation;
     attachment.childSessionId = snapshot.childSessionId;
     attachment.state = cloneSessionState(snapshot.state);
@@ -1552,24 +1529,18 @@ export class SessionRegistry {
     attachment.draftText = draftText;
     attachment.closed = false;
     attachment.closeReason = undefined;
-    attachment.bashExecutions = {};
     attachment.toolExecutions = rebuildToolExecutionsFromMessages(attachment.messages, attachment.runningToolCallIds);
     root.attachments[key] = attachment;
-    const staged = (root.pendingViewEvents[key] ?? []).filter((pending) => pending.attachmentGeneration === snapshot.attachmentGeneration);
-    delete root.pendingViewEvents[key];
-    for (const pending of staged.sort((left, right) => left.viewCursor - right.viewCursor)) this.applySubagentViewEvent(pending);
     return attachment;
   }
 
   private applySubagentViewEvent(event: SubagentViewEvent): void {
     const root = this.ensureSubagentRoot(event.sessionId);
-    const key = subagentPathKey(event.path);
-    const attachment = root.attachments[key];
-    if (!attachment) {
-      root.pendingViewEvents[key] = [...(root.pendingViewEvents[key] ?? []), event];
-      return;
-    }
-    if (attachment.closed || attachment.attachmentGeneration !== event.attachmentGeneration || (event.incarnation && attachment.incarnation !== event.incarnation)) return;
+    const attachment = root.attachments[subagentPathKey(event.path)];
+    // Events belong to a view this client has open. Anything else is either a
+    // closed view or a runtime this client has not attached to yet.
+    if (!attachment || attachment.closed) return;
+    if (event.incarnation && attachment.incarnation !== event.incarnation) return;
     const ephemeral = !('cursor' in event.event) || typeof event.event.cursor !== 'number';
     if (event.viewCursor < attachment.observerCursor || (event.viewCursor === attachment.observerCursor && !ephemeral)) return;
     attachment.viewCursor = Math.max(attachment.viewCursor, event.viewCursor);
@@ -1582,10 +1553,8 @@ export class SessionRegistry {
 
   private applySubagentViewClosed(event: SubagentViewClosedEvent): void {
     const root = this.ensureSubagentRoot(event.sessionId);
-    const key = subagentPathKey(event.path);
-    root.pendingViewEvents[key] = (root.pendingViewEvents[key] ?? []).filter((pending) => pending.attachmentGeneration !== event.attachmentGeneration);
-    const attachment = root.attachments[key];
-    if (!attachment || attachment.attachmentGeneration !== event.attachmentGeneration) return;
+    const attachment = root.attachments[subagentPathKey(event.path)];
+    if (!attachment) return;
     const node = root.nodes.find((candidate) => sameAgentPath(candidate.path, event.path));
     this.closeSubagentAttachment(root, attachment, event.reason, node);
   }
@@ -2500,42 +2469,70 @@ export class SessionRegistry {
     }
   }
 
-  /** Apply an open response after the response and live snapshot race. */
-  applySubagentOpenResponse(rootSessionId: string, data: SubagentOpenViewResponseData): SubagentAttachmentState | null {
-    if (!data || !data.snapshot) return null;
-    const snapshot: SubagentViewSnapshot = {
-      ...data.snapshot,
-      sessionId: rootSessionId,
-      path: data.path,
-      incarnation: data.incarnation || data.snapshot.incarnation,
-      attachmentGeneration: data.attachmentGeneration,
-    };
-    return this.applySubagentViewSnapshot(snapshot, 'response');
+  /** Adopt the server's open-view set. Views the user dropped close here;
+   *  views this client does not hold open. */
+  applyUserViews(views: readonly UserOpenViewRef[]): void {
+    this.userViews = views.map((view) => ({ ...view, path: [...view.path] }));
+    this.reconcileUserViews();
   }
 
-  /** Open one child surface without changing root URL navigation. */
-  openSubagentView(rootSessionId: string, path: AgentPath): Promise<SubagentAttachmentState | null> {
+  /** Restore every view the user holds open. Runs after the root open pass, so
+   *  each view finds its root subscribed. */
+  restoreUserViews(): void {
+    this.reconcileUserViews();
+  }
+
+  private reconcileUserViews(): void {
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local predicate set, never rendered
+    const desired = new Set(this.userViews.map((view) => `${view.rootSessionId}\u0000${subagentPathKey(view.path)}`));
+    for (const root of Object.values(this.subagentRoots)) {
+      for (const [key, attachment] of Object.entries(root.attachments)) {
+        if (attachment.closed) continue;
+        if (desired.has(`${root.rootSessionId}\u0000${key}`)) continue;
+        if (attachment.rootSessionId && this.pendingSubagentOpens.has(`${attachment.rootSessionId}\u0000${key}`)) continue;
+        void this.closeSubagentView(root.rootSessionId, attachment.path);
+      }
+    }
+    for (const view of this.userViews) {
+      if (!this.sessions[view.rootSessionId]) continue;
+      const attachment = this.getSubagentAttachment(view.rootSessionId, view.path);
+      if (attachment && !attachment.closed) continue;
+      void this.openSubagentView(view.rootSessionId, view.path, false);
+    }
+  }
+
+  /** Open one child view. The transcript arrives as view frames ahead of the
+   *  response, so the attachment exists by the time the response lands. */
+  openSubagentView(rootSessionId: string, path: AgentPath, select = true): Promise<SubagentAttachmentState | null> {
     const key = `${rootSessionId}\u0000${subagentPathKey(path)}`;
     const running = this.pendingSubagentOpens.get(key);
     if (running) return running;
+    const viewCursor = connection.getSubagentViewCursor(rootSessionId, path);
     const operation = connection
-      .send({ type: 'subagent_open_view', sessionId: rootSessionId, path: copyAgentPath(path) })
+      .send({
+        type: 'subagent_open_view',
+        sessionId: rootSessionId,
+        path: copyAgentPath(path),
+        ...(viewCursor !== undefined ? { viewCursor } : {}),
+      })
       .then(async (response) => {
-        if (!response.success || !response.data) return null;
-        const attachment = this.applySubagentOpenResponse(rootSessionId, response.data as SubagentOpenViewResponseData);
-        if (attachment) {
-          this.selectSubagentView(rootSessionId, attachment.path);
-          try {
-            const commands = await this.sendSubagentCommand(rootSessionId, attachment.path, { type: 'get_commands' });
-            if (commands.success && commands.data)
-              commandStore.setCommands(
-                `${rootSessionId}\u0000${subagentPathKey(attachment.path)}`,
-                (commands.data as { commands: import('@pimote/shared').CommandInfo[] }).commands ?? [],
-              );
-          } catch {
-            // The child snapshot remains usable when completion metadata races
-            // a reconnect. The next explicit open refreshes the list.
-          }
+        if (!response.success) {
+          if (response.error === 'subagent_view_unavailable') this.markSubagentViewUnavailable(rootSessionId, path);
+          return null;
+        }
+        const attachment = this.getSubagentAttachment(rootSessionId, path);
+        if (!attachment || attachment.closed) return null;
+        if (select) this.selectSubagentView(rootSessionId, attachment.path);
+        try {
+          const commands = await this.sendSubagentCommand(rootSessionId, attachment.path, { type: 'get_commands' });
+          if (commands.success && commands.data)
+            commandStore.setCommands(
+              `${rootSessionId}\u0000${subagentPathKey(attachment.path)}`,
+              (commands.data as { commands: import('@pimote/shared').CommandInfo[] }).commands ?? [],
+            );
+        } catch {
+          // The child snapshot remains usable when completion metadata races
+          // a reconnect. The next explicit open refreshes the list.
         }
         return attachment;
       })
@@ -2550,6 +2547,16 @@ export class SessionRegistry {
     return operation;
   }
 
+  /** The server holds no view for this path. Drop the local ghost and forget
+   *  the user's stale entry so the open set converges. */
+  private markSubagentViewUnavailable(rootSessionId: string, path: AgentPath): void {
+    const root = this.subagentRoots[rootSessionId];
+    const attachment = root?.attachments[subagentPathKey(path)];
+    if (root && attachment && !attachment.closed) this.closeSubagentAttachment(root, attachment, 'unavailable');
+    connection.clearSubagentViewCursor(rootSessionId, path);
+    void connection.send({ type: 'subagent_close_view', sessionId: rootSessionId, path: copyAgentPath(path) } as PimoteCommand).catch(() => undefined);
+  }
+
   /** Release one child surface while retaining its transcript and draft for a
    * later explicit reopen. */
   async closeSubagentView(rootSessionId: string, path: AgentPath): Promise<boolean> {
@@ -2560,8 +2567,6 @@ export class SessionRegistry {
         type: 'subagent_close_view',
         sessionId: rootSessionId,
         path: attachment.path,
-        incarnation: attachment.incarnation,
-        attachmentGeneration: attachment.attachmentGeneration,
       });
       if (!response.success) return false;
       const root = this.subagentRoots[rootSessionId];
@@ -2575,13 +2580,12 @@ export class SessionRegistry {
     }
   }
 
-  async teardownSubagentView(rootSessionId: string, path: AgentPath, incarnation: string, attachmentGeneration?: string): Promise<PimoteResponse> {
+  async teardownSubagentView(rootSessionId: string, path: AgentPath, incarnation: string): Promise<PimoteResponse> {
     return connection.send({
       type: 'subagent_teardown',
       sessionId: rootSessionId,
       path: copyAgentPath(path),
       incarnation,
-      ...(attachmentGeneration !== undefined ? { attachmentGeneration } : {}),
     } as PimoteCommand);
   }
 
@@ -2621,7 +2625,7 @@ export class SessionRegistry {
   async sendSubagentCommand(rootSessionId: string, path: AgentPath, command: Record<string, unknown>): Promise<PimoteResponse> {
     const attachment = this.getSubagentAttachment(rootSessionId, path);
     if (!attachment || attachment.closed) return Promise.reject(new Error('child view is closed'));
-    const { sessionId: _sessionId, path: _path, incarnation: _incarnation, attachmentGeneration: _generation, type: commandType, ...payload } = command;
+    const { sessionId: _sessionId, path: _path, incarnation: _incarnation, type: commandType, ...payload } = command;
     const type = typeof commandType === 'string' && commandType.startsWith('subagent_') ? commandType : `subagent_${String(commandType)}`;
     const response = await connection.send({
       ...payload,
@@ -2629,7 +2633,6 @@ export class SessionRegistry {
       sessionId: rootSessionId,
       path: attachment.path,
       incarnation: attachment.incarnation,
-      attachmentGeneration: attachment.attachmentGeneration,
     } as PimoteCommand);
     this.applySubagentCommandResponse(attachment, String(commandType), response);
     return response;
@@ -3158,6 +3161,10 @@ connection.onUserSessionFacts = (facts) => {
   sessionRegistry.applyUserSessionFacts(facts);
 };
 
+connection.onUserViews = (views) => {
+  sessionRegistry.applyUserViews(views);
+};
+
 connection.onPendingAdopt = (sessionId, folderPath, { openDownloads }) => {
   void routeNotificationIntent({
     sessionId,
@@ -3183,6 +3190,7 @@ connection.onReconnected = () => {
   if (viewedId && !viewedId.startsWith('pending-')) {
     sessionRegistry.selectSession(viewedId);
   }
+  sessionRegistry.restoreUserViews();
 };
 
 // Hydrate persisted sessions before first connection

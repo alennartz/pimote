@@ -23,7 +23,6 @@ function transcript(kind: 'root' | 'child') {
       childSessionId,
       path,
       incarnation: 'child-incarnation',
-      attachmentGeneration: 'child-generation',
       viewCursor,
       state: {
         sessionId: childSessionId,
@@ -52,7 +51,6 @@ function transcript(kind: 'root' | 'child') {
           childSessionId,
           path,
           incarnation: 'child-incarnation',
-          attachmentGeneration: 'child-generation',
           viewCursor: ++viewCursor,
           event: input,
         });

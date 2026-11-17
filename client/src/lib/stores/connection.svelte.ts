@@ -8,6 +8,7 @@ import type {
   PimoteServerMessage,
   RestoreMode,
   UserSessionsChangedEvent,
+  UserOpenViewRef,
   SubagentViewEvent,
   SubagentViewSnapshot,
   SubagentViewClosedEvent,
@@ -246,6 +247,8 @@ export class ConnectionStore {
   /** Called for every `user_sessions_changed`, after its reconcile plan ran,
    *  with the user's chip order and selection (D4). */
   onUserSessionFacts: ((facts: UserSessionFacts) => void) | null = null;
+  /** The user's open child views. They restore after the root open pass. */
+  onUserViews: ((views: UserOpenViewRef[]) => void) | null = null;
 
   /** Disconnect listeners — a set, not a slot, so the next consumer can't
    *  silently assign over an existing listener. Fires on close and on socket
@@ -661,6 +664,7 @@ export class ConnectionStore {
       selectedSessionId: event.selectedSessionId ?? null,
       orderVersion: typeof event.orderVersion === 'number' ? event.orderVersion : 0,
     });
+    this.onUserViews?.(Array.isArray(event.views) ? (event.views as UserOpenViewRef[]) : []);
   }
 
   /** Registry entry creation for sessions adopted from the user's profile.

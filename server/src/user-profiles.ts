@@ -8,12 +8,26 @@ export interface SessionRef {
   folderPath: string;
 }
 
+/** One open child view in a user's profile. */
+export interface ViewRef {
+  /** Child session id — the session the view renders. */
+  sessionId: string;
+  /** Root session that owns the borrowed runtime. */
+  rootSessionId: string;
+  /** Root-relative agent path. */
+  path: string[];
+  /** Folder of the root. */
+  folderPath: string;
+}
+
 const DOCUMENT_VERSION = 1;
 
 /** One user's persisted profile. `order` is always the same members as
  *  `sessions`; `selectedSessionId` is always one of them or null. */
 interface UserProfile {
   sessions: SessionRef[];
+  /** Open child views. Chip order and selection stay root-only. */
+  views: ViewRef[];
   /** Session ids in chip order — the client owns the order, this stores it. */
   order: string[];
   selectedSessionId: string | null;
@@ -31,7 +45,13 @@ interface ProfileDocument {
 type PersistedDocument = {
   version?: number;
   users?: {
-    [name: string]: { sessions?: SessionRef[]; order?: string[]; selectedSessionId?: string | null; orderVersion?: number };
+    [name: string]: {
+      sessions?: SessionRef[];
+      views?: ViewRef[];
+      order?: string[];
+      selectedSessionId?: string | null;
+      orderVersion?: number;
+    };
   };
 };
 
@@ -54,6 +74,7 @@ function parseDocument(raw: string): ProfileDocument {
       const sessions = profile.sessions;
       users[name] = {
         sessions,
+        views: parseViews(profile.views),
         order: normalizeOrder(sessions, profile.order),
         selectedSessionId: normalizeSelection(sessions, profile.selectedSessionId),
         orderVersion: typeof profile.orderVersion === 'number' && profile.orderVersion >= 0 ? profile.orderVersion : 0,
@@ -86,6 +107,24 @@ function normalizeOrder(sessions: readonly SessionRef[], order: readonly string[
   return kept;
 }
 
+/** Drop malformed view entries and duplicates of the same root-relative path. */
+function parseViews(raw: unknown): ViewRef[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const views: ViewRef[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const candidate = entry as Partial<ViewRef>;
+    if (typeof candidate.sessionId !== 'string' || typeof candidate.rootSessionId !== 'string' || typeof candidate.folderPath !== 'string') continue;
+    if (!Array.isArray(candidate.path) || candidate.path.some((part) => typeof part !== 'string')) continue;
+    const key = `${candidate.rootSessionId}\u0000${JSON.stringify(candidate.path)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    views.push({ sessionId: candidate.sessionId, rootSessionId: candidate.rootSessionId, path: [...candidate.path], folderPath: candidate.folderPath });
+  }
+  return views;
+}
+
 /** Selection is either an open session or nothing — never a stale id. */
 function normalizeSelection(sessions: readonly SessionRef[], selected: unknown): string | null {
   if (typeof selected !== 'string') return null;
@@ -107,6 +146,8 @@ const MAX_USER_NAME_LENGTH = 64;
  * adoption window. The `fresh` notion is derived, not stored: a user is fresh
  * when no key exists for it yet; the first link ends freshness forever.
  */
+const samePath = (left: readonly string[], right: readonly string[]): boolean => left.length === right.length && left.every((part, index) => part === right[index]);
+
 export class UserProfiles {
   private document: ProfileDocument = emptyDocument();
   /** Serializes persist I/O: mutations are synchronous, but the writes must
@@ -132,12 +173,26 @@ export class UserProfiles {
     let pruned = false;
     for (const [name, profile] of Object.entries(this.document.users)) {
       const kept = profile.sessions.filter((ref) => validSessionIds.has(ref.sessionId));
-      if (kept.length !== profile.sessions.length) {
-        const order = normalizeOrder(kept, profile.order);
-        const selectedSessionId = normalizeSelection(kept, profile.selectedSessionId);
-        this.document.users[name] = { ...profile, sessions: kept, order, selectedSessionId };
-        pruned = true;
-      }
+      // A view whose root is gone can never be served again: the borrowed
+      // runtime died with the root slot.
+      const views = profile.views.filter((view) => kept.some((ref) => ref.sessionId === view.rootSessionId));
+      if (kept.length === profile.sessions.length && views.length === profile.views.length) continue;
+      const order = normalizeOrder(kept, profile.order);
+      const selectedSessionId = normalizeSelection(kept, profile.selectedSessionId);
+      this.document.users[name] = { ...profile, sessions: kept, views, order, selectedSessionId };
+      pruned = true;
+    }
+    if (pruned) await this.persist();
+  }
+
+  /** Child views need a live borrowed runtime, so none survives a restart.
+   *  Their roots do; opening a root rehydrates its children from disk. */
+  async dropAllViews(): Promise<void> {
+    let pruned = false;
+    for (const [name, profile] of Object.entries(this.document.users)) {
+      if (profile.views.length === 0) continue;
+      this.document.users[name] = { ...profile, views: [] };
+      pruned = true;
     }
     if (pruned) await this.persist();
   }
@@ -165,6 +220,52 @@ export class UserProfiles {
   /** True when no profile exists for this user yet. */
   isFresh(user: string): boolean {
     return !Object.hasOwn(this.document.users, user);
+  }
+
+  /** The user's open child views; empty for an unknown user or root. */
+  views(user: string): ViewRef[] {
+    return (this.document.users[user]?.views ?? []).map((view) => ({ ...view, path: [...view.path] }));
+  }
+
+  /** Idempotent view add by root-relative path. Returns true when the profile changed. */
+  async linkView(user: string, ref: ViewRef): Promise<boolean> {
+    const profile = this.ensureProfile(user);
+    const existing = profile.views.find((view) => view.rootSessionId === ref.rootSessionId && samePath(view.path, ref.path));
+    if (existing) {
+      if (existing.sessionId === ref.sessionId && existing.folderPath === ref.folderPath) return false;
+      existing.sessionId = ref.sessionId;
+      existing.folderPath = ref.folderPath;
+    } else {
+      profile.views.push({ ...ref, path: [...ref.path] });
+    }
+    await this.persistOrLog();
+    return true;
+  }
+
+  /** Remove one view by root-relative path. Returns true when changed. */
+  async unlinkView(user: string, rootSessionId: string, path: readonly string[]): Promise<boolean> {
+    const profile = this.document.users[user];
+    if (!profile) return false;
+    const kept = profile.views.filter((view) => !(view.rootSessionId === rootSessionId && samePath(view.path, path)));
+    if (kept.length === profile.views.length) return false;
+    profile.views = kept;
+    await this.persistOrLog();
+    return true;
+  }
+
+  /** Remove one root's views from every user, or from one user; returns
+   *  affected user names. */
+  async unlinkViewsUnder(rootSessionId: string, user?: string): Promise<string[]> {
+    const affected: string[] = [];
+    for (const [name, profile] of Object.entries(this.document.users)) {
+      if (user !== undefined && name !== user) continue;
+      const kept = profile.views.filter((view) => view.rootSessionId !== rootSessionId);
+      if (kept.length === profile.views.length) continue;
+      profile.views = kept;
+      affected.push(name);
+    }
+    if (affected.length > 0) await this.persistOrLog();
+    return affected;
   }
 
   /** Idempotent add; creates the user key, ending freshness. Returns true when the profile changed. */
@@ -200,13 +301,19 @@ export class UserProfiles {
   async unlinkAll(sessionId: string): Promise<string[]> {
     const affected: string[] = [];
     for (const [name, profile] of Object.entries(this.document.users)) {
+      // Views die with their root, and a view whose own session id matches the
+      // removed session dies too.
+      const keptViews = profile.views.filter((view) => view.rootSessionId !== sessionId && view.sessionId !== sessionId);
+      const viewsChanged = keptViews.length !== profile.views.length;
+      if (viewsChanged) profile.views = keptViews;
       const kept = profile.sessions.filter((s) => s.sessionId !== sessionId);
-      if (kept.length !== profile.sessions.length) {
+      const sessionsChanged = kept.length !== profile.sessions.length;
+      if (sessionsChanged) {
         profile.sessions = kept;
         profile.order = normalizeOrder(kept, profile.order);
         profile.selectedSessionId = normalizeSelection(kept, profile.selectedSessionId);
-        affected.push(name);
       }
+      if (viewsChanged || sessionsChanged) affected.push(name);
     }
     if (affected.length > 0) await this.persistOrLog();
     return affected;
@@ -249,7 +356,7 @@ export class UserProfiles {
   private ensureProfile(user: string): UserProfile {
     let profile = this.document.users[user];
     if (!profile) {
-      profile = { sessions: [], order: [], selectedSessionId: null, orderVersion: 0 };
+      profile = { sessions: [], views: [], order: [], selectedSessionId: null, orderVersion: 0 };
       this.document.users[user] = profile;
     }
     return profile;

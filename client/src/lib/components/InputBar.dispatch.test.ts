@@ -96,7 +96,6 @@ describe('child steering dispatch', () => {
       childSessionId: 'child',
       path: ['worker'],
       incarnation: 'inc-1',
-      attachmentGeneration: 'gen-1',
       viewCursor: 1,
       state: {
         sessionId: 'child',

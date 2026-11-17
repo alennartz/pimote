@@ -171,6 +171,10 @@ export interface SessionSurfaceOptions {
   getGitBranch?: () => string | null;
   /** Buffer capacity for this independent surface. */
   bufferCapacity?: number;
+  /** First cursor minus one for this surface's own buffer. A rebuilt child
+   *  surface must sit above every cursor its predecessor handed out, so a
+   *  stale client cursor replays as stale instead of as caught up. */
+  baseCursor?: number;
   /** Optional semantic provider hydrated before the first client snapshot. */
   subagentProvider?: Pick<SubagentPresentationProvider, 'rehydrate' | 'snapshot' | 'subscribe' | 'replay'>;
   /** Logical path supplied to provider hydration. */
@@ -590,7 +594,7 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     : undefined;
   const eventBuffer =
     options.eventBuffer ??
-    new EventBuffer(options.bufferCapacity ?? SURFACE_BUFFER_CAPACITY, customEntryVisible, 0, () =>
+    new EventBuffer(options.bufferCapacity ?? SURFACE_BUFFER_CAPACITY, customEntryVisible, options.baseCursor ?? 0, () =>
       fullMessagesFor(options, capabilities, customEntryVisible).flatMap((message) => (message.entryId ? [message.entryId] : [])),
     );
   const listensToNative = options.subscribeNative !== false;

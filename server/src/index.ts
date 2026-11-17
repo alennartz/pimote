@@ -132,6 +132,7 @@ export async function main(options: StartOptions = {}) {
   if (validSessionIds) {
     await userProfiles.gc(validSessionIds);
   }
+  await userProfiles.dropAllViews();
   const staticHostRegistry = new InMemoryStaticHostRegistry();
   const staticHostStore = new FileStaticHostStore(PIMOTE_STATIC_HOST_DIR);
   const staticHostFactory = createStaticHostExtension({ registry: staticHostRegistry, store: staticHostStore });

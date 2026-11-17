@@ -13,6 +13,7 @@ import type { PushNotificationService } from './push-notification.js';
 import { EventBuffer, type IncomingSdkEvent } from './event-buffer.js';
 import { QueueOwnership } from './queue-ownership.js';
 import { createSessionSurface } from './session-surface.js';
+import { UserProfiles } from './user-profiles.js';
 import type { BorrowedAgentSession } from '@pimote/sdk/subagents';
 import type { EventBusController } from '@earendil-works/pi-coding-agent';
 import type { DownloadItem, FolderInfo, PimoteEvent, PimoteResponse, PimoteSessionEvent, PimoteTreeNode } from '../../shared/dist/index.js';
@@ -280,6 +281,8 @@ function createTestHandler(
     folderRegistry?: FolderRegistry;
     folderListing?: FolderListingService;
     reloadPimoteExtensions?: () => Promise<void>;
+    userProfiles?: UserProfiles;
+    user?: string;
   },
 ): TestContext {
   const sessions = opts?.sessions ?? new Map();
@@ -314,6 +317,9 @@ function createTestHandler(
     opts?.folderRegistry,
     opts?.folderListing,
     opts?.reloadPimoteExtensions,
+    undefined,
+    opts?.userProfiles,
+    opts?.user,
   );
 
   clientRegistry.set(clientId, handler);
@@ -336,39 +342,71 @@ describe('native branch snapshot wire fields', () => {
     expect(findEvents(sent, 'full_resync')[0]).toMatchObject({ branchEntryIds: ['visible-root', 'hidden-root'] });
   });
 
-  it('preserves child branch IDs in a public open-view snapshot', async () => {
+  it('delivers the child branch snapshot as a view frame before the open response', async () => {
     const slot = createMockSlot({ id: 'branch-root' });
+    const snapshot = {
+      cursor: 1,
+      state: {
+        sessionId: 'child-branch',
+        sessionFile: undefined,
+        model: null,
+        thinkingLevel: 'off',
+        availableThinkingLevels: [],
+        isStreaming: false,
+        isCompacting: false,
+        autoCompactionEnabled: true,
+        messageCount: 1,
+      },
+      messages: [{ role: 'user', entryId: 'visible-child', content: [{ type: 'text', text: 'Child text' }] }],
+      branchEntryIds: ['visible-child', 'hidden-child'],
+      pendingSteeringMessages: ['Queued before opening'],
+    };
     slot.subagentHost = {
-      openView: async () => ({
-        path: ['worker'],
-        attachmentGeneration: 'generation',
-        snapshot: {
-          cursor: 1,
-          state: {
-            sessionId: 'child-branch',
-            sessionFile: undefined,
-            model: null,
-            thinkingLevel: 'off',
-            availableThinkingLevels: [],
-            isStreaming: false,
-            isCompacting: false,
-            autoCompactionEnabled: true,
-            messageCount: 1,
-          },
-          messages: [{ role: 'user', entryId: 'visible-child', content: [{ type: 'text', text: 'Child text' }] }],
-          branchEntryIds: ['visible-child', 'hidden-child'],
-          pendingSteeringMessages: ['Queued before opening'],
-        },
-      }),
+      openView: async (clientId: string) => {
+        slot.subagentViewListeners?.get(clientId)?.({ type: 'snapshot', snapshot }, ['worker'], 'inc-1', snapshot.cursor);
+        return { path: ['worker'], incarnation: 'inc-1', viewCursor: snapshot.cursor, mode: 'snapshot' };
+      },
       snapshot: () => ({ cursor: { epoch: 'epoch-1', sequence: 1 }, nodes: [{ path: ['worker'], incarnation: 'inc-1' }] }),
     } as unknown as NonNullable<ManagedSlot['subagentHost']>;
     const { handler, sent } = createTestHandler('branch-client', { sessions: new Map([['branch-root', slot]]) });
     await handler.handleMessage(JSON.stringify({ type: 'subagent_open_view', id: 'open-child-branch', sessionId: 'branch-root', path: ['worker'] }));
 
-    expect(findResponse(sent, 'open-child-branch')).toMatchObject({
-      success: true,
-      data: { snapshot: { branchEntryIds: ['visible-child', 'hidden-child'], pendingSteeringMessages: ['Queued before opening'] } },
+    const snapshotFrameIndex = sent.findIndex((event) => event.type === 'subagent_view_snapshot');
+    const responseIndex = sent.findIndex((event) => 'id' in event && event.id === 'open-child-branch');
+    expect(snapshotFrameIndex).toBeGreaterThanOrEqual(0);
+    expect(snapshotFrameIndex).toBeLessThan(responseIndex);
+    expect(sent[snapshotFrameIndex]).toMatchObject({
+      branchEntryIds: ['visible-child', 'hidden-child'],
+      pendingSteeringMessages: ['Queued before opening'],
+      incarnation: 'inc-1',
+      viewCursor: 1,
     });
+    expect(findResponse(sent, 'open-child-branch')).toMatchObject({ success: true, data: { mode: 'snapshot', viewCursor: 1 } });
+  });
+});
+
+describe('child view open set', () => {
+  it('links an opened view into the user profile and unlinks it on close', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pimote-view-profile-'));
+    try {
+      const userProfiles = new UserProfiles(join(dir, 'profiles.json'));
+      await userProfiles.load();
+      const slot = createMockSlot({ id: 'view-root' });
+      slot.subagentHost = {
+        openView: async () => ({ path: ['worker'], incarnation: 'inc-1', viewCursor: 3, mode: 'snapshot' }),
+        closeView: async () => {},
+        snapshot: () => ({ cursor: { epoch: 'epoch-1', sequence: 0 }, nodes: [{ path: ['worker'], incarnation: 'inc-1', sessionId: 'child-1' }] }),
+      } as unknown as NonNullable<ManagedSlot['subagentHost']>;
+      const { handler } = createTestHandler('view-client', { sessions: new Map([['view-root', slot]]), userProfiles, user: 'alice' });
+
+      await handler.handleMessage(JSON.stringify({ type: 'subagent_open_view', id: 'open-view', sessionId: 'view-root', path: ['worker'] }));
+      expect(userProfiles.views('alice')).toEqual([{ sessionId: 'child-1', rootSessionId: 'view-root', path: ['worker'], folderPath: '/home/user/project' }]);
+
+      await handler.handleMessage(JSON.stringify({ type: 'subagent_close_view', id: 'close-view', sessionId: 'view-root', path: ['worker'] }));
+      expect(userProfiles.views('alice')).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -376,7 +414,7 @@ describe('root-scoped subagent stop command', () => {
   it('stops a hierarchy node without opening its child view', async () => {
     const slot = createMockSlot({ id: 'stop-root' });
     const stop = vi.fn(async () => {});
-    slot.subagentHost = { stop, connectionToken: () => 7 } as unknown as NonNullable<ManagedSlot['subagentHost']>;
+    slot.subagentHost = { stop } as unknown as NonNullable<ManagedSlot['subagentHost']>;
     const { handler, sent } = createTestHandler('stop-client', { sessions: new Map([['stop-root', slot]]) });
 
     await handler.handleMessage(
@@ -390,7 +428,7 @@ describe('root-scoped subagent stop command', () => {
       }),
     );
 
-    expect(stop).toHaveBeenCalledWith({ path: ['worker'], incarnation: 'worker-incarnation', expectedSessionId: 'worker-session' }, 'stop-client', 7);
+    expect(stop).toHaveBeenCalledWith({ path: ['worker'], incarnation: 'worker-incarnation', expectedSessionId: 'worker-session' });
     expect(findResponse(sent, 'stop-worker')).toMatchObject({ success: true });
   });
 });

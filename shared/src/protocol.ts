@@ -1019,18 +1019,21 @@ interface SubagentCommandBase extends CommandBase {
   path: AgentPath;
   /** Opaque identity of the child incarnation captured by the view. */
   incarnation: string;
-  /** Opaque generation that prevents a stale view from targeting a replacement runtime. */
-  attachmentGeneration: string;
 }
 
 export interface SubagentOpenViewCommand extends CommandBase {
   type: 'subagent_open_view';
   sessionId: string;
   path: AgentPath;
+  /** Last child cursor this client applied. Replay resumes after it, or a
+   *  snapshot arrives when the cursor is stale. */
+  viewCursor?: number;
 }
 
-export interface SubagentCloseViewCommand extends SubagentCommandBase {
+export interface SubagentCloseViewCommand extends CommandBase {
   type: 'subagent_close_view';
+  sessionId: string;
+  path: AgentPath;
 }
 
 export interface SubagentPromptCommand extends SubagentCommandBase {
@@ -1675,12 +1678,25 @@ export interface FoldersChangedEvent {
   epoch: number;
 }
 
+/** One child view a user holds open. `path` is root-relative. */
+export interface UserOpenViewRef {
+  /** Child session id — the session the view renders. */
+  sessionId: string;
+  /** Root session that owns the borrowed runtime. */
+  rootSessionId: string;
+  path: AgentPath;
+  /** Folder of the root, used to route without a folder scan. */
+  folderPath: string;
+}
+
 /** Server → client. Sent in the connect burst and after any change to this
  *  user's profile. Recipients replace their local view with `sessions`. */
 export interface UserSessionsChangedEvent {
   type: 'user_sessions_changed';
   /** The user's full open-session set — server truth, not a delta. */
   sessions: { sessionId: string; folderPath: string }[];
+  /** The user's open child views. Addressed by root and path, never chips. */
+  views: UserOpenViewRef[];
   /** Every open session id in chip order — always the same members as
    *  `sessions`. */
   order: string[];
@@ -1801,12 +1817,16 @@ type SubagentSnapshotEventBase = {
  */
 export type SubagentSnapshotEvent = (SubagentSnapshotEventBase & SubagentSnapshot) | (SubagentSnapshotEventBase & { snapshot: SubagentSnapshot });
 
-/** Response payload returned by subagent_open_view. */
+/** Response payload returned by subagent_open_view. The transcript payload
+ *  travels as `subagent_view_snapshot` or `subagent_view_event` frames ahead
+ *  of this response, so the response says which kind arrived. */
 export interface SubagentOpenViewResponseData {
   path: AgentPath;
   incarnation: string;
-  attachmentGeneration: string;
-  snapshot: SubagentViewSnapshot;
+  /** Child cursor after the attach. */
+  viewCursor: SubagentViewCursor;
+  /** `events` when the supplied cursor replayed, `snapshot` otherwise. */
+  mode: 'events' | 'snapshot';
 }
 
 /** Full child transcript and state at an independent view cursor. */
@@ -1816,7 +1836,6 @@ export interface SubagentViewSnapshot {
   childSessionId: string;
   path: AgentPath;
   incarnation: string;
-  attachmentGeneration: string;
   viewCursor: SubagentViewCursor;
   state: SessionState;
   messages: PimoteAgentMessage[];
@@ -1835,19 +1854,17 @@ export interface SubagentViewEvent {
   childSessionId: string;
   path: AgentPath;
   incarnation: string;
-  attachmentGeneration: string;
   viewCursor: SubagentViewCursor;
   event: PimoteSessionEvent;
 }
 
-/** A child view closed because its lease or runtime ended. */
+/** A child view closed because its runtime ended or its observers left. */
 export interface SubagentViewClosedEvent {
   type: 'subagent_view_closed';
   sessionId: string;
   path: AgentPath;
   incarnation: string;
-  attachmentGeneration: string;
-  reason: 'released' | 'replaced' | 'unavailable' | 'teardown';
+  reason: 'replaced' | 'unavailable' | 'teardown';
 }
 
 /** Topology-only provider event projected into the parent replay stream. */

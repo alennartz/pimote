@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type {
   AgentPath,
   BorrowedAgentSession,
@@ -86,7 +86,7 @@ function fixture(retainedEvents: readonly SubagentEvent[] = []) {
     notify: (event: SubagentLeaseEvent) => void;
   }>();
   const listeners = new Set<(event: SubagentProviderEvent) => void>();
-  type ViewNotification = { connectionId: string; change: SubagentViewChange };
+  type ViewNotification = { clientId: string; change: SubagentViewChange; path: readonly string[]; incarnation: string; viewCursor: number };
   const viewChanges: ViewNotification[] = [];
   const waiters = new Set<(notification: ViewNotification) => void>();
   const parentEvents: SubagentEvent[] = [];
@@ -189,6 +189,8 @@ function fixture(retainedEvents: readonly SubagentEvent[] = []) {
         },
         async release() {
           if (!leases.delete(record)) return;
+          // The provider delivers the held idle answer when the last view of
+          // the child detaches.
           if (key(path) === key(scout) && ![...leases].some((lease) => key(lease.path) === key(scout))) {
             pending.delivered.push(pending.idleAnswer);
           }
@@ -228,45 +230,57 @@ function fixture(retainedEvents: readonly SubagentEvent[] = []) {
     },
   };
 
+  /** Child surface double with the real cursor rules: a base above zero and a
+   *  replay floor that turns an old cursor into a snapshot. */
   function makeSurface(options: SessionSurfaceOptions): SessionSurface {
-    const observers = new Set<(event: PimoteSessionEvent) => void>();
+    const observers = new Map<string, (event: PimoteSessionEvent) => void>();
     const events: PimoteSessionEvent[] = [];
+    const base = options.baseCursor ?? 0;
     const id = options.session.sessionId;
     const stop = (options as SessionSurfaceOptions & { stop?: (...args: readonly unknown[]) => Promise<void> | void }).stop;
-    const snapshot = () => ({ cursor: events.length, state: state(id), messages: [] });
+    const cursor = () => base + events.length;
+    const snapshot = () => ({ cursor: cursor(), state: state(id), messages: [] });
     surfaces.set(id, {
       emit: (event) => {
         events.push(event);
-        for (const observer of observers) observer(event);
+        for (const observer of observers.values()) observer(event);
       },
     });
     return {
       sessionId: id,
       kind: 'child',
       get currentCursor() {
-        return events.length;
+        return cursor();
       },
       acceptProviderEvent: (event) => {
         accept(id, event);
       },
       initialize: async () => snapshot(),
-      refreshSnapshot: () => ({ ...snapshot(), cursor: events.length + 1 }),
+      refreshSnapshot: () => snapshot(),
       subscribe: (listener) => {
-        observers.add(listener);
+        observers.set(`anonymous-${observers.size}`, listener);
         return () => {
-          observers.delete(listener);
+          for (const [observerId, candidate] of observers) if (candidate === listener) observers.delete(observerId);
         };
       },
       close: () => {
         observers.clear();
       },
-      attachObserver: async (observerId, after) => ({
-        observerId,
-        cursor: events.length,
-        ...(after === undefined ? { snapshot: snapshot() } : { events: events.slice(after) }),
-        release() {},
-      }),
-      replay: (after = 0) => ({ kind: 'events', cursor: events.length, events: events.slice(after) }),
+      attachObserver: async (observerId, after) => {
+        observers.set(observerId, () => undefined);
+        const replayable = after !== undefined && after >= base && after <= cursor();
+        const replayed = replayable ? events.slice(after - base) : undefined;
+        return {
+          observerId,
+          cursor: cursor(),
+          ...(replayed ? { events: replayed } : { snapshot: snapshot() }),
+          release: () => {
+            observers.delete(observerId);
+          },
+        };
+      },
+      replay: (after = base) =>
+        after < base || after > cursor() ? { kind: 'snapshot_required', reason: 'history_unavailable' } : { kind: 'events', cursor: cursor(), events: events.slice(after - base) },
       dispatch: async (command) => {
         if (command.type === 'abort') await stop?.(command);
         return `${id}:${command.type}`;
@@ -293,8 +307,8 @@ function fixture(retainedEvents: readonly SubagentEvent[] = []) {
       parentEvents.push(event);
       pending.parentCursor++;
     },
-    emitViewChange: (connectionId, change) => {
-      const notification = { connectionId, change };
+    emitViewChange: (clientId, change, path, incarnation, viewCursor) => {
+      const notification = { clientId, change, path, incarnation, viewCursor };
       viewChanges.push(notification);
       for (const waiter of waiters) waiter(notification);
     },
@@ -375,7 +389,7 @@ describe('SubagentHost', () => {
   it('routes presentation operations only to their root or child session surface', async () => {
     const f = fixture();
     await f.host.start();
-    await f.host.openView('connection-1', scout);
+    await f.host.openView('client-1', scout);
     const base = {
       type: 'subagent_start',
       cursor: { epoch: 'epoch-1', sequence: 1 },
@@ -408,213 +422,170 @@ describe('SubagentHost', () => {
     expect(f.parentEvents.map((event) => event.eventId)).toEqual(['event-1', 'event-2']);
   });
 
-  it('keeps multiple paths per connection and holds the answer until the last viewer detaches', async () => {
+  it('shares one surface and one lease across clients and holds the answer until the last detaches', async () => {
     const f = fixture();
     await f.host.start();
-    const first = await f.host.openView('connection-1', scout);
-    const secondPath = await f.host.openView('connection-1', reviewer);
-    const secondViewer = await f.host.openView('connection-2', scout);
-    expect(f.active(scout)).toBe(2);
-    expect(f.active(reviewer)).toBe(1);
+    const first = await f.host.openView('client-1', scout);
+    const second = await f.host.openView('client-2', scout);
+    expect(f.active(scout)).toBe(1);
+    expect(first.incarnation).toBe(second.incarnation);
+    expect(f.pending.acquireCalls).toBe(1);
 
-    await f.host.closeView('connection-1', first);
+    await f.host.closeView('client-1', scout);
     expect(f.active(scout)).toBe(1);
     expect(f.pending.delivered).toEqual([]);
-    await expect(f.host.dispatch('connection-1', secondPath, { type: 'get_state' })).resolves.toBe('reviewer-1:get_state');
+
     const event: PimoteSessionEvent = { type: 'agent_start', sessionId: 'scout-1', cursor: 1 };
-    const delivered = f.nextViewChange(({ connectionId, change }) => connectionId === 'connection-2' && change.type === 'event');
+    const delivered = f.nextViewChange(({ clientId, change }) => clientId === 'client-2' && change.type === 'event');
     f.surfaces.get('scout-1')!.emit(event);
     await delivered;
-    expect(f.viewChanges).not.toContainEqual({
-      connectionId: 'connection-1',
-      change: {
-        type: 'event',
-        path: scout,
-        attachmentGeneration: first.attachmentGeneration,
-        event,
-      },
-    });
-    expect(f.viewChanges).toContainEqual({
-      connectionId: 'connection-2',
-      change: {
-        type: 'event',
-        path: scout,
-        attachmentGeneration: secondViewer.attachmentGeneration,
-        event,
-      },
-    });
+    expect(f.viewChanges.filter(({ clientId }) => clientId === 'client-1').some(({ change }) => change.type === 'event')).toBe(false);
 
-    await f.host.closeView('connection-2', secondViewer);
+    await f.host.closeView('client-2', scout);
     expect(f.active(scout)).toBe(0);
     expect(f.pending.delivered).toEqual(['latest answer']);
   });
 
-  it('deduplicates concurrent opens for one connection and path', async () => {
+  it('replays a delta to the attaching client only and reports the mode', async () => {
+    const f = fixture();
+    await f.host.start();
+    const first = await f.host.openView('client-1', scout);
+    const event: PimoteSessionEvent = { type: 'agent_start', sessionId: 'scout-1', cursor: 1 };
+    f.surfaces.get('scout-1')!.emit(event);
+
+    const second = await f.host.openView('client-2', scout, first.viewCursor);
+    expect(second.mode).toBe('events');
+    expect(f.viewChanges.filter(({ clientId }) => clientId === 'client-2').map(({ change }) => change)).toEqual([{ type: 'event', event }]);
+    expect(f.viewChanges.filter(({ clientId }) => clientId === 'client-1').some(({ change }) => change.type === 'event' && change.event === event)).toBe(true);
+  });
+
+  it('answers a stale cursor with a snapshot instead of a false catch-up', async () => {
+    const f = fixture();
+    await f.host.start();
+    const first = await f.host.openView('client-1', scout);
+    // A cursor from a dropped surface sits below this surface's base.
+    const stale = await f.host.openView('client-1', scout, first.viewCursor - first.viewCursor - 1);
+    expect(stale.mode).toBe('snapshot');
+    expect(f.viewChanges.filter(({ clientId, change }) => clientId === 'client-1' && change.type === 'snapshot')).toHaveLength(2);
+  });
+
+  it('opens a fresh view with a snapshot', async () => {
+    const f = fixture();
+    await f.host.start();
+    const opened = await f.host.openView('client-1', scout);
+    expect(opened.mode).toBe('snapshot');
+    expect(f.viewChanges.filter(({ clientId, change }) => clientId === 'client-1' && change.type === 'snapshot')).toHaveLength(1);
+  });
+
+  it('deduplicates concurrent opens for one path', async () => {
     const f = fixture();
     await f.host.start();
     f.pending.blockAcquire = true;
-    const first = f.host.openView('connection-1', scout);
-    const second = f.host.openView('connection-1', scout);
+    const first = f.host.openView('client-1', scout);
+    const second = f.host.openView('client-2', scout);
     await Promise.resolve();
     expect(f.pending.acquireCalls).toBe(1);
     f.pending.blockAcquire = false;
     f.pending.releaseAcquire?.();
-    const [one, two] = await Promise.all([first, second]);
-    expect(one.attachmentGeneration).toBe(two.attachmentGeneration);
+    await Promise.all([first, second]);
     expect(f.active(scout)).toBe(1);
   });
 
-  it('refreshes every live attachment after shared tree navigation', async () => {
+  it('refreshes every observing client after shared tree navigation', async () => {
     const f = fixture();
     await f.host.start();
-    const first = await f.host.openView('connection-1', scout);
-    const second = await f.host.openView('connection-2', scout);
-    const firstRefresh = f.nextViewChange(
-      ({ connectionId, change }) => connectionId === 'connection-1' && change.type === 'snapshot' && change.snapshot.cursor > first.snapshot.cursor,
-    );
-    const secondRefresh = f.nextViewChange(
-      ({ connectionId, change }) => connectionId === 'connection-2' && change.type === 'snapshot' && change.snapshot.cursor > second.snapshot.cursor,
-    );
-    await f.host.dispatch('connection-1', first, { type: 'navigate_tree', targetId: 'entry-1' });
-    await expect(Promise.all([firstRefresh, secondRefresh])).resolves.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ connectionId: 'connection-1', change: expect.objectContaining({ type: 'snapshot' }) }),
-        expect.objectContaining({ connectionId: 'connection-2', change: expect.objectContaining({ type: 'snapshot' }) }),
-      ]),
-    );
+    await f.host.openView('client-1', scout);
+    await f.host.openView('client-2', scout);
+    const firstRefresh = f.nextViewChange(({ clientId, change }) => clientId === 'client-1' && change.type === 'snapshot');
+    const secondRefresh = f.nextViewChange(({ clientId, change }) => clientId === 'client-2' && change.type === 'snapshot');
+    await f.host.dispatch('client-1', { path: scout }, { type: 'navigate_tree', targetId: 'entry-1' });
+    await expect(Promise.all([firstRefresh, secondRefresh])).resolves.toEqual([
+      expect.objectContaining({ clientId: 'client-1', change: expect.objectContaining({ type: 'snapshot' }) }),
+      expect.objectContaining({ clientId: 'client-2', change: expect.objectContaining({ type: 'snapshot' }) }),
+    ]);
   });
 
-  it('releases a lease that finishes after the connection token is invalidated', async () => {
+  it('detaches one client without closing the view another client holds', async () => {
     const f = fixture();
     await f.host.start();
-    f.pending.blockAcquire = true;
-    const opening = f.host.openView('connection-1', scout);
-    await Promise.resolve();
-    const token = f.host.connectionToken?.('connection-1');
-    expect(token).toBeTypeOf('number');
-    f.host.disconnect('connection-1', token);
-    f.pending.blockAcquire = false;
-    f.pending.releaseAcquire?.();
-    await expect(opening).rejects.toThrow('stale connection token');
-    expect(f.active(scout)).toBe(0);
+    await f.host.openView('client-1', scout);
+    await f.host.openView('client-2', scout);
+    await f.host.openView('client-1', reviewer);
+
+    await f.host.detachClient('client-1');
+
+    expect(f.active(scout)).toBe(1);
+    expect(f.active(reviewer)).toBe(0);
+    expect(f.pending.delivered).toEqual([]);
+    await expect(f.host.dispatch('client-1', { path: scout }, { type: 'get_state' })).rejects.toThrow('subagent view is not open');
+    await expect(f.host.dispatch('client-2', { path: scout }, { type: 'get_state' })).resolves.toBe('scout-1:get_state');
+
+    await f.host.detachClient('client-2');
     expect(f.pending.delivered).toEqual(['latest answer']);
   });
 
-  it('holds open views across a long disconnect until the user closes them', async () => {
-    vi.useFakeTimers();
-    try {
-      const f = fixture();
-      await f.host.start();
-      const first = await f.host.openView('connection-1', scout);
-      await f.host.openView('connection-1', reviewer);
-      f.host.disconnect('connection-1');
-      await vi.advanceTimersByTimeAsync(5000);
-      expect(f.pending.delivered).toEqual([]);
-      expect(f.viewChanges.filter(({ change }) => change.type === 'closed')).toEqual([]);
-      const reattached = await f.host.reconnect('connection-1');
-      expect(reattached.map((view) => view.path)).toEqual(expect.arrayContaining([scout, reviewer]));
-      await expect(f.host.dispatch('connection-1', first, { type: 'get_state' })).resolves.toBe('scout-1:get_state');
-      await f.host.closeView('connection-1', first);
-      expect(f.pending.delivered).toEqual(['latest answer']);
-      await f.host.releaseConnection('connection-1');
-      expect(f.active(reviewer)).toBe(0);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('resyncs a child transcript after tree navigation', async () => {
+  it('reopens a dropped view with a snapshot rather than a silent gap', async () => {
     const f = fixture();
     await f.host.start();
-    const view = await f.host.openView('connection-1', scout);
-    const refreshed = f.nextViewChange(({ connectionId, change }) => connectionId === 'connection-1' && change.type === 'snapshot');
-    await f.host.dispatch('connection-1', view, { type: 'navigate_tree', targetId: 'entry-1' });
-    expect(await refreshed).toEqual(
-      expect.objectContaining({
-        connectionId: 'connection-1',
-        change: expect.objectContaining({
-          type: 'snapshot',
-          path: scout,
-          attachmentGeneration: view.attachmentGeneration,
-          snapshot: expect.objectContaining({ cursor: 1 }),
-        }),
-      }),
-    );
+    const first = await f.host.openView('client-1', scout);
+    await f.host.closeView('client-1', scout);
+    const reopened = await f.host.openView('client-1', scout, first.viewCursor);
+    expect(reopened.mode).toBe('snapshot');
+    expect(f.active(scout)).toBe(1);
   });
 
-  it('rejects stale connection tokens after a reconnect', async () => {
+  it('reports an unavailable path instead of opening an empty view', async () => {
     const f = fixture();
     await f.host.start();
-    const view = await f.host.openView('connection-1', scout);
-    const firstToken = f.host.connectionToken?.('connection-1');
-    expect(firstToken).toBeTypeOf('number');
-    f.host.disconnect('connection-1', firstToken);
-    await expect(f.host.reconnect('connection-1', firstToken)).rejects.toThrow('stale connection token');
-    const reconnectToken = f.host.connectionToken?.('connection-1');
-    expect(reconnectToken).not.toBe(firstToken);
-    await f.host.reconnect('connection-1', reconnectToken);
-    await expect(f.host.dispatch('connection-1', view, { type: 'get_state' }, firstToken)).rejects.toThrow('stale connection token');
+    f.unavailable(scout);
+    await expect(f.host.openView('client-1', scout)).rejects.toThrow('unavailable');
+    expect(f.active(scout)).toBe(0);
   });
 
   it('rebinds a live view to a replacement and sends a fresh snapshot', async () => {
     const f = fixture();
     await f.host.start();
-    const view = await f.host.openView('connection-1', scout);
-    const rebound = f.nextViewChange(({ connectionId, change }) => connectionId === 'connection-1' && change.type === 'snapshot');
+    await f.host.openView('client-1', scout);
+    const rebound = f.nextViewChange(({ clientId, change }) => clientId === 'client-1' && change.type === 'snapshot');
     f.replace(scout, 'scout-2');
-    expect(await rebound).toEqual({
-      connectionId: 'connection-1',
-      change: expect.objectContaining({
-        type: 'snapshot',
-        path: scout,
-        attachmentGeneration: view.attachmentGeneration,
-        snapshot: expect.objectContaining({ state: expect.objectContaining({ sessionId: 'scout-2' }) }),
+    expect(await rebound).toEqual(
+      expect.objectContaining({
+        clientId: 'client-1',
+        change: expect.objectContaining({
+          type: 'snapshot',
+          snapshot: expect.objectContaining({ state: expect.objectContaining({ sessionId: 'scout-2' }) }),
+        }),
       }),
-    });
-    await expect(f.host.dispatch('connection-1', view, { type: 'get_state' })).resolves.toBe('scout-2:get_state');
+    );
+    await expect(f.host.dispatch('client-1', { path: scout }, { type: 'get_state' })).resolves.toBe('scout-2:get_state');
     const oldEvent: PimoteSessionEvent = { type: 'agent_start', sessionId: 'scout-1', cursor: 1 };
     const newEvent: PimoteSessionEvent = { type: 'agent_start', sessionId: 'scout-2', cursor: 1 };
     const delivered = f.nextViewChange(({ change }) => change.type === 'event' && change.event.sessionId === 'scout-2');
     f.surfaces.get('scout-1')!.emit(oldEvent);
     f.surfaces.get('scout-2')!.emit(newEvent);
     await delivered;
-    expect(f.viewChanges).not.toContainEqual(expect.objectContaining({ change: expect.objectContaining({ type: 'event', event: oldEvent }) }));
-    expect(f.viewChanges).toContainEqual({
-      connectionId: 'connection-1',
-      change: {
-        type: 'event',
-        path: scout,
-        attachmentGeneration: view.attachmentGeneration,
-        event: newEvent,
-      },
-    });
+    expect(f.viewChanges.some(({ change }) => change.type === 'event' && change.event === oldEvent)).toBe(false);
+    expect(f.viewChanges).toContainEqual(expect.objectContaining({ clientId: 'client-1', change: { type: 'event', event: newEvent } }));
   });
 
-  it('rejects foreign, wrong-path, and stale generations even when a path is reused', async () => {
+  it('rejects commands from a client that does not observe the view and from a stale incarnation', async () => {
     const f = fixture();
     await f.host.start();
-    const old = await f.host.openView('connection-1', scout);
-    await expect(f.host.dispatch('connection-2', old, { type: 'get_state' })).rejects.toThrow();
-    await expect(f.host.dispatch('connection-1', { ...old, path: reviewer }, { type: 'get_state' })).rejects.toThrow();
-    await f.host.closeView('connection-2', old).catch(() => undefined);
-    await expect(f.host.dispatch('connection-1', old, { type: 'get_state' })).resolves.toBe('scout-1:get_state');
-    const closed = f.nextViewChange(({ connectionId, change }) => connectionId === 'connection-1' && change.type === 'closed');
+    const view = await f.host.openView('client-1', scout);
+    await expect(f.host.dispatch('client-2', { path: scout }, { type: 'get_state' })).rejects.toThrow('subagent view is not open');
+    await expect(f.host.dispatch('client-1', { path: reviewer }, { type: 'get_state' })).rejects.toThrow('subagent view is not open');
+    await expect(f.host.dispatch('client-1', { path: scout, incarnation: 'stale' }, { type: 'get_state' })).rejects.toThrow('stale child incarnation');
+    await expect(f.host.dispatch('client-1', { path: scout, incarnation: view.incarnation }, { type: 'get_state' })).resolves.toBe('scout-1:get_state');
+  });
+
+  it('closes a view whose runtime disappears and notifies its observer', async () => {
+    const f = fixture();
+    await f.host.start();
+    await f.host.openView('client-1', scout);
+    const closed = f.nextViewChange(({ clientId, change }) => clientId === 'client-1' && change.type === 'closed');
     f.unavailable(scout);
-    expect(await closed).toEqual({
-      connectionId: 'connection-1',
-      change: {
-        type: 'closed',
-        path: scout,
-        attachmentGeneration: old.attachmentGeneration,
-        reason: 'unavailable',
-      },
-    });
-    f.restore(scout, 'scout-3');
-    const fresh = await f.host.openView('connection-1', scout);
-    expect(fresh.attachmentGeneration).not.toBe(old.attachmentGeneration);
-    await expect(f.host.dispatch('connection-1', old, { type: 'get_state' })).rejects.toThrow();
-    await f.host.closeView('connection-1', old).catch(() => undefined);
-    await expect(f.host.dispatch('connection-1', fresh, { type: 'get_state' })).resolves.toBe('scout-3:get_state');
+    expect(await closed).toEqual(expect.objectContaining({ clientId: 'client-1', change: { type: 'closed', reason: 'unavailable' } }));
+    await expect(f.host.dispatch('client-1', { path: scout }, { type: 'get_state' })).rejects.toThrow('subagent view is not open');
   });
 
   it('stops a hierarchy node without requiring a view and guards its runtime identity', async () => {
@@ -622,53 +593,45 @@ describe('SubagentHost', () => {
     await f.host.start();
     const request = { path: worker, incarnation: 'worker-1-incarnation', expectedSessionId: 'worker-1' };
 
-    await f.host.stop(request, 'connection-1');
+    await f.host.stop(request);
 
     expect(f.stopRequests).toContainEqual(request);
     expect(f.active(worker)).toBe(0);
-    await expect(f.host.stop({ ...request, expectedSessionId: 'replacement' }, 'connection-1')).rejects.toThrow('stale child runtime');
+    await expect(f.host.stop({ ...request, expectedSessionId: 'replacement' })).rejects.toThrow('stale child runtime');
     expect(f.stopRequests).not.toContainEqual(expect.objectContaining({ expectedSessionId: 'replacement' }));
   });
 
   it('closes views in a torn-down subtree and leaves other views usable', async () => {
     const f = fixture();
     await f.host.start();
-    const one = await f.host.openView('connection-1', scout);
-    const two = await f.host.openView('connection-2', reviewer);
-    const outside = await f.host.openView('connection-1', other);
-    const firstClosed = f.nextViewChange(({ connectionId, change }) => connectionId === 'connection-1' && change.type === 'closed');
-    const secondClosed = f.nextViewChange(({ connectionId, change }) => connectionId === 'connection-2' && change.type === 'closed');
+    await f.host.openView('client-1', scout);
+    await f.host.openView('client-2', reviewer);
+    await f.host.openView('client-1', other);
+    const firstClosed = f.nextViewChange(({ clientId, change }) => clientId === 'client-1' && change.type === 'closed');
+    const secondClosed = f.nextViewChange(({ clientId, change }) => clientId === 'client-2' && change.type === 'closed');
     await expect(f.host.teardown(['worker'])).resolves.toMatchObject({ path: ['worker'], removed: true });
     expect(await Promise.all([firstClosed, secondClosed])).toEqual([
-      { connectionId: 'connection-1', change: { type: 'closed', path: scout, attachmentGeneration: one.attachmentGeneration, reason: 'teardown' } },
-      { connectionId: 'connection-2', change: { type: 'closed', path: reviewer, attachmentGeneration: two.attachmentGeneration, reason: 'teardown' } },
+      expect.objectContaining({ clientId: 'client-1', change: { type: 'closed', reason: 'teardown' } }),
+      expect.objectContaining({ clientId: 'client-2', change: { type: 'closed', reason: 'teardown' } }),
     ]);
-    await expect(f.host.dispatch('connection-1', one, { type: 'get_state' })).rejects.toThrow();
-    await expect(f.host.dispatch('connection-2', two, { type: 'get_state' })).rejects.toThrow();
-    await expect(f.host.dispatch('connection-1', outside, { type: 'get_state' })).resolves.toBe('other-1:get_state');
+    await expect(f.host.dispatch('client-1', { path: scout }, { type: 'get_state' })).rejects.toThrow();
+    await expect(f.host.dispatch('client-2', { path: reviewer }, { type: 'get_state' })).rejects.toThrow();
+    await expect(f.host.dispatch('client-1', { path: other }, { type: 'get_state' })).resolves.toBe('other-1:get_state');
   });
 
   it('routes child events on their view cursor without advancing the parent cursor', async () => {
     const f = fixture();
     const started = await f.host.start();
-    const view = await f.host.openView('connection-1', scout);
+    const view = await f.host.openView('client-1', scout);
     const event: PimoteSessionEvent = { type: 'agent_start', sessionId: 'scout-1', cursor: 1 };
     const delivered = f.nextViewChange(({ change }) => change.type === 'event');
     f.surfaces.get('scout-1')!.emit(event);
     await delivered;
-    expect(f.viewChanges).toContainEqual({
-      connectionId: 'connection-1',
-      change: {
-        type: 'event',
-        path: scout,
-        attachmentGeneration: view.attachmentGeneration,
-        event,
-      },
-    });
+    expect(f.viewChanges).toContainEqual(expect.objectContaining({ clientId: 'client-1', change: { type: 'event', event }, path: scout }));
     expect(started.parentCursor).toBe(41);
     expect(f.pending.parentCursor).toBe(41);
     f.publish(semanticEvent(1));
     expect(f.pending.parentCursor).toBe(42);
-    expect(view.snapshot.cursor).toBe(0);
+    expect(view.viewCursor).toBeTypeOf('number');
   });
 });

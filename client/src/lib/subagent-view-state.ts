@@ -63,7 +63,6 @@ export type SubagentSelectedView =
       readonly kind: 'child';
       readonly path: AgentPath;
       readonly incarnation?: string;
-      readonly attachmentGeneration?: string;
     };
 
 export interface SubagentViewNotice {
@@ -74,7 +73,6 @@ export interface SubagentViewNotice {
 export interface SubagentTeardownConfirmation {
   readonly path: AgentPath;
   readonly incarnation?: string;
-  readonly attachmentGeneration?: string;
 }
 
 export interface SubagentPanelState {
@@ -106,7 +104,6 @@ export type SubagentPanelAction =
       readonly type: 'open_child_view';
       readonly path: AgentPath;
       readonly incarnation?: string;
-      readonly attachmentGeneration?: string;
     }
   | { readonly type: 'close_child_view' }
   | { readonly type: 'view_closed'; readonly path: AgentPath; readonly reason: 'teardown' | 'unavailable' }
@@ -120,7 +117,6 @@ export type SubagentTeardownAction =
       readonly type: 'request_teardown';
       readonly target: 'selected_view' | 'inspected';
       readonly incarnation?: string;
-      readonly attachmentGeneration?: string;
     }
   | { readonly type: 'cancel_teardown' }
   | { readonly type: 'confirm_teardown' };
@@ -130,7 +126,6 @@ export interface SubagentTeardownTransition {
   readonly request?: {
     readonly path: AgentPath;
     readonly incarnation?: string;
-    readonly attachmentGeneration?: string;
   };
 }
 
@@ -186,7 +181,6 @@ export function reduceSubagentTeardown(state: SubagentPanelState, action: Subage
       request: {
         path: copyPath(confirmation.path),
         ...(confirmation.incarnation !== undefined ? { incarnation: confirmation.incarnation } : {}),
-        ...(confirmation.attachmentGeneration !== undefined ? { attachmentGeneration: confirmation.attachmentGeneration } : {}),
       },
     };
   }
@@ -198,11 +192,6 @@ export function reduceSubagentTeardown(state: SubagentPanelState, action: Subage
   const confirmation: SubagentTeardownConfirmation = {
     path: copyPath(path),
     ...(action.incarnation !== undefined ? { incarnation: action.incarnation } : selected?.incarnation !== undefined ? { incarnation: selected.incarnation } : {}),
-    ...(action.attachmentGeneration !== undefined
-      ? { attachmentGeneration: action.attachmentGeneration }
-      : selected?.attachmentGeneration !== undefined
-        ? { attachmentGeneration: selected.attachmentGeneration }
-        : {}),
   };
   return { state: { ...state, teardownConfirmation: confirmation } };
 }
@@ -220,7 +209,6 @@ export function reduceSubagentPanelState(state: SubagentPanelState, action: Suba
         kind: 'child',
         path: copyPath(action.path),
         ...(action.incarnation !== undefined ? { incarnation: action.incarnation } : {}),
-        ...(action.attachmentGeneration !== undefined ? { attachmentGeneration: action.attachmentGeneration } : {}),
       };
       return {
         ...state,

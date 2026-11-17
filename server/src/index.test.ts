@@ -59,6 +59,7 @@ const mocks = vi.hoisted(() => {
   const userProfiles = {
     load: vi.fn(async () => undefined),
     gc: vi.fn(async () => undefined),
+    dropAllViews: vi.fn(async () => undefined),
   };
   const UserProfiles = vi.fn(function () {
     return userProfiles;

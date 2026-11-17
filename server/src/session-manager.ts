@@ -121,7 +121,7 @@ export interface SessionState {
   undeliveredDrafts?: Map<string, QueueTexts>;
 }
 
-export type SubagentViewListener = (change: SubagentViewChange, incarnation?: string, viewCursor?: number) => void;
+export type SubagentViewListener = (change: SubagentViewChange, path: readonly string[], incarnation: string, viewCursor: number) => void;
 
 export interface ManagedSlot {
   runtime: AgentSessionRuntime;
@@ -1116,8 +1116,8 @@ export class PimoteSessionManager {
       emitParentEvent: (event) => {
         slot.sessionState.eventBuffer.appendTopologyEvent(event, slot.sessionState.id, (mapped) => sendSlotEvent(slot, mapped));
       },
-      emitViewChange: (connectionId, change, incarnation, viewCursor) => {
-        slot.subagentViewListeners?.get(connectionId)?.(change, incarnation, viewCursor);
+      emitViewChange: (clientId, change, path, incarnation, viewCursor) => {
+        slot.subagentViewListeners?.get(clientId)?.(change, path, incarnation, viewCursor);
       },
       childCapabilities: (session) => this.childSurfaceCapabilities(session),
     });

@@ -61,7 +61,6 @@ function selectChild() {
     childSessionId: 'child-s1',
     path: ['worker'],
     incarnation: 'inc-1',
-    attachmentGeneration: 'gen-1',
     viewCursor: 1,
     state: {
       model: null,

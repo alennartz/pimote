@@ -28,7 +28,6 @@ describe('PendingSteeringMessages draft restoration', () => {
       childSessionId: 'child',
       path: ['worker'],
       incarnation: 'inc-1',
-      attachmentGeneration: 'gen-1',
       viewCursor: 1,
       state: {
         sessionId: 'child',
@@ -56,7 +55,6 @@ describe('PendingSteeringMessages draft restoration', () => {
       childSessionId: 'child',
       path: ['worker'],
       incarnation: 'inc-1',
-      attachmentGeneration: 'gen-1',
       viewCursor: 2,
       event: { type: 'queue_update', sessionId: 'child', cursor: 2, steering: ['child message'], followUp: [] },
     });
@@ -69,7 +67,6 @@ describe('PendingSteeringMessages draft restoration', () => {
       childSessionId: 'child',
       path: ['worker'],
       incarnation: 'inc-1',
-      attachmentGeneration: 'gen-1',
       viewCursor: 3,
       event: { type: 'queue_update', sessionId: 'child', cursor: 3, steering: [], followUp: [] },
     });

@@ -518,9 +518,7 @@ describe('Panel row teardown', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(connection.send).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'subagent_teardown', sessionId: 'root', path: ['worker'], incarnation: 'inc-worker', attachmentGeneration: 'gen-worker' }),
-    );
+    expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'subagent_teardown', sessionId: 'root', path: ['worker'], incarnation: 'inc-worker' }));
     settleTeardown();
     await tick();
 

@@ -2227,7 +2227,6 @@ describe('subagent child surface state', () => {
       childSessionId: 'child-session',
       path: ['worker'],
       incarnation: 'inc-1',
-      attachmentGeneration: 'gen-1',
       viewCursor: 3,
       state: childState(),
       messages,
@@ -2271,12 +2270,21 @@ describe('subagent child surface state', () => {
     }
   });
 
-  it('refreshes a reconnected child snapshot when both surfaces start at cursor zero', () => {
+  it('ignores a duplicate child snapshot at the cursor already applied', () => {
     const registry = new SessionRegistry();
     registry.addSession('root', '/workspace', 'workspace');
-    registry.handleEvent(childSnapshot([], { viewCursor: 0, state: { ...childState(), isStreaming: true } }));
-    registry.handleEvent(childSnapshot([], { viewCursor: 0, state: { ...childState(), isStreaming: false } }));
+    registry.handleEvent(childSnapshot([], { viewCursor: 4, state: { ...childState(), isStreaming: false } }));
+    registry.handleEvent(childSnapshot([], { viewCursor: 4, state: { ...childState(), isStreaming: true } }));
     expect(registry.getSubagentAttachment('root', ['worker'])?.state.isStreaming).toBe(false);
+  });
+
+  it('applies a snapshot from a rebuilt surface above the applied cursor', () => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    registry.handleEvent(childSnapshot([], { viewCursor: 4, state: { ...childState(), isStreaming: true } }));
+    registry.handleEvent(childSnapshot([], { viewCursor: 9, state: { ...childState(), isStreaming: false } }));
+    expect(registry.getSubagentAttachment('root', ['worker'])?.state.isStreaming).toBe(false);
+    expect(registry.getSubagentAttachment('root', ['worker'])?.observerCursor).toBe(9);
   });
 
   it('rehydrates child tool executions and gives streaming content a render key', () => {
@@ -3271,5 +3279,83 @@ describe('cold-boot notification adoption', () => {
 
     expect(toViewed).toHaveBeenCalledWith('s-cold-boot', { replace: false });
     expect(connection.pendingAdopt).toBeNull();
+  });
+});
+
+describe('SessionRegistry child view open set', () => {
+  function attachment(registry: SessionRegistry) {
+    return registry.getSubagentAttachment('root', ['worker']);
+  }
+
+  function snapshot(): PimoteEvent {
+    return {
+      type: 'subagent_view_snapshot',
+      sessionId: 'root',
+      childSessionId: 'child-session',
+      path: ['worker'],
+      incarnation: 'inc-1',
+      viewCursor: 6,
+      state: {
+        sessionId: 'child-session',
+        sessionFile: undefined,
+        model: null,
+        thinkingLevel: 'off',
+        availableThinkingLevels: [],
+        isStreaming: false,
+        isCompacting: false,
+        autoCompactionEnabled: false,
+        messageCount: 0,
+      },
+      messages: [],
+    } as PimoteEvent;
+  }
+
+  it('opens a view the server profile lists, without selecting it', async () => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    const send = vi.spyOn(connection, 'send').mockImplementation(async (command: any) => {
+      if (command.type === 'subagent_open_view') registry.handleEvent(snapshot());
+      return { success: true, data: {} } as PimoteResponse;
+    });
+
+    registry.applyUserViews([{ sessionId: 'child-session', rootSessionId: 'root', path: ['worker'], folderPath: '/workspace' }]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(send.mock.calls.some(([command]) => (command as any).type === 'subagent_open_view')).toBe(true);
+    expect(attachment(registry)?.closed).toBe(false);
+    expect(registry.getSelectedSubagentPath('root')).toBeNull();
+    send.mockRestore();
+  });
+
+  it('closes a view the server profile no longer lists', async () => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    registry.handleEvent(snapshot());
+    const send = vi.spyOn(connection, 'send').mockResolvedValue({ success: true } as PimoteResponse);
+
+    registry.applyUserViews([]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ type: 'subagent_close_view', path: ['worker'] }));
+    expect(attachment(registry)?.closed).toBe(true);
+    send.mockRestore();
+  });
+
+  it('drops a stale local view when the server reports it unavailable', async () => {
+    const registry = new SessionRegistry();
+    registry.addSession('root', '/workspace', 'workspace');
+    registry.handleEvent(snapshot());
+    const send = vi
+      .spyOn(connection, 'send')
+      .mockImplementation(async (command: any) =>
+        command.type === 'subagent_open_view' ? ({ success: false, error: 'subagent_view_unavailable' } as PimoteResponse) : ({ success: true } as PimoteResponse),
+      );
+
+    await registry.openSubagentView('root', ['worker']);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(attachment(registry)?.closed).toBe(true);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ type: 'subagent_close_view', path: ['worker'] }));
+    send.mockRestore();
   });
 });

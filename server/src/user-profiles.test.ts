@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { UserProfiles, resolveUserName, type SessionRef } from './user-profiles.js';
+import { UserProfiles, resolveUserName, type SessionRef, type ViewRef } from './user-profiles.js';
 
 let tempDir: string;
 
@@ -497,6 +497,99 @@ describe('UserProfiles — persistence failures', () => {
     // The boot sweep may still abort coherently on the same failure.
     await profiles.link('alice', S1);
     await expect(profiles.gc(new Set<string>())).rejects.toThrow();
+  });
+});
+
+describe('UserProfiles — open child views', () => {
+  const VIEW: ViewRef = { sessionId: 'child-1', rootSessionId: 's1', path: ['worker'], folderPath: '/home/user/project-a' };
+
+  it('links a view once per root-relative path and reloads it from disk', async () => {
+    const profiles = new UserProfiles(storePath());
+    await profiles.load();
+
+    expect(await profiles.linkView('alice', VIEW)).toBe(true);
+    expect(await profiles.linkView('alice', VIEW)).toBe(false);
+    expect(await profiles.linkView('alice', { ...VIEW, sessionId: 'child-2' })).toBe(true);
+    expect(profiles.views('alice')).toEqual([{ ...VIEW, sessionId: 'child-2' }]);
+
+    const reloaded = new UserProfiles(storePath());
+    await reloaded.load();
+    expect(reloaded.views('alice')).toEqual([{ ...VIEW, sessionId: 'child-2' }]);
+  });
+
+  it('keeps chip order and selection root-only', async () => {
+    const profiles = new UserProfiles(storePath());
+    await profiles.load();
+    await profiles.link('alice', S1);
+    await profiles.link('alice', S2);
+    await profiles.linkView('alice', VIEW);
+
+    expect(profiles.order('alice')).toEqual(['s1', 's2']);
+    await profiles.select('alice', VIEW.sessionId);
+    expect(profiles.selection('alice')).toBeNull();
+    expect((await profiles.reorder('alice', [VIEW.sessionId], profiles.orderVersion('alice'))).version).toBe(1);
+    expect(profiles.order('alice')).toEqual(['s1', 's2']);
+  });
+
+  it('drops one view by path and keeps its siblings', async () => {
+    const profiles = new UserProfiles(storePath());
+    await profiles.load();
+    await profiles.linkView('alice', VIEW);
+    await profiles.linkView('alice', { ...VIEW, path: ['worker', 'scout'], sessionId: 'child-2' });
+
+    expect(await profiles.unlinkView('alice', 's1', ['worker'])).toBe(true);
+    expect(await profiles.unlinkView('alice', 's1', ['worker'])).toBe(false);
+    expect(profiles.views('alice').map((view) => view.path)).toEqual([['worker', 'scout']]);
+  });
+
+  it('removes a root view set for every user, or for one user only', async () => {
+    const profiles = new UserProfiles(storePath());
+    await profiles.load();
+    await profiles.linkView('alice', VIEW);
+    await profiles.linkView('bob', VIEW);
+
+    expect(await profiles.unlinkViewsUnder('s1', 'alice')).toEqual(['alice']);
+    expect(profiles.views('alice')).toEqual([]);
+    expect(profiles.views('bob')).toEqual([VIEW]);
+
+    expect(await profiles.unlinkViewsUnder('s1')).toEqual(['bob']);
+    expect(profiles.views('bob')).toEqual([]);
+  });
+
+  it('drops a root’s views when the root leaves every profile', async () => {
+    const profiles = new UserProfiles(storePath());
+    await profiles.load();
+    await profiles.link('alice', S1);
+    await profiles.linkView('alice', VIEW);
+
+    expect(await profiles.unlinkAll('s1')).toEqual(['alice']);
+    expect(profiles.views('alice')).toEqual([]);
+  });
+
+  it('prunes views whose root the boot sweep rejected', async () => {
+    const profiles = new UserProfiles(storePath());
+    await profiles.load();
+    await profiles.link('alice', S1);
+    await profiles.link('alice', S2);
+    await profiles.linkView('alice', VIEW);
+    await profiles.linkView('alice', { ...VIEW, rootSessionId: 's2', sessionId: 'child-2' });
+
+    await profiles.gc(new Set(['s2']));
+
+    expect(profiles.get('alice').map((ref) => ref.sessionId)).toEqual(['s2']);
+    expect(profiles.views('alice').map((view) => view.rootSessionId)).toEqual(['s2']);
+  });
+
+  it('drops every view at boot because a view needs a live borrowed runtime', async () => {
+    const profiles = new UserProfiles(storePath());
+    await profiles.load();
+    await profiles.link('alice', S1);
+    await profiles.linkView('alice', VIEW);
+
+    await profiles.dropAllViews();
+
+    expect(profiles.views('alice')).toEqual([]);
+    expect(profiles.get('alice').map((ref) => ref.sessionId)).toEqual(['s1']);
   });
 });
 
