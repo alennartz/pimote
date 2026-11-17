@@ -297,4 +297,19 @@ describe('active session bar behavior', () => {
       archived: true,
     });
   });
+
+  it('copies the session file path from the desktop context menu', async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    render();
+    await tick();
+    sessionRegistry.sessions[id].sessionFile = '/w/alpha/2026-11-16T22-31-44_alpha.jsonl';
+    await tick();
+    await openDesktopMenu();
+
+    menuItem('Copy session file').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await tick();
+
+    expect(writeText).toHaveBeenCalledWith('/w/alpha/2026-11-16T22-31-44_alpha.jsonl');
+  });
 });

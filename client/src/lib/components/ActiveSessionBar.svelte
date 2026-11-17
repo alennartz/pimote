@@ -2,6 +2,8 @@
   import Archive from '@lucide/svelte/icons/archive';
   import Plus from '@lucide/svelte/icons/plus';
   import X from '@lucide/svelte/icons/x';
+  import Check from '@lucide/svelte/icons/check';
+  import Copy from '@lucide/svelte/icons/copy';
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import { ContextMenu } from 'bits-ui';
   import { onMount } from 'svelte';
@@ -42,6 +44,28 @@
   let hintStartTimer: ReturnType<typeof setTimeout> | null = null;
   let hintClearTimer: ReturnType<typeof setTimeout> | null = null;
   let swipeHintShown = getSessionPillSwipeHintShown();
+
+  /** Which chip field the open context menu just copied, for the item's confirmation. */
+  let copiedField = $state<{ sessionId: string; field: 'id' | 'file' } | null>(null);
+  let copiedFieldTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Copy a session identity value from the chip menu. The menu stays open to
+   *  show the confirmation, then closes. A failed clipboard write keeps it open. */
+  async function copySessionField(sessionId: string, field: 'id' | 'file', value: string | undefined, event: Event): Promise<void> {
+    if (!value) return;
+    event.preventDefault();
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch {
+      return;
+    }
+    copiedField = { sessionId, field };
+    if (copiedFieldTimer) clearTimeout(copiedFieldTimer);
+    copiedFieldTimer = setTimeout(() => {
+      copiedField = null;
+      handleContextMenuOpenChange(sessionId, false);
+    }, 900);
+  }
 
   function openMobileActions(sessionId: string) {
     openContextMenuSessionId = null;
@@ -666,6 +690,33 @@
             </ContextMenu.Trigger>
             <ContextMenu.Portal>
               <ContextMenu.Content class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-36 overflow-hidden rounded-lg p-1 shadow-md ring-1">
+                <ContextMenu.Item
+                  class="focus:bg-accent focus:text-accent-foreground hidden cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none md:flex"
+                  onSelect={(event) => void copySessionField(session.sessionId, 'id', session.sessionId, event)}
+                >
+                  {#if copiedField?.sessionId === session.sessionId && copiedField.field === 'id'}
+                    <Check class="size-4" />
+                    Copied session ID
+                  {:else}
+                    <Copy class="size-4" />
+                    Copy session ID
+                  {/if}
+                </ContextMenu.Item>
+                {#if session.sessionFile}
+                  <ContextMenu.Item
+                    class="focus:bg-accent focus:text-accent-foreground hidden cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none md:flex"
+                    onSelect={(event) => void copySessionField(session.sessionId, 'file', session.sessionFile, event)}
+                  >
+                    {#if copiedField?.sessionId === session.sessionId && copiedField.field === 'file'}
+                      <Check class="size-4" />
+                      Copied session file
+                    {:else}
+                      <Copy class="size-4" />
+                      Copy session file
+                    {/if}
+                  </ContextMenu.Item>
+                {/if}
+                <ContextMenu.Separator class="bg-border -mx-1 my-1 hidden h-px md:block" />
                 <ContextMenu.Item
                   class="focus:bg-accent focus:text-accent-foreground flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none max-md:min-h-11 max-md:px-3"
                   onSelect={() => closeSession(session.sessionId)}
