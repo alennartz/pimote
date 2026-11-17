@@ -401,14 +401,6 @@
       const target = event.target;
       const chip = target instanceof Element ? target.closest<HTMLElement>('[data-session-chip]') : null;
       suppressChipClick = false;
-      if (event.pointerType === 'mouse' && chip) {
-        // The drag must keep receiving moves after the pointer leaves the chip.
-        try {
-          chip.setPointerCapture(event.pointerId);
-        } catch {
-          // Synthetic pointers cannot be captured.
-        }
-      }
       pointer = {
         pointerId: event.pointerId,
         mouse: event.pointerType === 'mouse',
@@ -434,6 +426,14 @@
         // A mouse needs no hold: moving it with a chip under the cursor lifts
         // that chip for a reorder.
         if (pointer.mouse && pointer.chip && !mobileActionsSessionId) {
+          // The drag takes the pointer here, not on the press: capture retargets
+          // the press's click to the chip, so capturing every press steals the
+          // click from the chip's own controls.
+          try {
+            pointer.chip.setPointerCapture(event.pointerId);
+          } catch {
+            // Synthetic pointers cannot be captured.
+          }
           lift(pointer.chip, pointer.startX);
           updateDrag(event.clientX);
           return;

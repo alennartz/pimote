@@ -179,6 +179,29 @@ describe('active session bar behavior', () => {
     }
   });
 
+  it('leaves a press on the chip close control with the close control', async () => {
+    const setPointerCapture = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'setPointerCapture', { configurable: true, writable: true, value: setPointerCapture });
+    try {
+      render();
+      await tick();
+      const closeControl = chip().querySelector<HTMLElement>('[title="Close session"]');
+      expect(closeControl).toBeInstanceOf(HTMLElement);
+
+      closeControl!.dispatchEvent(mousePointer('pointerdown', 100, 100));
+      closeControl!.dispatchEvent(mousePointer('pointerup', 100, 100));
+      expect(setPointerCapture).not.toHaveBeenCalled();
+
+      // The reorder drag still holds the pointer once it is armed.
+      const [first] = railChips();
+      first.dispatchEvent(mousePointer('pointerdown', 100, 100));
+      first.dispatchEvent(mousePointer('pointermove', 20, 100));
+      expect(setPointerCapture).toHaveBeenCalledTimes(1);
+    } finally {
+      delete (HTMLElement.prototype as Partial<HTMLElement>).setPointerCapture;
+    }
+  });
+
   it('flows the row one chip per half width while the tray is open and pushes one order', async () => {
     const flowSessions = ['flow-alpha', 'flow-beta', 'flow-gamma'];
     try {
