@@ -12,6 +12,7 @@
     persona = undefined,
     personaIcon = undefined,
     leading = 'status',
+    appearance = 'chip',
     title = undefined,
   }: {
     path: AgentPath;
@@ -21,6 +22,8 @@
     personaIcon?: string;
     /** Leading glyph: the live status dot, or a fixed bot or user icon. */
     leading?: 'status' | 'bot' | 'user';
+    /** Chip sits in a text line, or stands in for a round avatar. */
+    appearance?: 'chip' | 'avatar';
     /** Hover text. Defaults to the agent path. */
     title?: string;
   } = $props();
@@ -37,6 +40,7 @@
 
 <span
   class="agent-chip"
+  class:avatar={appearance === 'avatar'}
   data-agent-chip
   data-agent-state={leading === 'status' ? (displayState ?? 'unknown') : undefined}
   data-agent-path={fullPath}
@@ -47,9 +51,9 @@
   {#if leading === 'bot' || leading === 'user'}
     <span class="agent-chip-glyph" aria-hidden="true">
       {#if leading === 'bot'}
-        <Bot class="size-3" />
+        <Bot class={appearance === 'avatar' ? 'size-4' : 'size-3'} />
       {:else}
-        <User class="size-3" />
+        <User class={appearance === 'avatar' ? 'size-4' : 'size-3'} />
       {/if}
     </span>
   {:else if displayPersona}
@@ -93,6 +97,29 @@
     flex: none;
     align-items: center;
     color: var(--muted-foreground);
+  }
+
+  /* Avatar appearance: the chip takes the round avatar's place, so it keeps
+   * the avatar's height and colors. Callers set --speaker-bg and --speaker-fg. */
+  .agent-chip.avatar {
+    height: 1.75rem;
+    gap: 0.3rem;
+    padding: 0 0.6rem;
+    border-color: transparent;
+    background: var(--speaker-bg, var(--surface-raised));
+    color: var(--speaker-fg, var(--foreground));
+    font-size: 0.8rem;
+  }
+
+  .agent-chip.avatar .agent-chip-glyph {
+    color: inherit;
+    opacity: 0.85;
+  }
+
+  .agent-chip.avatar .agent-chip-persona-name,
+  .agent-chip.avatar .agent-chip-separator {
+    color: inherit;
+    opacity: 0.7;
   }
 
   .agent-chip-status {

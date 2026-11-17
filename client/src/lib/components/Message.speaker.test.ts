@@ -60,6 +60,7 @@ describe('Message speaker chips', () => {
     const chips = speakerChips(target, 'user');
     expect(chips).toHaveLength(1);
     expect(chips[0].textContent?.trim()).toBe('alenna');
+    expect(chips[0].classList.contains('avatar')).toBe(true);
   });
 
   it('keeps the plain user avatar when this device has no name', async () => {

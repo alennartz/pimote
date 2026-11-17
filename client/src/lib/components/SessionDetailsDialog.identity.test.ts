@@ -26,6 +26,10 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  // Close the sheet before unmounting: an open bits-ui dialog leaves a scroll-lock
+  // timer that writes to the document after the test environment tears down.
+  document.querySelector<HTMLButtonElement>('button[title="Close session details"]')?.click();
+  await tick();
   if (component) await unmount(component);
   component = undefined;
   document.body.replaceChildren();

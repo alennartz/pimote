@@ -200,9 +200,9 @@
   <div class="message user-message">
     {#if entryId && showNavigationMenu}
       <div class={userSpeakerName ? 'user-icon-col speaker-col' : 'user-icon-col'}>
-        <button class={userSpeakerName ? 'speaker-chip-button' : 'message-icon user-icon'} onclick={() => (userMenuOpen = !userMenuOpen)}>
+        <button class={userSpeakerName ? 'speaker-chip-button speaker-user' : 'message-icon user-icon'} onclick={() => (userMenuOpen = !userMenuOpen)}>
           {#if userSpeakerName}
-            <AgentChip leading="user" path={[]} name={userSpeakerName} title={userSpeakerName} />
+            <AgentChip leading="user" appearance="avatar" path={[]} name={userSpeakerName} title={userSpeakerName} />
           {:else}
             <User size={16} />
           {/if}
@@ -223,7 +223,7 @@
     {:else}
       <div class={userSpeakerName ? 'user-icon-col speaker-col' : 'message-icon user-icon'}>
         {#if userSpeakerName}
-          <AgentChip leading="user" path={[]} name={userSpeakerName} title={userSpeakerName} />
+          <AgentChip leading="user" appearance="avatar" path={[]} name={userSpeakerName} title={userSpeakerName} />
         {:else}
           <User size={16} />
         {/if}
@@ -297,9 +297,9 @@
         {/if}
         <div class={agentSpeakerPath ? 'assistant-icon-col speaker-col' : 'assistant-icon-col'}>
           {#if hasAssistantMenu}
-            <button class={agentSpeakerPath ? 'speaker-chip-button' : 'message-icon assistant-icon'} onclick={() => (toolMenuOpen = !toolMenuOpen)}>
+            <button class={agentSpeakerPath ? 'speaker-chip-button speaker-assistant' : 'message-icon assistant-icon'} onclick={() => (toolMenuOpen = !toolMenuOpen)}>
               {#if agentSpeakerPath}
-                <AgentChip leading="bot" path={agentSpeakerPath} rootSessionId={subagentRootSessionId} />
+                <AgentChip leading="bot" appearance="avatar" path={agentSpeakerPath} rootSessionId={subagentRootSessionId} />
               {:else}
                 <Bot size={16} />
               {/if}
@@ -328,9 +328,9 @@
               </div>
             {/if}
           {:else}
-            <div class={agentSpeakerPath ? 'speaker-chip-button' : 'message-icon assistant-icon'}>
+            <div class={agentSpeakerPath ? 'speaker-chip-button speaker-assistant' : 'message-icon assistant-icon'}>
               {#if agentSpeakerPath}
-                <AgentChip leading="bot" path={agentSpeakerPath} rootSessionId={subagentRootSessionId} />
+                <AgentChip leading="bot" appearance="avatar" path={agentSpeakerPath} rootSessionId={subagentRootSessionId} />
               {:else}
                 <Bot size={16} />
               {/if}
@@ -485,9 +485,11 @@
 {/if}
 
 <style>
+  /* One column at every width: the speaker row sits above the content. */
   .message {
     display: flex;
-    gap: 10px;
+    flex-direction: column;
+    gap: 6px;
     padding: 12px 0;
   }
 
@@ -540,7 +542,6 @@
   }
 
   .user-icon {
-    margin-top: 2px;
     background: var(--avatar-bg);
     color: var(--avatar-fg);
   }
@@ -556,29 +557,20 @@
   }
 
   .user-icon-col {
-    flex-shrink: 0;
     display: flex;
-    flex-direction: column;
     align-items: center;
     gap: 6px;
-    margin-top: 2px;
   }
 
   .assistant-meta {
-    position: relative;
     display: flex;
-    flex-shrink: 0;
-    align-items: flex-start;
-    gap: 10px;
+    align-items: center;
+    gap: 6px;
   }
 
   .assistant-cost {
-    position: absolute;
-    top: 16px;
-    right: calc(100% + 10px);
-    order: 0;
+    order: 1;
     flex-shrink: 0;
-    transform: translateY(-50%);
   }
 
   .aborted-cost {
@@ -606,20 +598,31 @@
   }
 
   .assistant-icon-col {
-    flex-shrink: 0;
     display: flex;
-    flex-direction: column;
     align-items: center;
     gap: 6px;
-    margin-top: 2px;
   }
 
   /* A speaker chip stands in for the round avatar when the row names its
    * speaker: the child agent on a subagent turn, the user when named. */
   .speaker-col {
     min-width: 0;
-    max-width: 12rem;
-    align-items: flex-start;
+    max-width: 100%;
+  }
+
+  .speaker-user {
+    --speaker-bg: var(--avatar-bg);
+    --speaker-fg: var(--avatar-fg);
+  }
+
+  .speaker-assistant {
+    --speaker-bg: var(--secondary);
+    --speaker-fg: var(--foreground);
+  }
+
+  .assistant-message.errored .speaker-assistant {
+    --speaker-bg: color-mix(in oklch, var(--error-accent) 50%, black);
+    --speaker-fg: var(--error-avatar-fg);
   }
 
   .speaker-chip-button {
@@ -636,7 +639,6 @@
 
   .tool-menu {
     display: flex;
-    flex-direction: column;
     align-items: center;
     gap: 6px;
   }
@@ -818,46 +820,5 @@
     --collapsible-fade-height: 48px;
     --collapsible-toggle-color: color-mix(in oklch, var(--custom-foreground) 92%, black);
     --collapsible-toggle-hover: var(--custom-foreground-hover);
-  }
-
-  /* ---- Mobile: stack icon row above body, open menu to the right ---- */
-
-  @media (max-width: 640px) {
-    .message {
-      flex-direction: column;
-      gap: 6px;
-    }
-
-    .user-icon-col,
-    .assistant-icon-col {
-      flex-direction: row;
-      align-items: center;
-      margin-top: 0;
-    }
-
-    .speaker-col {
-      max-width: 100%;
-    }
-
-    .assistant-meta {
-      align-items: center;
-      gap: 6px;
-    }
-
-    .assistant-icon-col {
-      order: 0;
-    }
-
-    .assistant-cost {
-      position: static;
-      order: 1;
-      transform: none;
-      margin-top: 0;
-      margin-bottom: 0;
-    }
-
-    .tool-menu {
-      flex-direction: row;
-    }
   }
 </style>

@@ -1,6 +1,4 @@
 // @vitest-environment jsdom
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
 import type { AssistantRowUsage, PimoteAgentMessage } from '@pimote/shared';
@@ -22,7 +20,7 @@ const rowUsage: AssistantRowUsage = {
 };
 
 describe('Message assistant cost layout', () => {
-  it('keeps the desktop cost disclosure out of row flow and centers it with the bot icon', async () => {
+  it('discloses the cost in the speaker row above the content', async () => {
     const target = document.createElement('div');
     document.body.appendChild(target);
     mounted.push(
@@ -36,24 +34,10 @@ describe('Message assistant cost layout', () => {
     );
     await tick();
 
-    const cost = target.querySelector<HTMLElement>('.assistant-cost');
-    const meta = target.querySelector<HTMLElement>('.assistant-meta');
-    expect(cost).not.toBeNull();
-    expect(meta).not.toBeNull();
-
-    // Vitest does not inject component-scoped Svelte CSS into jsdom. Keep the
-    // desktop placement contract close to the component so a flex-flow change
-    // cannot silently put the cost back into the row width.
-    const componentPath = existsSync('src/lib/components/Message.svelte') ? 'src/lib/components/Message.svelte' : join('client', 'src/lib/components/Message.svelte');
-    const source = readFileSync(componentPath, 'utf8');
-    const assistantMetaRule = source.match(/\.assistant-meta \{([\s\S]*?)\n {2}\}/)?.[1] ?? '';
-    const desktopCostRule = source.match(/\.assistant-cost \{([\s\S]*?)\n {2}\}/)?.[1] ?? '';
-    expect(assistantMetaRule).toContain('align-items: flex-start');
-    expect(desktopCostRule).toContain('position: absolute');
-    expect(desktopCostRule).toContain('right: calc(100% + 10px)');
-    expect(desktopCostRule).toContain('transform: translateY(-50%)');
-    expect(desktopCostRule).not.toContain('margin-top: 8px');
-    expect(source).toContain('position: static;');
-    expect(source).toContain('transform: none;');
+    const speakerRow = target.querySelector<HTMLElement>('.assistant-meta');
+    expect(speakerRow).not.toBeNull();
+    expect(speakerRow!.querySelector('.assistant-icon')).not.toBeNull();
+    expect(speakerRow!.querySelector('.assistant-cost')).not.toBeNull();
+    expect(target.querySelector('.message-body .assistant-cost')).toBeNull();
   });
 });
