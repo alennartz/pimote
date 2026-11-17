@@ -126,4 +126,4 @@ A child view kept showing the state it had when the app lost its socket, while t
 
 Child views now sync as observed session surfaces. A reconnect asks for each open view with its cursor; the server answers with a delta or a snapshot, and a path it cannot serve answers `subagent_view_unavailable` so the ghost closes through a response instead of a lost push.
 
-Commits: 8884704 in Pimote.
+Commits: 8884704 and fd6e7be in Pimote. Model: DR-089.
