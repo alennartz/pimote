@@ -100,12 +100,6 @@
     box-shadow: 0 2px 8px var(--shadow-color);
   }
 
-  /* The menu owns column layout for message rows; in the banner it reads as
-     a horizontal toolbar row under the avatar. */
-  .menu-pop :global(.message-action-menu) {
-    flex-direction: row;
-  }
-
   .line {
     min-width: 0;
     flex: 1;
