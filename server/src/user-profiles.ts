@@ -185,8 +185,8 @@ export class UserProfiles {
     if (pruned) await this.persist();
   }
 
-  /** Child views need a live borrowed runtime, so none survives a restart.
-   *  Their roots do; opening a root rehydrates its children from disk. */
+  /** Drop every persisted child view. A view needs a live borrowed runtime, and
+   *  the root session that owns one does not rebuild it at boot. */
   async dropAllViews(): Promise<void> {
     let pruned = false;
     for (const [name, profile] of Object.entries(this.document.users)) {
@@ -301,9 +301,10 @@ export class UserProfiles {
   async unlinkAll(sessionId: string): Promise<string[]> {
     const affected: string[] = [];
     for (const [name, profile] of Object.entries(this.document.users)) {
-      // Views die with their root, and a view whose own session id matches the
-      // removed session dies too.
-      const keptViews = profile.views.filter((view) => view.rootSessionId !== sessionId && view.sessionId !== sessionId);
+      // Identity is the root-relative path. A stored child session id is
+      // informational, so a rebound runtime cannot make this remove the wrong
+      // view.
+      const keptViews = profile.views.filter((view) => view.rootSessionId !== sessionId);
       const viewsChanged = keptViews.length !== profile.views.length;
       if (viewsChanged) profile.views = keptViews;
       const kept = profile.sessions.filter((s) => s.sessionId !== sessionId);

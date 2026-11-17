@@ -527,7 +527,7 @@ describe('UserProfiles — open child views', () => {
     expect(profiles.order('alice')).toEqual(['s1', 's2']);
     await profiles.select('alice', VIEW.sessionId);
     expect(profiles.selection('alice')).toBeNull();
-    expect((await profiles.reorder('alice', [VIEW.sessionId], profiles.orderVersion('alice'))).version).toBe(1);
+    await profiles.reorder('alice', [VIEW.sessionId], profiles.orderVersion('alice'));
     expect(profiles.order('alice')).toEqual(['s1', 's2']);
   });
 

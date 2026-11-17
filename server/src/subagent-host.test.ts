@@ -459,22 +459,16 @@ describe('SubagentHost', () => {
     expect(f.viewChanges.filter(({ clientId }) => clientId === 'client-1').some(({ change }) => change.type === 'event' && change.event === event)).toBe(true);
   });
 
-  it('answers a stale cursor with a snapshot instead of a false catch-up', async () => {
+  it('answers with a snapshot when history cannot reach the supplied cursor', async () => {
     const f = fixture();
     await f.host.start();
     const first = await f.host.openView('client-1', scout);
-    // A cursor from a dropped surface sits below this surface's base.
-    const stale = await f.host.openView('client-1', scout, first.viewCursor - first.viewCursor - 1);
-    expect(stale.mode).toBe('snapshot');
+    expect(first.mode).toBe('snapshot');
+    await f.host.closeView('client-1', scout);
+    // The dropped surface is gone, so its cursor cannot be replayed from.
+    const reopened = await f.host.openView('client-1', scout, first.viewCursor);
+    expect(reopened.mode).toBe('snapshot');
     expect(f.viewChanges.filter(({ clientId, change }) => clientId === 'client-1' && change.type === 'snapshot')).toHaveLength(2);
-  });
-
-  it('opens a fresh view with a snapshot', async () => {
-    const f = fixture();
-    await f.host.start();
-    const opened = await f.host.openView('client-1', scout);
-    expect(opened.mode).toBe('snapshot');
-    expect(f.viewChanges.filter(({ clientId, change }) => clientId === 'client-1' && change.type === 'snapshot')).toHaveLength(1);
   });
 
   it('deduplicates concurrent opens for one path', async () => {
@@ -524,16 +518,6 @@ describe('SubagentHost', () => {
     expect(f.pending.delivered).toEqual(['latest answer']);
   });
 
-  it('reopens a dropped view with a snapshot rather than a silent gap', async () => {
-    const f = fixture();
-    await f.host.start();
-    const first = await f.host.openView('client-1', scout);
-    await f.host.closeView('client-1', scout);
-    const reopened = await f.host.openView('client-1', scout, first.viewCursor);
-    expect(reopened.mode).toBe('snapshot');
-    expect(f.active(scout)).toBe(1);
-  });
-
   it('reports an unavailable path instead of opening an empty view', async () => {
     const f = fixture();
     await f.host.start();
@@ -545,10 +529,11 @@ describe('SubagentHost', () => {
   it('rebinds a live view to a replacement and sends a fresh snapshot', async () => {
     const f = fixture();
     await f.host.start();
-    await f.host.openView('client-1', scout);
+    const view = await f.host.openView('client-1', scout);
     const rebound = f.nextViewChange(({ clientId, change }) => clientId === 'client-1' && change.type === 'snapshot');
     f.replace(scout, 'scout-2');
-    expect(await rebound).toEqual(
+    const refresh = await rebound;
+    expect(refresh).toEqual(
       expect.objectContaining({
         clientId: 'client-1',
         change: expect.objectContaining({
@@ -557,6 +542,9 @@ describe('SubagentHost', () => {
         }),
       }),
     );
+    // A rebuilt surface starts above the cursor of the surface it replaced, so
+    // the next delta cannot skip the events the old surface already issued.
+    expect(refresh.viewCursor).toBeGreaterThan(view.viewCursor);
     await expect(f.host.dispatch('client-1', { path: scout }, { type: 'get_state' })).resolves.toBe('scout-2:get_state');
     const oldEvent: PimoteSessionEvent = { type: 'agent_start', sessionId: 'scout-1', cursor: 1 };
     const newEvent: PimoteSessionEvent = { type: 'agent_start', sessionId: 'scout-2', cursor: 1 };

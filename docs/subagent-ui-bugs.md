@@ -117,3 +117,13 @@ A steering message sent from the UI to a running subagent window did not queue f
 The UI must queue steering messages to a running subagent window and deliver them to the child.
 
 Commits: 939846eb24c34b538cb522f78ec61325ad5b8120 in Pimote.
+
+## BUG-014: Child view froze at its pre-disconnect state
+
+**Status:** Fixed in source. Deployment pending.
+
+A child view kept showing the state it had when the app lost its socket, while the parent received the child's idle notification. The server released the view during the gap, the closed notice went to a dead socket, and no later frame corrected the client. Clicking the child again re-selected the dead view instead of reopening it.
+
+Child views now sync as observed session surfaces. A reconnect asks for each open view with its cursor; the server answers with a delta or a snapshot, and a path it cannot serve answers `subagent_view_unavailable` so the ghost closes through a response instead of a lost push.
+
+Commits: 8884704 in Pimote.

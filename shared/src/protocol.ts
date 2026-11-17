@@ -1858,7 +1858,8 @@ export interface SubagentViewEvent {
   event: PimoteSessionEvent;
 }
 
-/** A child view closed because its runtime ended or its observers left. */
+/** A child view closed because its runtime was replaced, became unavailable,
+ *  or was torn down. The last observer leaving closes the view silently. */
 export interface SubagentViewClosedEvent {
   type: 'subagent_view_closed';
   sessionId: string;

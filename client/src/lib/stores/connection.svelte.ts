@@ -247,7 +247,7 @@ export class ConnectionStore {
   /** Called for every `user_sessions_changed`, after its reconcile plan ran,
    *  with the user's chip order and selection (D4). */
   onUserSessionFacts: ((facts: UserSessionFacts) => void) | null = null;
-  /** The user's open child views. They restore after the root open pass. */
+  /** The user's open child views, in server-profile order. */
   onUserViews: ((views: UserOpenViewRef[]) => void) | null = null;
 
   /** Disconnect listeners — a set, not a slot, so the next consumer can't

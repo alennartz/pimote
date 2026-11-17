@@ -2469,34 +2469,35 @@ export class SessionRegistry {
     }
   }
 
-  /** Adopt the server's open-view set. Views the user dropped close here;
-   *  views this client does not hold open. */
+  /** Adopt the server's open-view set: close views the user dropped, attach
+   *  views this client does not already observe. */
   applyUserViews(views: readonly UserOpenViewRef[]): void {
     this.userViews = views.map((view) => ({ ...view, path: [...view.path] }));
-    this.reconcileUserViews();
+    this.reconcileUserViews(false);
   }
 
-  /** Restore every view the user holds open. Runs after the root open pass, so
-   *  each view finds its root subscribed. */
+  /** Re-attach every view the user holds open. Socket death detaches this
+   *  client's observers, so a locally open attachment proves nothing until the
+   *  server answers a fresh open. */
   restoreUserViews(): void {
-    this.reconcileUserViews();
+    this.reconcileUserViews(true);
   }
 
-  private reconcileUserViews(): void {
+  private reconcileUserViews(reattach: boolean): void {
     // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local predicate set, never rendered
     const desired = new Set(this.userViews.map((view) => `${view.rootSessionId}\u0000${subagentPathKey(view.path)}`));
     for (const root of Object.values(this.subagentRoots)) {
       for (const [key, attachment] of Object.entries(root.attachments)) {
         if (attachment.closed) continue;
         if (desired.has(`${root.rootSessionId}\u0000${key}`)) continue;
-        if (attachment.rootSessionId && this.pendingSubagentOpens.has(`${attachment.rootSessionId}\u0000${key}`)) continue;
+        if (this.pendingSubagentOpens.has(`${attachment.rootSessionId}\u0000${key}`)) continue;
         void this.closeSubagentView(root.rootSessionId, attachment.path);
       }
     }
     for (const view of this.userViews) {
       if (!this.sessions[view.rootSessionId]) continue;
       const attachment = this.getSubagentAttachment(view.rootSessionId, view.path);
-      if (attachment && !attachment.closed) continue;
+      if (!reattach && attachment && !attachment.closed) continue;
       void this.openSubagentView(view.rootSessionId, view.path, false);
     }
   }
@@ -2507,7 +2508,9 @@ export class SessionRegistry {
     const key = `${rootSessionId}\u0000${subagentPathKey(path)}`;
     const running = this.pendingSubagentOpens.get(key);
     if (running) return running;
-    const viewCursor = connection.getSubagentViewCursor(rootSessionId, path);
+    // The attachment's cursor is what this client actually applied; the wire
+    // cursor can run ahead of it when an event was rejected on identity.
+    const viewCursor = this.getSubagentAttachment(rootSessionId, path)?.viewCursor ?? connection.getSubagentViewCursor(rootSessionId, path);
     const operation = connection
       .send({
         type: 'subagent_open_view',

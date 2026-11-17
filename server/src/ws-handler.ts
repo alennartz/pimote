@@ -1333,7 +1333,6 @@ export class WsHandler {
   }
 
   private async handleSubagentCommand(command: SubagentCommand, id: string): Promise<void> {
-    // A displaced socket must not act on the replacement socket's views.
     this.assertCurrentConnection();
     const { slot, host } = this.subagentHostFor(command.sessionId);
     this.ensureSubagentViewListener(slot);
@@ -1344,7 +1343,17 @@ export class WsHandler {
         opened = await host.openView(this.clientId, command.path, command.viewCursor);
       } catch (error) {
         console.error('[WsHandler] Child view open failed:', error);
-        this.sendResponse(id, false, undefined, 'subagent_view_unavailable');
+        // Only an absent path is a definitive answer. Any other failure must
+        // leave the user's open-view entry alone, or a transient provider
+        // error would delete the view for every one of their clients.
+        const unavailable = this.subagentChildSessionId(slot, command.path) === '';
+        this.sendResponse(id, false, undefined, unavailable ? 'subagent_view_unavailable' : error instanceof Error ? error.message : String(error));
+        return;
+      }
+      // The socket can die while the lease is being acquired. A dead socket
+      // must not hold the child open, or the idle hold never releases.
+      if (!this.isCurrentConnection()) {
+        await host.closeView(this.clientId, command.path).catch(() => undefined);
         return;
       }
       // The payload travelled as view frames ahead of this response.

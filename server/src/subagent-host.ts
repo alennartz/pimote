@@ -17,7 +17,6 @@ import type { PimoteSessionEvent } from '../../shared/dist/index.js';
 import {
   createSessionSurface,
   type SessionSurface,
-  type SessionSurfaceAttachment,
   type SessionSurfaceCapabilities,
   type SessionSurfaceCallerContext,
   type SessionSurfaceCommand,
@@ -130,13 +129,11 @@ type ViewRecord = {
   incarnation: string;
   readonly lease: SubagentLease;
   surface: SessionSurface | undefined;
-  snapshot: SessionSurfaceSnapshot | undefined;
   surfaceUnsubscribe?: () => void;
   leaseUnsubscribe?: () => void;
-  /** One entry per observing client. The surface keeps the matching cursor. */
-  readonly observers: Map<string, SessionSurfaceAttachment>;
-  /** Events observed while a surface snapshot is being assembled. */
-  stagedEvents: PimoteSessionEvent[];
+  /** Observing clients. Delivery is a broadcast to this set; each client's
+   *  own cursor decides what it replays. */
+  readonly observers: Set<string>;
   ready: boolean;
   closed: boolean;
   /** Serialize asynchronous replacement and refresh operations. */
@@ -150,8 +147,10 @@ const clonePath = (path: AgentPath): AgentPath => Object.freeze([...path]);
 const isPathPrefix = (prefix: AgentPath, path: AgentPath): boolean => prefix.length <= path.length && prefix.every((part, index) => part === path[index]);
 
 /** First cursor minus one for a fresh child surface. A rebuilt surface starts
- *  above every cursor its predecessor handed out, so both a stale client
- *  cursor and a live client's last position sit below its first event. */
+ *  strictly above the cursor of the surface it replaces, so a live client's
+ *  last position sits below its first event and replays as stale. A record
+ *  created after a drop starts at the wall clock, the same rule root slots
+ *  use. */
 const surfaceBaseCursor = (previousCursor: number): number => Math.max(Date.now() * 1000, previousCursor + 1);
 
 function providerCapabilities(session: BorrowedAgentSession, leaseCapabilities: SubagentCapabilities, localCapabilities: SessionSurfaceCapabilities): SessionSurfaceCapabilities {
@@ -220,9 +219,11 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     lastSnapshot = snapshot;
   };
 
+  /** A record is attachable once its surface is initialized. A concurrent open
+   *  waits on the in-flight creation instead of seeing a half-built record. */
   const liveRecord = (key: string): ViewRecord | undefined => {
     const record = views.get(key);
-    return record && !record.closed ? record : undefined;
+    return record && !record.closed && record.surface !== undefined ? record : undefined;
   };
 
   const cursorForChange = (record: ViewRecord, change: SubagentViewChange): number => {
@@ -236,18 +237,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
   };
 
   const emitAll = (record: ViewRecord, change: SubagentViewChange): void => {
-    for (const clientId of [...record.observers.keys()]) emitTo(clientId, record, change);
-  };
-
-  const releaseObservers = (record: ViewRecord): void => {
-    for (const attachment of [...record.observers.values()]) {
-      try {
-        attachment.release();
-      } catch {
-        // A closed surface cannot release its own observers twice.
-      }
-    }
-    record.observers.clear();
+    for (const clientId of [...record.observers]) emitTo(clientId, record, change);
   };
 
   const removeView = (record: ViewRecord): void => {
@@ -264,9 +254,9 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     record.leaseUnsubscribe?.();
     record.leaseUnsubscribe = undefined;
     if (notify && reason !== 'released') emitAll(record, { type: 'closed', reason });
+    record.observers.clear();
     record.surface?.close();
     record.surface = undefined;
-    releaseObservers(record);
     await record.lease.release();
   };
 
@@ -422,7 +412,6 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     const previousCursor = record.surface?.currentCursor ?? 0;
     const nextSurface = createSurface(surfaceOptions(record, session, record.lease.capabilities, previousCursor, previousProjection));
     const staged: PimoteSessionEvent[] = [];
-    record.stagedEvents = staged;
     record.ready = false;
     const previousSurface = record.surface;
     record.surfaceUnsubscribe?.();
@@ -440,7 +429,6 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
         nextSurface.close();
         return;
       }
-      record.snapshot = snapshot;
       record.ready = true;
       if (notifySnapshot) emitAll(record, { type: 'snapshot', snapshot });
       const pending = [...staged];
@@ -457,12 +445,10 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     if (record.closed || !record.surface) return;
     const surface = record.surface;
     const staged: PimoteSessionEvent[] = [];
-    record.stagedEvents = staged;
     record.ready = false;
     try {
       const snapshot = surface.refreshSnapshot();
       if (record.closed || record.surface !== surface) return;
-      record.snapshot = snapshot;
       emitAll(record, { type: 'snapshot', snapshot });
       record.ready = true;
       const pending = [...staged];
@@ -517,9 +503,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
         incarnation: node.incarnation,
         lease,
         surface: undefined,
-        snapshot: undefined,
-        observers: new Map(),
-        stagedEvents: [],
+        observers: new Set(),
         ready: false,
         closed: false,
         transition: Promise.resolve(),
@@ -560,11 +544,11 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     // state, not history: -1 falls below the base cursor and yields a
     // snapshot.
     const attachment = await surface.attachObserver(clientId, existing ? (after ?? -1) : -1);
-    if (record.closed || record.surface !== surface) {
-      attachment.release();
-      throw new Error('subagent view is unavailable');
-    }
-    record.observers.set(clientId, attachment);
+    // The surface computes the payload for one observer; delivery is a
+    // broadcast to the observer set, so its own bookkeeping is released.
+    attachment.release();
+    if (record.closed || record.surface !== surface) throw new Error('subagent view is unavailable');
+    record.observers.add(clientId);
     if (attachment.events) {
       for (const event of attachment.events) emitTo(clientId, record, { type: 'event', event });
     } else if (attachment.snapshot) {
@@ -580,22 +564,15 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
 
   const closeView = async (clientId: string, path: AgentPath): Promise<void> => {
     assertStarted();
-    const record = liveRecord(pathKey(path));
-    if (!record) return;
-    const attachment = record.observers.get(clientId);
-    if (!attachment) return;
-    record.observers.delete(clientId);
-    attachment.release();
+    const record = views.get(pathKey(path));
+    if (!record || record.closed) return;
+    if (!record.observers.delete(clientId)) return;
     if (record.observers.size === 0) await closeRecord(record, 'released', false);
   };
 
   const detachClient = async (clientId: string): Promise<void> => {
-    const records = [...views.values()].filter((record) => !record.closed && record.observers.has(clientId));
-    for (const record of records) {
-      const attachment = record.observers.get(clientId);
-      if (!attachment) continue;
-      record.observers.delete(clientId);
-      attachment.release();
+    for (const record of [...views.values()]) {
+      if (record.closed || !record.observers.delete(clientId)) continue;
       if (record.observers.size === 0) await closeRecord(record, 'released', false);
     }
   };
