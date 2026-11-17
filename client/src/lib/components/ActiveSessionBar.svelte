@@ -660,7 +660,7 @@
   <div class="session-pill-bar-root border-border bg-muted/30 flex shrink-0 flex-col gap-1.5 border-t px-2 py-1.5">
     {#if mobileActionsSessionId && sessionRegistry.sessions[mobileActionsSessionId]}
       {@const actionSession = sessionRegistry.sessions[mobileActionsSessionId]}
-      <div class="bg-popover text-popover-foreground ring-foreground/10 flex items-center gap-2 rounded-2xl px-2 py-1 shadow-md ring-1 md:hidden">
+      <div class="bg-popover text-popover-foreground ring-foreground/10 flex items-center gap-2 rounded-2xl px-2 py-1 shadow-md ring-1">
         <div class="min-w-0 flex-1 px-1">
           <div class="truncate text-xs font-medium">{getSessionChipLabel(actionSession) ?? actionSession.projectName}</div>
           <div class="text-muted-foreground text-[11px]">Session actions</div>
