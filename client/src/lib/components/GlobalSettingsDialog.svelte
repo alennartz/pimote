@@ -4,7 +4,8 @@
   import type { ListUsersResponseData, UserSummary } from '@pimote/shared';
   import type { GlobalSettingsStore } from '$lib/stores/global-settings.svelte.js';
   import { connection } from '../stores/connection.svelte.js';
-  import { getUser, setUser } from '../stores/persistence.js';
+  import { getUser } from '../stores/persistence.js';
+  import { userIdentity } from '../stores/user-identity.svelte.js';
   import { inferLanguageFromPath } from '$lib/editor-language.js';
   import { isValidTagName, wrapWithTag } from '$lib/tag-wrap.js';
   import { AlertDialog } from 'bits-ui';
@@ -92,7 +93,7 @@
   function saveUser(): void {
     if (!userDirty) return;
     const name = trimmedName;
-    setUser(name);
+    userIdentity.setName(name);
     persistedUser = name;
     userName = name;
     chipsStale = true;

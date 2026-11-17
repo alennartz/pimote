@@ -112,12 +112,15 @@ describe('subagent transcript cards', () => {
     expect(card(failedTarget, 'protocol_error').querySelector('.subagent-state-icon.failed')).not.toBeNull();
   });
 
-  it('keeps a child speaker chip in the assistant message header', async () => {
+  it('names the child agent in the assistant avatar slot', async () => {
     const { target } = await render(operation({ operation: 'send', parameters: { to: ['worker'], message: 'check' }, result: { response: 'done' } }), {
       rootSessionId: 'root-session',
       agentPath: ['team', 'worker'],
     });
-    expect(target.querySelector('.assistant-speaker [data-agent-path="team/worker"]')).not.toBeNull();
+    const chips = [...target.querySelectorAll<HTMLElement>('[data-agent-leading="bot"]')];
+    expect(chips).toHaveLength(1);
+    expect(chips[0].dataset.agentPath).toBe('team/worker');
+    expect(target.querySelector('.assistant-speaker')).toBeNull();
   });
 
   it('streams delegation tasks as bounded Markdown and offers a view without stale child status', async () => {

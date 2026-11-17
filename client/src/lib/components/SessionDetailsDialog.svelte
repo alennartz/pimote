@@ -33,6 +33,9 @@
 
   let connectionLabel = $derived(connection.phaseLabel);
 
+  /** The pi session behind the shown surface: the child when one is open. */
+  let sessionIdentity = $derived(child ? { id: child.childSessionId, file: child.state.sessionFile } : session ? { id: session.sessionId, file: session.sessionFile } : null);
+
   async function openFolderInstructions(): Promise<void> {
     const folderPath = session?.folderPath;
     if (!folderPath) return;
@@ -167,10 +170,10 @@
           </div>
         {/if}
 
-        {#if !child && session}
-          {@render identityRow('Session ID', session.sessionId)}
-          {#if session.sessionFile}
-            {@render identityRow('Session file', session.sessionFile)}
+        {#if sessionIdentity}
+          {@render identityRow('Session ID', sessionIdentity.id)}
+          {#if sessionIdentity.file}
+            {@render identityRow('Session file', sessionIdentity.file)}
           {/if}
         {/if}
 

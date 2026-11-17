@@ -23,6 +23,7 @@
   import { observeFullyOffscreen } from '$lib/auto-collapse.js';
   import SubagentContent from './SubagentContent.svelte';
   import AgentChip from './AgentChip.svelte';
+  import { userIdentity } from '$lib/stores/user-identity.svelte.js';
 
   const MAX_COLLAPSED_LINES = 10;
   const SKILL_COLLAPSED_LINES = 3;
@@ -110,6 +111,11 @@
 
   let hasSpeakableText = $derived(message.role === 'assistant' && !streaming && visibleContent.some((c) => c.type === 'text' && c.text));
 
+  /** Speaker chip identity: the child agent on assistant rows of a child view,
+   *  the device user on user rows. A null value keeps the plain round avatar. */
+  let agentSpeakerPath = $derived(message.role === 'assistant' && agentPath && agentPath.length > 0 ? agentPath : null);
+  let userSpeakerName = $derived(message.role === 'user' ? userIdentity.label : null);
+
   // An assistant turn cancelled by session.abort() (e.g. a voice-mode barge-in
   // produces one per interrupt). `aborted` comes from the wire; the server-side
   // message-mapper sets it when pi-agent-core tags the turn with
@@ -193,9 +199,13 @@
 {:else if message.role === 'user'}
   <div class="message user-message">
     {#if entryId && showNavigationMenu}
-      <div class="user-icon-col">
-        <button class="message-icon user-icon" onclick={() => (userMenuOpen = !userMenuOpen)}>
-          <User size={16} />
+      <div class={userSpeakerName ? 'user-icon-col speaker-col' : 'user-icon-col'}>
+        <button class={userSpeakerName ? 'speaker-chip-button' : 'message-icon user-icon'} onclick={() => (userMenuOpen = !userMenuOpen)}>
+          {#if userSpeakerName}
+            <AgentChip leading="user" path={[]} name={userSpeakerName} title={userSpeakerName} />
+          {:else}
+            <User size={16} />
+          {/if}
         </button>
         <MessageActionMenu
           open={userMenuOpen}
@@ -211,8 +221,12 @@
         />
       </div>
     {:else}
-      <div class="message-icon user-icon">
-        <User size={16} />
+      <div class={userSpeakerName ? 'user-icon-col speaker-col' : 'message-icon user-icon'}>
+        {#if userSpeakerName}
+          <AgentChip leading="user" path={[]} name={userSpeakerName} title={userSpeakerName} />
+        {:else}
+          <User size={16} />
+        {/if}
       </div>
     {/if}
     <div class="message-body">
@@ -281,10 +295,14 @@
             <CostBreakdownPopover totalCostUsd={assistantRowUsage.totalCostUsd} breakdown={assistantRowUsage.breakdown} contextLabel="Assistant response" />
           </div>
         {/if}
-        <div class="assistant-icon-col">
+        <div class={agentSpeakerPath ? 'assistant-icon-col speaker-col' : 'assistant-icon-col'}>
           {#if hasAssistantMenu}
-            <button class="message-icon assistant-icon" onclick={() => (toolMenuOpen = !toolMenuOpen)}>
-              <Bot size={16} />
+            <button class={agentSpeakerPath ? 'speaker-chip-button' : 'message-icon assistant-icon'} onclick={() => (toolMenuOpen = !toolMenuOpen)}>
+              {#if agentSpeakerPath}
+                <AgentChip leading="bot" path={agentSpeakerPath} rootSessionId={subagentRootSessionId} />
+              {:else}
+                <Bot size={16} />
+              {/if}
             </button>
             {#if showNavigationMenu && entryId}
               <MessageActionMenu
@@ -310,16 +328,17 @@
               </div>
             {/if}
           {:else}
-            <div class="message-icon assistant-icon">
-              <Bot size={16} />
+            <div class={agentSpeakerPath ? 'speaker-chip-button' : 'message-icon assistant-icon'}>
+              {#if agentSpeakerPath}
+                <AgentChip leading="bot" path={agentSpeakerPath} rootSessionId={subagentRootSessionId} />
+              {:else}
+                <Bot size={16} />
+              {/if}
             </div>
           {/if}
         </div>
       </div>
       <div class="message-body">
-        {#if agentPath && agentPath.length > 0}
-          <div class="assistant-speaker"><AgentChip path={agentPath} rootSessionId={subagentRootSessionId} /></div>
-        {/if}
         {#if assistantError}
           <div class="assistant-error">
             <div class="assistant-error-header">
@@ -595,6 +614,26 @@
     margin-top: 2px;
   }
 
+  /* A speaker chip stands in for the round avatar when the row names its
+   * speaker: the child agent on a subagent turn, the user when named. */
+  .speaker-col {
+    min-width: 0;
+    max-width: 12rem;
+    align-items: flex-start;
+  }
+
+  .speaker-chip-button {
+    display: inline-flex;
+    min-width: 0;
+    max-width: 100%;
+    align-items: center;
+    padding: 0;
+    border: none;
+    background: none;
+    color: inherit;
+    cursor: pointer;
+  }
+
   .tool-menu {
     display: flex;
     flex-direction: column;
@@ -606,10 +645,6 @@
     flex: 1;
     min-width: 0;
     font-size: 0.9rem;
-  }
-
-  .assistant-speaker {
-    margin-bottom: 0.3rem;
   }
 
   .assistant-error {
@@ -798,6 +833,10 @@
       flex-direction: row;
       align-items: center;
       margin-top: 0;
+    }
+
+    .speaker-col {
+      max-width: 100%;
     }
 
     .assistant-meta {

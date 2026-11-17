@@ -2,6 +2,8 @@
   import type { AgentPath } from '@pimote/shared';
   import FolderNatureIcon from './FolderNatureIcon.svelte';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
+  import Bot from '@lucide/svelte/icons/bot';
+  import User from '@lucide/svelte/icons/user';
 
   let {
     path,
@@ -9,12 +11,18 @@
     name = undefined,
     persona = undefined,
     personaIcon = undefined,
+    leading = 'status',
+    title = undefined,
   }: {
     path: AgentPath;
     rootSessionId?: string;
     name?: string;
     persona?: string;
     personaIcon?: string;
+    /** Leading glyph: the live status dot, or a fixed bot or user icon. */
+    leading?: 'status' | 'bot' | 'user';
+    /** Hover text. Defaults to the agent path. */
+    title?: string;
   } = $props();
 
   let node = $derived(rootSessionId && path.length > 0 ? sessionRegistry.getSubagentNode(rootSessionId, path) : null);
@@ -22,7 +30,7 @@
   let displayName = $derived(name ?? path.at(-1) ?? 'root');
   let displayPersona = $derived(persona ?? node?.persona ?? closedNode?.persona);
   let displayPersonaIcon = $derived(personaIcon ?? node?.personaIcon ?? closedNode?.personaIcon);
-  let displayState = $derived(node?.state);
+  let displayState = $derived(leading === 'status' ? node?.state : undefined);
   let label = $derived(displayPersona ? `${displayPersona}:${displayName}` : displayName);
   let fullPath = $derived(path.length > 0 ? path.join('/') : 'root');
 </script>
@@ -30,12 +38,21 @@
 <span
   class="agent-chip"
   data-agent-chip
-  data-agent-state={displayState ?? 'unknown'}
+  data-agent-state={leading === 'status' ? (displayState ?? 'unknown') : undefined}
   data-agent-path={fullPath}
+  data-agent-leading={leading}
   aria-label={`${label}${displayState ? `, ${displayState}` : ''}`}
-  title={fullPath}
+  title={title ?? fullPath}
 >
-  {#if displayPersona}
+  {#if leading === 'bot' || leading === 'user'}
+    <span class="agent-chip-glyph" aria-hidden="true">
+      {#if leading === 'bot'}
+        <Bot class="size-3" />
+      {:else}
+        <User class="size-3" />
+      {/if}
+    </span>
+  {:else if displayPersona}
     <span class="agent-chip-status agent-chip-persona" aria-hidden="true" data-persona-icon>
       {#if displayPersonaIcon}
         {displayPersonaIcon}
@@ -69,6 +86,13 @@
     font-size: 0.75rem;
     line-height: 1.4;
     white-space: nowrap;
+  }
+
+  .agent-chip-glyph {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    color: var(--muted-foreground);
   }
 
   .agent-chip-status {

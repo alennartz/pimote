@@ -9,11 +9,15 @@
   import CostBreakdownDetails from './CostBreakdownDetails.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
+  import { ContextMenu } from 'bits-ui';
+  import { isMobileViewport } from '$lib/mobile-viewport.svelte.js';
   import Bot from '@lucide/svelte/icons/bot';
   import ExternalLink from '@lucide/svelte/icons/external-link';
   import OctagonX from '@lucide/svelte/icons/octagon-x';
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import X from '@lucide/svelte/icons/x';
+  import Check from '@lucide/svelte/icons/check';
+  import Copy from '@lucide/svelte/icons/copy';
 
   interface Props {
     onClose?: () => void;
@@ -33,6 +37,42 @@
   let resurrectParentPath = $state<AgentPath>([]);
   let busy = $state(false);
   let noticeExpiryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Desktop tree rows copy session identity from a right-click menu. A phone
+  // long press stays inert: the panel rows carry no menu there.
+  let openMenuKey = $state<string | null>(null);
+  let copiedKey = $state<string | null>(null);
+  let copiedKeyTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Copy a child session id and hold the menu open for the confirmation. */
+  async function copyIdentity(key: string, sessionId: string | undefined, event: Event): Promise<void> {
+    if (!sessionId) return;
+    event.preventDefault();
+    try {
+      await navigator.clipboard.writeText(sessionId);
+    } catch {
+      return;
+    }
+    copiedKey = key;
+    if (copiedKeyTimer) clearTimeout(copiedKeyTimer);
+    copiedKeyTimer = setTimeout(() => {
+      copiedKey = null;
+      if (openMenuKey === key) openMenuKey = null;
+    }, 900);
+  }
+
+  function setMenuOpen(key: string, open: boolean): void {
+    if (open) {
+      openMenuKey = key;
+    } else if (openMenuKey === key) {
+      openMenuKey = null;
+    }
+  }
+
+  /** The pi session id behind one child row, when the provider knows it. */
+  function subagentSessionId(path: AgentPath): string | undefined {
+    return rootState?.nodes.find((node) => samePath(node.path, path))?.sessionId;
+  }
 
   const noticeExpiryMs = 10_000;
 
@@ -67,9 +107,7 @@
   const panelState = $derived<SubagentPanelState>({
     inspectedPath,
     openChildPaths,
-    selectedView: selectedPath
-      ? { kind: 'child', path: selectedPath, incarnation: selectedAttachment?.incarnation, attachmentGeneration: selectedAttachment?.attachmentGeneration }
-      : { kind: 'root' },
+    selectedView: selectedPath ? { kind: 'child', path: selectedPath, incarnation: selectedAttachment?.incarnation } : { kind: 'root' },
     panelPresentation: panelStore.presentation,
     panelOpen: panelStore.open,
     notice: notice ? { path: notice.path, reason: notice.reason === 'teardown' ? 'teardown' : 'unavailable' } : null,
@@ -219,12 +257,7 @@
     if (!rootId) return;
     const node = sessionRegistry.getSubagentNode(rootId, path);
     if (!node) return;
-    const attachment = sessionRegistry.getSubagentAttachment(rootId, path);
-    teardownConfirmation = {
-      path: [...path],
-      incarnation: node.incarnation,
-      ...(attachment && !attachment.closed ? { attachmentGeneration: attachment.attachmentGeneration } : {}),
-    };
+    teardownConfirmation = { path: [...path], incarnation: node.incarnation };
   }
 
   async function confirmTeardown(): Promise<void> {
@@ -233,7 +266,7 @@
     if (!rootId || !confirmation?.incarnation) return;
     busy = true;
     try {
-      const response = await sessionRegistry.teardownSubagentView(rootId, confirmation.path, confirmation.incarnation, confirmation.attachmentGeneration);
+      const response = await sessionRegistry.teardownSubagentView(rootId, confirmation.path, confirmation.incarnation);
       if (!response.success) setNotice({ rootSessionId: rootId, path: confirmation.path, reason: 'unavailable' }, true);
       teardownConfirmation = null;
     } finally {
@@ -342,6 +375,184 @@
   });
 </script>
 
+{#snippet identityMenuItems(key: string, sessionId: string | undefined)}
+  <ContextMenu.Portal>
+    <ContextMenu.Content class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-36 overflow-hidden rounded-lg p-1 shadow-md ring-1">
+      <ContextMenu.Item
+        class="focus:bg-accent focus:text-accent-foreground flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none"
+        onSelect={(event) => void copyIdentity(key, sessionId, event)}
+      >
+        {#if copiedKey === key}
+          <Check class="size-4" />
+          Copied session ID
+        {:else}
+          <Copy class="size-4" />
+          Copy session ID
+        {/if}
+      </ContextMenu.Item>
+    </ContextMenu.Content>
+  </ContextMenu.Portal>
+{/snippet}
+
+{#snippet rootSessionRow()}
+  {#if rootSession}
+    <section class="border-sidebar-border/70 border-b px-2 pb-2" aria-label="Root session">
+      <button
+        type="button"
+        class="tree-row-select hover:bg-sidebar-accent/60 focus-visible:ring-ring/50 flex w-full min-w-0 items-center gap-2 rounded-md border border-transparent py-1.5 pr-2 text-left outline-none focus-visible:ring-2 max-md:min-h-11 max-md:py-2.5 {!selectedPath
+          ? 'border-ring/60 bg-sidebar-accent'
+          : ''}"
+        style="--tree-indent: 0rem;"
+        aria-label="Show root session"
+        aria-current={!selectedPath ? 'page' : undefined}
+        onclick={showRootView}
+      >
+        <Bot class="text-muted-foreground size-3.5 shrink-0" />
+        <span class="min-w-0 flex-1">
+          <strong class="block truncate text-xs">{rootSession.sessionName || rootSession.projectName || 'Main session'}</strong>
+          <span class="text-muted-foreground block truncate text-[11px]">{rootSession.isStreaming ? 'Running' : 'Root session'}</span>
+        </span>
+        <span class="text-muted-foreground rounded-full border px-1.5 py-0.5 text-[10px]">Root</span>
+      </button>
+    </section>
+  {/if}
+{/snippet}
+
+{#snippet subagentRow(row: SubagentPanelRow)}
+  <div
+    class="tree-row hover:bg-sidebar-accent/60 grid min-w-0 items-center gap-x-1 gap-y-0.5 rounded-md border border-transparent py-0.5 pr-1 transition-colors {row.inspected ||
+    samePath(inspectorNode?.path, row.path)
+      ? 'border-ring/60 bg-sidebar-accent'
+      : ''}"
+    data-node={pathLabel(row.path)}
+    style={`--tree-indent: ${Math.min(row.depth, 8) * 0.75}rem;`}
+  >
+    <button
+      type="button"
+      class="tree-row-select focus-visible:ring-ring/50 flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 text-left outline-none focus-visible:ring-2 max-md:min-h-11 max-md:py-2.5"
+      class:selected={row.inspected || samePath(inspectorNode?.path, row.path)}
+      aria-current={row.viewOpen && selectedPath && samePath(selectedPath, row.path) ? 'page' : undefined}
+      aria-expanded={samePath(inspectorNode?.path, row.path)}
+      aria-label={`Inspect ${pathLabel(row.path)}`}
+      onclick={() => inspect(row.path)}
+    >
+      <span class="min-w-0 flex-1">
+        <span class="block min-w-0 truncate">
+          <AgentChip path={row.path} rootSessionId={rootSessionId ?? ''} name={row.label} persona={row.metadata.persona} personaIcon={row.metadata.personaIcon} />
+        </span>
+        <span class="text-muted-foreground block truncate text-[11px]">{row.metadata.state}</span>
+      </span>
+    </button>
+    <div class="tree-row-meta text-muted-foreground flex shrink-0 items-center gap-1 font-mono text-[10px]">
+      {#if contextLabel(row)}<span>{contextLabel(row)}</span>{/if}
+      {#if costLabel(row)}<span>{costLabel(row)}</span>{/if}
+    </div>
+    <Button
+      variant="ghost"
+      size="xs"
+      class={`open-action text-muted-foreground hover:text-foreground max-md:min-h-11 max-md:min-w-[4.5rem] max-md:justify-center ${row.viewOpen ? 'open bg-sidebar-accent text-foreground' : ''}`}
+      data-open-node={pathLabel(row.path)}
+      aria-label={row.viewOpen ? `Show ${pathLabel(row.path)} view` : `Open ${pathLabel(row.path)} view`}
+      title={row.viewOpen ? 'Show open view' : 'Open child view'}
+      disabled={busy}
+      onclick={() => showView(row.path)}
+    >
+      <ExternalLink class="size-3.5" />
+      <span class="hidden max-md:inline">{row.viewOpen ? 'View' : 'Open'}</span>
+    </Button>
+    {#if row.metadata.activity && !samePath(inspectorNode?.path, row.path)}
+      <dl class="tree-row-command">
+        <dd><code title={row.metadata.activity}>{row.metadata.activity}</code></dd>
+      </dl>
+    {/if}
+    {#if inspectorNode && samePath(inspectorNode.path, row.path)}
+      <section class="agent-inspector border-sidebar-border/70 border-t pt-3 pb-3" aria-label="Selected subagent details">
+        <div class="grid grid-cols-2 gap-x-3 gap-y-2">
+          <div>
+            <span class="metadata-label">Model</span><span>{inspectorNode.model ?? '—'}{inspectorNode.thinkingLevel ? ` · ${inspectorNode.thinkingLevel}` : ''}</span>
+          </div>
+          <div><span class="metadata-label">Turns</span><span>{inspectorNode.usage?.turns ?? '—'}</span></div>
+          <div><span class="metadata-label">Channels</span><span>{inspectorNode.channels?.join(' · ') || '—'}</span></div>
+          {#if inspectorNode.waitingFor && inspectorNode.waitingFor.length > 0}
+            <div><span class="metadata-label">Waits</span><span>{inspectorNode.waitingFor.map(pathLabel).join(' · ')}</span></div>
+          {/if}
+          {#if hasDistinctWorkingDirectory(inspectorNode)}
+            <div><span class="metadata-label">Working directory</span><span title={inspectorNode.cwd}>{inspectorNode.cwd}</span></div>
+          {/if}
+          {#if inspectorViewOpen}
+            <div><span class="metadata-label">View</span><span>open</span></div>
+          {/if}
+        </div>
+        {#if inspectorNode.activity}
+          <dl class="agent-inspector-command">
+            <dt class="metadata-label">Last command</dt>
+            <dd><code title={inspectorNode.activity}>{inspectorNode.activity}</code></dd>
+          </dl>
+        {/if}
+        {#if inspectorNode.usage}
+          {@const usage = inspectorNode.usage}
+          {@const breakdown = usageBreakdownForNode(usage)}
+          {@const tokenBreakdown = usageTokensForNode(usage)}
+          <div class="agent-inspector-usage" aria-label="Subagent usage">
+            {#key pathLabel(inspectorNode.path)}
+              <CostBreakdownDetails totalCostUsd={usage.cost} {breakdown} {tokenBreakdown} collapsible />
+            {/key}
+          </div>
+        {/if}
+        {#if inspectorNode.lastError}<p class="text-destructive mt-2 truncate text-xs">Error: {inspectorNode.lastError}</p>{:else if inspectorNode.lastOutput}
+          <dl class="agent-inspector-command agent-inspector-output">
+            <dt class="metadata-label">Last output</dt>
+            <dd><code title={inspectorNode.lastOutput}>{inspectorNode.lastOutput}</code></dd>
+          </dl>
+        {/if}
+        <div class="agent-inspector-actions mt-3 flex flex-wrap items-center gap-1.5">
+          {#if selectedPath && samePath(selectedPath, inspectorNode.path)}
+            <Button
+              variant="ghost"
+              size="xs"
+              class="open-action text-muted-foreground hover:text-foreground max-md:min-h-11 max-md:min-w-[4.5rem] max-md:justify-center"
+              aria-label="Close child view"
+              title="Close child view"
+              disabled={busy}
+              onclick={() => void closeChildView()}
+            >
+              <X class="size-3.5" />
+              <span class="hidden max-md:inline">Close</span>
+            </Button>
+          {/if}
+          {#if isInterruptible(inspectorNode.state)}
+            <Button
+              variant="destructive"
+              size="xs"
+              class="mb-1 gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors max-md:min-h-11"
+              aria-label={`Interrupt ${pathLabel(inspectorNode.path)}`}
+              title="Interrupt agent"
+              disabled={busy}
+              onclick={() => void interruptSubagent(inspectorNode!.path)}
+            >
+              <OctagonX class="size-4" />
+              <span>Interrupt</span>
+            </Button>
+          {/if}
+          {#if inspectorNode.state !== 'errored' && inspectorNode.state !== 'dead'}
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              class="row-teardown text-muted-foreground hover:text-destructive hover:bg-destructive/10 ml-auto max-md:size-11"
+              aria-label={`Teardown ${pathLabel(inspectorNode.path)}`}
+              title={`Teardown ${pathLabel(inspectorNode.path)}`}
+              disabled={busy}
+              onclick={() => requestTeardown(inspectorNode.path)}
+            >
+              <Trash2 class="size-3" />
+            </Button>
+          {/if}
+        </div>
+      </section>
+    {/if}
+  </div>
+{/snippet}
+
 <div
   class="panel-host bg-sidebar text-sidebar-foreground border-sidebar-border flex min-h-0 w-72 max-w-[min(20rem,100%)] flex-1 flex-col overflow-hidden border-l"
   data-panel-host
@@ -373,25 +584,7 @@
     </header>
 
     {#if rootSession && hasHierarchy}
-      <section class="border-sidebar-border/70 border-b px-2 pb-2" aria-label="Root session">
-        <button
-          type="button"
-          class="tree-row-select hover:bg-sidebar-accent/60 focus-visible:ring-ring/50 flex w-full min-w-0 items-center gap-2 rounded-md border border-transparent py-1.5 pr-2 text-left outline-none focus-visible:ring-2 max-md:min-h-11 max-md:py-2.5 {!selectedPath
-            ? 'border-ring/60 bg-sidebar-accent'
-            : ''}"
-          style="--tree-indent: 0rem;"
-          aria-label="Show root session"
-          aria-current={!selectedPath ? 'page' : undefined}
-          onclick={showRootView}
-        >
-          <Bot class="text-muted-foreground size-3.5 shrink-0" />
-          <span class="min-w-0 flex-1">
-            <strong class="block truncate text-xs">{rootSession.sessionName || rootSession.projectName || 'Main session'}</strong>
-            <span class="text-muted-foreground block truncate text-[11px]">{rootSession.isStreaming ? 'Running' : 'Root session'}</span>
-          </span>
-          <span class="text-muted-foreground rounded-full border px-1.5 py-0.5 text-[10px]">Root</span>
-        </button>
-      </section>
+      {@render rootSessionRow()}
     {/if}
 
     {#if hasHierarchy}
@@ -399,138 +592,15 @@
         <div class="text-muted-foreground px-2 py-2 text-[10px] font-semibold tracking-wider uppercase">Subagents</div>
         <div class="space-y-0.5">
           {#each rows as row (pathLabel(row.path))}
-            <div
-              class="tree-row hover:bg-sidebar-accent/60 grid min-w-0 items-center gap-x-1 gap-y-0.5 rounded-md border border-transparent py-0.5 pr-1 transition-colors {row.inspected ||
-              samePath(inspectorNode?.path, row.path)
-                ? 'border-ring/60 bg-sidebar-accent'
-                : ''}"
-              data-node={pathLabel(row.path)}
-              style={`--tree-indent: ${Math.min(row.depth, 8) * 0.75}rem;`}
-            >
-              <button
-                type="button"
-                class="tree-row-select focus-visible:ring-ring/50 flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 text-left outline-none focus-visible:ring-2 max-md:min-h-11 max-md:py-2.5"
-                class:selected={row.inspected || samePath(inspectorNode?.path, row.path)}
-                aria-current={row.viewOpen && selectedPath && samePath(selectedPath, row.path) ? 'page' : undefined}
-                aria-expanded={samePath(inspectorNode?.path, row.path)}
-                aria-label={`Inspect ${pathLabel(row.path)}`}
-                onclick={() => inspect(row.path)}
-              >
-                <span class="min-w-0 flex-1">
-                  <span class="block min-w-0 truncate">
-                    <AgentChip path={row.path} rootSessionId={rootSessionId ?? ''} name={row.label} persona={row.metadata.persona} personaIcon={row.metadata.personaIcon} />
-                  </span>
-                  <span class="text-muted-foreground block truncate text-[11px]">{row.metadata.state}</span>
-                </span>
-              </button>
-              <div class="tree-row-meta text-muted-foreground flex shrink-0 items-center gap-1 font-mono text-[10px]">
-                {#if contextLabel(row)}<span>{contextLabel(row)}</span>{/if}
-                {#if costLabel(row)}<span>{costLabel(row)}</span>{/if}
-              </div>
-              <Button
-                variant="ghost"
-                size="xs"
-                class={`open-action text-muted-foreground hover:text-foreground max-md:min-h-11 max-md:min-w-[4.5rem] max-md:justify-center ${row.viewOpen ? 'open bg-sidebar-accent text-foreground' : ''}`}
-                data-open-node={pathLabel(row.path)}
-                aria-label={row.viewOpen ? `Show ${pathLabel(row.path)} view` : `Open ${pathLabel(row.path)} view`}
-                title={row.viewOpen ? 'Show open view' : 'Open child view'}
-                disabled={busy}
-                onclick={() => showView(row.path)}
-              >
-                <ExternalLink class="size-3.5" />
-                <span class="hidden max-md:inline">{row.viewOpen ? 'View' : 'Open'}</span>
-              </Button>
-              {#if row.metadata.activity && !samePath(inspectorNode?.path, row.path)}
-                <dl class="tree-row-command">
-                  <dd><code title={row.metadata.activity}>{row.metadata.activity}</code></dd>
-                </dl>
-              {/if}
-              {#if inspectorNode && samePath(inspectorNode.path, row.path)}
-                <section class="agent-inspector border-sidebar-border/70 border-t pt-3 pb-3" aria-label="Selected subagent details">
-                  <div class="grid grid-cols-2 gap-x-3 gap-y-2">
-                    <div>
-                      <span class="metadata-label">Model</span><span>{inspectorNode.model ?? '—'}{inspectorNode.thinkingLevel ? ` · ${inspectorNode.thinkingLevel}` : ''}</span>
-                    </div>
-                    <div><span class="metadata-label">Turns</span><span>{inspectorNode.usage?.turns ?? '—'}</span></div>
-                    <div><span class="metadata-label">Channels</span><span>{inspectorNode.channels?.join(' · ') || '—'}</span></div>
-                    {#if inspectorNode.waitingFor && inspectorNode.waitingFor.length > 0}
-                      <div><span class="metadata-label">Waits</span><span>{inspectorNode.waitingFor.map(pathLabel).join(' · ')}</span></div>
-                    {/if}
-                    {#if hasDistinctWorkingDirectory(inspectorNode)}
-                      <div><span class="metadata-label">Working directory</span><span title={inspectorNode.cwd}>{inspectorNode.cwd}</span></div>
-                    {/if}
-                    {#if inspectorViewOpen}
-                      <div><span class="metadata-label">View</span><span>open</span></div>
-                    {/if}
-                  </div>
-                  {#if inspectorNode.activity}
-                    <dl class="agent-inspector-command">
-                      <dt class="metadata-label">Last command</dt>
-                      <dd><code title={inspectorNode.activity}>{inspectorNode.activity}</code></dd>
-                    </dl>
-                  {/if}
-                  {#if inspectorNode.usage}
-                    {@const usage = inspectorNode.usage}
-                    {@const breakdown = usageBreakdownForNode(usage)}
-                    {@const tokenBreakdown = usageTokensForNode(usage)}
-                    <div class="agent-inspector-usage" aria-label="Subagent usage">
-                      {#key pathLabel(inspectorNode.path)}
-                        <CostBreakdownDetails totalCostUsd={usage.cost} {breakdown} {tokenBreakdown} collapsible />
-                      {/key}
-                    </div>
-                  {/if}
-                  {#if inspectorNode.lastError}<p class="text-destructive mt-2 truncate text-xs">Error: {inspectorNode.lastError}</p>{:else if inspectorNode.lastOutput}
-                    <dl class="agent-inspector-command agent-inspector-output">
-                      <dt class="metadata-label">Last output</dt>
-                      <dd><code title={inspectorNode.lastOutput}>{inspectorNode.lastOutput}</code></dd>
-                    </dl>
-                  {/if}
-                  <div class="agent-inspector-actions mt-3 flex flex-wrap items-center gap-1.5">
-                    {#if selectedPath && samePath(selectedPath, inspectorNode.path)}
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        class="open-action text-muted-foreground hover:text-foreground max-md:min-h-11 max-md:min-w-[4.5rem] max-md:justify-center"
-                        aria-label="Close child view"
-                        title="Close child view"
-                        disabled={busy}
-                        onclick={() => void closeChildView()}
-                      >
-                        <X class="size-3.5" />
-                        <span class="hidden max-md:inline">Close</span>
-                      </Button>
-                    {/if}
-                    {#if isInterruptible(inspectorNode.state)}
-                      <Button
-                        variant="destructive"
-                        size="xs"
-                        class="mb-1 gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors max-md:min-h-11"
-                        aria-label={`Interrupt ${pathLabel(inspectorNode.path)}`}
-                        title="Interrupt agent"
-                        disabled={busy}
-                        onclick={() => void interruptSubagent(inspectorNode!.path)}
-                      >
-                        <OctagonX class="size-4" />
-                        <span>Interrupt</span>
-                      </Button>
-                    {/if}
-                    {#if inspectorNode.state !== 'errored' && inspectorNode.state !== 'dead'}
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        class="row-teardown text-muted-foreground hover:text-destructive hover:bg-destructive/10 ml-auto max-md:size-11"
-                        aria-label={`Teardown ${pathLabel(inspectorNode.path)}`}
-                        title={`Teardown ${pathLabel(inspectorNode.path)}`}
-                        disabled={busy}
-                        onclick={() => requestTeardown(inspectorNode.path)}
-                      >
-                        <Trash2 class="size-3" />
-                      </Button>
-                    {/if}
-                  </div>
-                </section>
-              {/if}
-            </div>
+            {@const rowKey = pathLabel(row.path)}
+            {#if isMobileViewport()}
+              {@render subagentRow(row)}
+            {:else}
+              <ContextMenu.Root open={openMenuKey === rowKey} onOpenChange={(open) => setMenuOpen(rowKey, open)}>
+                <ContextMenu.Trigger class="block">{@render subagentRow(row)}</ContextMenu.Trigger>
+                {@render identityMenuItems(rowKey, subagentSessionId(row.path))}
+              </ContextMenu.Root>
+            {/if}
           {/each}
         </div>
       </section>

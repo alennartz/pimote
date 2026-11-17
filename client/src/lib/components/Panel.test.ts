@@ -102,7 +102,6 @@ beforeEach(() => {
     childSessionId: 'child-worker',
     path: ['worker'],
     incarnation: 'inc-worker',
-    attachmentGeneration: 'gen-worker',
     viewCursor: 1,
     state: {
       sessionId: 'child-worker',
@@ -404,7 +403,6 @@ describe('Panel row teardown', () => {
       childSessionId: 'child-worker',
       path: ['worker'],
       incarnation: 'inc-worker',
-      attachmentGeneration: 'gen-worker',
       viewCursor: 1,
       state: {
         sessionId: 'child-worker',
@@ -593,7 +591,6 @@ describe('Panel removal notices', () => {
       sessionId: 'root',
       path: ['worker'],
       incarnation: 'inc-worker',
-      attachmentGeneration: 'gen-worker',
       reason: 'unavailable',
     });
     await tick();
@@ -617,5 +614,27 @@ describe('Panel removal notices', () => {
     await tick();
     expect(target.querySelector('[role="status"]')).not.toBeNull();
     expect(sessionRegistry.getPendingSubagentResurrection('root')).not.toBeNull();
+  });
+});
+
+describe('Panel tree identity menu', () => {
+  it('copies a child session id from the desktop row menu', async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    const target = render();
+    await tick();
+
+    const row = target.querySelector<HTMLElement>('[data-node="worker"]');
+    expect(row).not.toBeNull();
+    row!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 }));
+    await tick();
+
+    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"], [data-slot="context-menu-item"]')].find(
+      (candidate) => candidate.textContent?.trim() === 'Copy session ID',
+    );
+    expect(item).not.toBeUndefined();
+    item!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith('child-worker'));
   });
 });
