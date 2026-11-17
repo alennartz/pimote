@@ -10,7 +10,8 @@
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { connection } from '$lib/stores/connection.svelte.js';
-  import { sessionRegistry, switchToSession, closeSession, removeSessionOptimistically, newSessionInProject } from '$lib/stores/session-registry.svelte.js';
+  import { sessionRegistry, switchToSession, closeSession, removeSessionOptimistically, newSessionInProject, type PerSessionState } from '$lib/stores/session-registry.svelte.js';
+  import { isMobileViewport } from '$lib/mobile-viewport.svelte.js';
   import { getExtensionUiQueue } from '$lib/stores/extension-ui-queue.svelte.js';
   import { getSessionPillSwipeHintShown, setSessionPillSwipeHintShown } from '$lib/stores/persistence.js';
   import { getSessionChipLabel, getSessionDisplayName } from '$lib/session-summary.js';
@@ -68,7 +69,6 @@
   }
 
   function openMobileActions(sessionId: string) {
-    openContextMenuSessionId = null;
     mobileActionsSessionId = sessionId;
   }
 
@@ -598,6 +598,64 @@
   });
 </script>
 
+{#snippet sessionChip(session: PerSessionState, isViewed: boolean, hasPendingUi: boolean, chipLabel: string)}
+  <button
+    class="group/chip {isViewed
+      ? 'bg-primary text-primary-foreground'
+      : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'} flex shrink-0 items-center gap-1.5 rounded-full py-1 pr-3 pl-1 text-xs font-medium transition-colors select-none {hintSessionId ===
+    session.sessionId
+      ? 'session-pill-swipe-hint'
+      : ''}"
+    style="touch-action: pan-x;"
+    data-session-chip={session.sessionId}
+    onclick={() => handlePillClick(session.sessionId)}
+    onauxclick={(e) => {
+      if (e.button === 1) {
+        e.preventDefault();
+        closeSession(session.sessionId);
+      }
+    }}
+    title={getSessionDisplayName(session) ?? session.projectName}
+  >
+    <!-- Folder glyph as the state indicator, colored like the old
+         status dot. The session points at its folder object; the
+         glyph follows the folder's nature. 18px with -my-0.5 keeps
+         the chip at 24px; pl-1 nestles the glyph into the cap
+         curve. -->
+    <span class="relative -my-0.5 flex size-4.5 shrink-0">
+      {#if session.status === 'working' && !hasPendingUi}
+        <span class="absolute top-1/2 left-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 animate-ping rounded-full bg-emerald-400/60"></span>
+      {/if}
+      <FolderNatureIcon
+        kind={folderIconKind(session.folder ?? { nature: 'code', shortcutCount: 0 })}
+        class="relative size-4.5 {getSessionPillIconColor(session, hasPendingUi)}"
+        strokeWidth={2.75}
+      />
+    </span>
+    <span class="max-w-[80px] truncate">{chipLabel}</span>
+    <span
+      class="{isViewed
+        ? 'text-primary-foreground/50 hover:bg-primary-foreground/20 hover:text-primary-foreground'
+        : 'text-secondary-foreground/50 hover:bg-secondary-foreground/20 hover:text-secondary-foreground'} -mr-1 ml-0.5 hidden items-center justify-center rounded-full p-0.5 transition-colors md:flex md:opacity-0 md:group-hover/chip:opacity-100"
+      role="button"
+      tabindex="-1"
+      title="Close session"
+      onclick={(e) => {
+        e.stopPropagation();
+        closeSession(session.sessionId);
+      }}
+      onkeydown={(e) => {
+        if (e.key === 'Enter') {
+          e.stopPropagation();
+          closeSession(session.sessionId);
+        }
+      }}
+    >
+      <X class="size-3" />
+    </span>
+  </button>
+{/snippet}
+
 {#if sessionRegistry.activeSessions.length > 0}
   <div class="session-pill-bar-root border-border bg-muted/30 flex shrink-0 flex-col gap-1.5 border-t px-2 py-1.5">
     {#if mobileActionsSessionId && sessionRegistry.sessions[mobileActionsSessionId]}
@@ -630,117 +688,68 @@
           {@const isViewed = sessionRegistry.viewedSessionId === session.sessionId}
           {@const hasPendingUi = uiQueue.hasRequestForSession(session.sessionId)}
           {@const chipLabel = getSessionChipLabel(session) ?? session.projectName}
-          <ContextMenu.Root open={openContextMenuSessionId === session.sessionId} onOpenChange={(open) => handleContextMenuOpenChange(session.sessionId, open)}>
-            <ContextMenu.Trigger class="shrink-0">
-              <button
-                class="group/chip {isViewed
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'} flex shrink-0 items-center gap-1.5 rounded-full py-1 pr-3 pl-1 text-xs font-medium transition-colors select-none {hintSessionId ===
-                session.sessionId
-                  ? 'session-pill-swipe-hint'
-                  : ''}"
-                style="touch-action: pan-x;"
-                data-session-chip={session.sessionId}
-                onclick={() => handlePillClick(session.sessionId)}
-                onauxclick={(e) => {
-                  if (e.button === 1) {
-                    e.preventDefault();
-                    closeSession(session.sessionId);
-                  }
-                }}
-                title={getSessionDisplayName(session) ?? session.projectName}
-              >
-                <!-- Folder glyph as the state indicator, colored like the old
-                     status dot. The session points at its folder object; the
-                     glyph follows the folder's nature. 18px with -my-0.5 keeps
-                     the chip at 24px; pl-1 nestles the glyph into the cap
-                     curve. -->
-                <span class="relative -my-0.5 flex size-4.5 shrink-0">
-                  {#if session.status === 'working' && !hasPendingUi}
-                    <span class="absolute top-1/2 left-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 animate-ping rounded-full bg-emerald-400/60"></span>
-                  {/if}
-                  <FolderNatureIcon
-                    kind={folderIconKind(session.folder ?? { nature: 'code', shortcutCount: 0 })}
-                    class="relative size-4.5 {getSessionPillIconColor(session, hasPendingUi)}"
-                    strokeWidth={2.75}
-                  />
-                </span>
-                <span class="max-w-[80px] truncate">{chipLabel}</span>
-                <span
-                  class="{isViewed
-                    ? 'text-primary-foreground/50 hover:bg-primary-foreground/20 hover:text-primary-foreground'
-                    : 'text-secondary-foreground/50 hover:bg-secondary-foreground/20 hover:text-secondary-foreground'} -mr-1 ml-0.5 hidden items-center justify-center rounded-full p-0.5 transition-colors md:flex md:opacity-0 md:group-hover/chip:opacity-100"
-                  role="button"
-                  tabindex="-1"
-                  title="Close session"
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    closeSession(session.sessionId);
-                  }}
-                  onkeydown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.stopPropagation();
-                      closeSession(session.sessionId);
-                    }
-                  }}
-                >
-                  <X class="size-3" />
-                </span>
-              </button>
-            </ContextMenu.Trigger>
-            <ContextMenu.Portal>
-              <ContextMenu.Content class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-36 overflow-hidden rounded-lg p-1 shadow-md ring-1">
-                <ContextMenu.Item
-                  class="focus:bg-accent focus:text-accent-foreground hidden cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none md:flex"
-                  onSelect={(event) => void copySessionField(session.sessionId, 'id', session.sessionId, event)}
-                >
-                  {#if copiedField?.sessionId === session.sessionId && copiedField.field === 'id'}
-                    <Check class="size-4" />
-                    Copied session ID
-                  {:else}
-                    <Copy class="size-4" />
-                    Copy session ID
-                  {/if}
-                </ContextMenu.Item>
-                {#if session.sessionFile}
+          <!-- A phone chip opens no menu: the swipe-up tray is its action surface. -->
+          {#if isMobileViewport()}
+            {@render sessionChip(session, isViewed, hasPendingUi, chipLabel)}
+          {:else}
+            <ContextMenu.Root open={openContextMenuSessionId === session.sessionId} onOpenChange={(open) => handleContextMenuOpenChange(session.sessionId, open)}>
+              <ContextMenu.Trigger class="shrink-0">
+                {@render sessionChip(session, isViewed, hasPendingUi, chipLabel)}
+              </ContextMenu.Trigger>
+              <ContextMenu.Portal>
+                <ContextMenu.Content class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-36 overflow-hidden rounded-lg p-1 shadow-md ring-1">
                   <ContextMenu.Item
-                    class="focus:bg-accent focus:text-accent-foreground hidden cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none md:flex"
-                    onSelect={(event) => void copySessionField(session.sessionId, 'file', session.sessionFile, event)}
+                    class="focus:bg-accent focus:text-accent-foreground flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none"
+                    onSelect={(event) => void copySessionField(session.sessionId, 'id', session.sessionId, event)}
                   >
-                    {#if copiedField?.sessionId === session.sessionId && copiedField.field === 'file'}
+                    {#if copiedField?.sessionId === session.sessionId && copiedField.field === 'id'}
                       <Check class="size-4" />
-                      Copied session file
+                      Copied session ID
                     {:else}
                       <Copy class="size-4" />
-                      Copy session file
+                      Copy session ID
                     {/if}
                   </ContextMenu.Item>
-                {/if}
-                <ContextMenu.Separator class="bg-border -mx-1 my-1 hidden h-px md:block" />
-                <ContextMenu.Item
-                  class="focus:bg-accent focus:text-accent-foreground flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none max-md:min-h-11 max-md:px-3"
-                  onSelect={() => closeSession(session.sessionId)}
-                >
-                  <X class="size-4" />
-                  Close session
-                </ContextMenu.Item>
-                <ContextMenu.Item
-                  class="focus:bg-accent focus:text-accent-foreground flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none max-md:min-h-11 max-md:px-3"
-                  onSelect={() => void archiveAndCloseSession(session.sessionId)}
-                >
-                  <Archive class="size-4" />
-                  Archive session
-                </ContextMenu.Item>
-                <ContextMenu.Item
-                  class="focus:bg-destructive/10 dark:focus:bg-destructive/20 text-destructive flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none max-md:min-h-11 max-md:px-3"
-                  onSelect={() => (deleteSessionId = session.sessionId)}
-                >
-                  <Trash2 class="size-4" />
-                  Delete session
-                </ContextMenu.Item>
-              </ContextMenu.Content>
-            </ContextMenu.Portal>
-          </ContextMenu.Root>
+                  {#if session.sessionFile}
+                    <ContextMenu.Item
+                      class="focus:bg-accent focus:text-accent-foreground flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none"
+                      onSelect={(event) => void copySessionField(session.sessionId, 'file', session.sessionFile, event)}
+                    >
+                      {#if copiedField?.sessionId === session.sessionId && copiedField.field === 'file'}
+                        <Check class="size-4" />
+                        Copied session file
+                      {:else}
+                        <Copy class="size-4" />
+                        Copy session file
+                      {/if}
+                    </ContextMenu.Item>
+                  {/if}
+                  <ContextMenu.Separator class="bg-border -mx-1 my-1 h-px" />
+                  <ContextMenu.Item
+                    class="focus:bg-accent focus:text-accent-foreground flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none"
+                    onSelect={() => closeSession(session.sessionId)}
+                  >
+                    <X class="size-4" />
+                    Close session
+                  </ContextMenu.Item>
+                  <ContextMenu.Item
+                    class="focus:bg-accent focus:text-accent-foreground flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none"
+                    onSelect={() => void archiveAndCloseSession(session.sessionId)}
+                  >
+                    <Archive class="size-4" />
+                    Archive session
+                  </ContextMenu.Item>
+                  <ContextMenu.Item
+                    class="focus:bg-destructive/10 dark:focus:bg-destructive/20 text-destructive flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-hidden select-none"
+                    onSelect={() => (deleteSessionId = session.sessionId)}
+                  >
+                    <Trash2 class="size-4" />
+                    Delete session
+                  </ContextMenu.Item>
+                </ContextMenu.Content>
+              </ContextMenu.Portal>
+            </ContextMenu.Root>
+          {/if}
         {/each}
 
         {#if sessionRegistry.viewedSessionId && !mobileActionsSessionId}

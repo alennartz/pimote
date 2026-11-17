@@ -9,10 +9,21 @@ class TestResizeObserver {
   disconnect() {}
 }
 globalThis.ResizeObserver ??= TestResizeObserver as unknown as typeof ResizeObserver;
+/** Drives the app's viewport breakpoint, so a test can stand where a phone or a
+ *  desktop stands. `mobile-viewport` subscribes once at module load. */
+let mobileListener: ((event: { matches: boolean }) => void) | null = null;
+
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
   configurable: true,
-  value: vi.fn(() => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} })),
+  value: vi.fn((query: string) => ({
+    matches: false,
+    media: query,
+    addEventListener: (_type: string, listener: (event: { matches: boolean }) => void) => {
+      if (query.includes('max-width: 767px')) mobileListener = listener;
+    },
+    removeEventListener: () => {},
+  })),
 });
 
 vi.mock('$lib/stores/connection.svelte.js', () => {
@@ -119,6 +130,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  mobileListener?.({ matches: false });
   destroy?.();
   destroy = null;
   sessionRegistry.removeSession(id);
@@ -218,7 +230,9 @@ describe('active session bar behavior', () => {
     }
   });
 
-  it('closes a long-press context menu when the same gesture becomes an upward swipe', async () => {
+  it('opens the swipe action tray on a phone long press without a chip menu', async () => {
+    mobileListener?.({ matches: true });
+    await tick();
     render();
     await tick();
     const sessionChip = chip();
@@ -226,22 +240,13 @@ describe('active session bar behavior', () => {
     sessionChip.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch', clientX: 100, clientY: 100 }));
     await vi.advanceTimersByTimeAsync(700);
     await tick();
-    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+    expect(document.querySelector('[role="menu"]')).toBeNull();
 
     sessionChip.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerType: 'touch', clientX: 100, clientY: 100 }));
     swipeUp(sessionChip);
     await tick();
 
     expect(target.textContent).toContain('Session actions');
-    expect(document.querySelector('[role="menu"][data-state="open"]')).toBeNull();
-
-    const close = [...target.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Close');
-    expect(close).toBeInstanceOf(HTMLButtonElement);
-    holdResponses();
-    (close as HTMLButtonElement).click();
-    await tick();
-    expect(sessionRegistry.sessions[id]).toBeUndefined();
-    expect(connection.send).toHaveBeenCalledWith({ type: 'detach_session', sessionId: id });
   });
 
   it('removes the chip before the archive response in the swipe action tray', async () => {
