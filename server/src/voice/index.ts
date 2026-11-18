@@ -19,7 +19,9 @@
 
 import type { ExtensionAPI, ExtensionContext, ExtensionFactory, BeforeAgentStartEvent, ContextEvent, TurnEndEvent } from '@earendil-works/pi-coding-agent';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
+import { str } from '@earendil-works/pi-schema';
 import { Type } from 'typebox';
+import { toolObject } from '../tool-parameters.js';
 
 import { renderInterpreterPrompt } from './interpreter-prompt.js';
 import { applyVoicePromptSection } from './prompt-section.js';
@@ -368,8 +370,8 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
       promptSnippet: 'Deliver spoken replies while a voice call is in progress.',
       exposure: 'model-only',
       defaultActive: false,
-      parameters: Type.Object({
-        text: Type.String({ description: 'The text to speak to the user.' }),
+      parameters: toolObject({
+        text: str({ description: 'The text to speak to the user.' }),
       }),
       outputSchema: Type.Object({ spoken: Type.Boolean() }),
       execute: async () => {

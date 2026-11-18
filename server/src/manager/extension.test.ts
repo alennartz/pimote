@@ -121,6 +121,29 @@ describe('createManagerExtension()', () => {
     expect(toolDefs.map((def) => def.name).sort()).toEqual([...MANAGER_TOOL_NAMES].sort());
   });
 
+  it('uses closed input objects for every manager tool', () => {
+    const toolDefs = register(spyPorts());
+    for (const tool of toolDefs) {
+      expect(tool.parameters.type).toBe('object');
+      expect(tool.parameters.additionalProperties).toBe(false);
+    }
+    const resume = toolNamed(toolDefs, 'pimote_resume_session');
+    expect(Value.Check(resume.parameters, { sessionId: 's1', extra: true })).toBe(false);
+  });
+
+  it('documents defaults without emitting default annotations', () => {
+    const toolDefs = register(spyPorts());
+    const folders = toolNamed(toolDefs, 'pimote_find_folders').parameters.properties.includeArchived;
+    const sessions = toolNamed(toolDefs, 'pimote_find_sessions').parameters.properties;
+
+    expect(folders.description).toContain('default false');
+    expect(folders).not.toHaveProperty('default');
+    expect(sessions.open.description).toContain('default false');
+    expect(sessions.open).not.toHaveProperty('default');
+    expect(sessions.includeArchived.description).toContain('default false');
+    expect(sessions.includeArchived).not.toHaveProperty('default');
+  });
+
   it('exposes every manager tool directly with a concise planner cue and named routing rules', () => {
     for (const tool of register(spyPorts())) {
       expect(tool.exposure).toBe('direct');
@@ -561,6 +584,18 @@ describe('pimote_archive_sessions', () => {
       { sessionId: 's3', outcome: 'open_slot_evicted' },
     ]);
   });
+
+  it('rejects an empty id list before calling the session port', async () => {
+    const ports = spyPorts();
+    const tool = toolNamed(register(ports), 'pimote_archive_sessions');
+    expect(tool.parameters.properties.sessionIds).not.toHaveProperty('minItems');
+
+    const result = (await tool.execute('call-1', { sessionIds: [] }, undefined, undefined, {})) as ToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent.error).toContain('one or more session identifiers');
+    expect(ports.sessions.archiveSessions).not.toHaveBeenCalled();
+  });
 });
 
 describe('pimote_resume_session', () => {
@@ -599,25 +634,27 @@ describe('pimote_create_folder', () => {
     { kind: 'code-hub', memberPaths: ['/w/api'], memberRepresentation: 'worktree' },
     { kind: 'persona-hub', description: 'crew lead', memberPaths: ['/w/ada'], memberRepresentation: 'worktree' },
     { kind: 'persona-hub', description: 'crew lead', memberPaths: ['/w/ada'] },
-  ])('accepts conditional creation arguments %j', (params) => {
+  ])('accepts valid creation arguments %j', (params) => {
     const schema = toolNamed(register(spyPorts()), 'pimote_create_folder').parameters;
     expect(schema.type).toBe('object');
     expect(Value.Check(schema, { name: 'new-folder', parentPath: '/tmp', ...params })).toBe(true);
   });
 
-  it.each([
-    { kind: 'persona' },
-    { kind: 'persona', description: '' },
-    { kind: 'persona', description: ' \n\t ' },
-    { kind: 'code-hub' },
-    { kind: 'code-hub', memberPaths: [] },
-    { kind: 'persona-hub', memberPaths: ['/w/ada'] },
-    { kind: 'persona-hub', description: '', memberPaths: ['/w/ada'] },
-    { kind: 'persona-hub', description: 'crew lead' },
-    { kind: 'persona-hub', description: 'crew lead', memberPaths: [] },
-  ])('rejects incomplete creation arguments in the schema %j', (params) => {
-    const schema = toolNamed(register(spyPorts()), 'pimote_create_folder').parameters;
-    expect(Value.Check(schema, { name: 'new-folder', parentPath: '/tmp', ...params })).toBe(false);
+  it('keeps per-kind requirements out of the exposed schema', () => {
+    const toolDefs = register(spyPorts());
+    const schema = toolNamed(toolDefs, 'pimote_create_folder').parameters;
+    const serialized = JSON.stringify(schema);
+
+    expect(schema).not.toHaveProperty('allOf');
+    expect(serialized).not.toMatch(/"(?:if|then|else)"\s*:/);
+    expect(schema.properties.kind.enum).toEqual(['code', 'persona', 'code-hub', 'persona-hub']);
+    expect(schema.properties.memberRepresentation.enum).toEqual(['symlink', 'worktree']);
+    expect(schema.properties.memberPaths).not.toHaveProperty('minItems');
+    expect(schema.properties.description).not.toHaveProperty('pattern');
+    expect(schema.required).toEqual(['kind', 'name', 'parentPath']);
+    expect(toolNamed(toolDefs, 'pimote_find_folders').parameters.properties.nature.enum).toEqual(['code', 'persona']);
+    expect(Value.Check(schema, { kind: 'persona', name: 'new-folder', parentPath: '/tmp' })).toBe(true);
+    expect(Value.Check(schema, { kind: 'code-hub', name: 'new-folder', parentPath: '/tmp' })).toBe(true);
   });
 
   it('rejects an unknown hub member representation in the schema', () => {
@@ -739,14 +776,18 @@ describe('pimote_create_folder', () => {
     const sandbox = await makeSandbox();
     try {
       const noMembers = await sandbox.run({ kind: 'code-hub', name: 'h', parentPath: sandbox.root });
+      const emptyMembers = await sandbox.run({ kind: 'code-hub', name: 'eh', parentPath: sandbox.root, memberPaths: [] });
       const noDescription = await sandbox.run({ kind: 'persona', name: 'p', parentPath: sandbox.root });
+      const blankDescription = await sandbox.run({ kind: 'persona', name: 'bp', parentPath: sandbox.root, description: ' \n\t ' });
       const noDescriptionHub = await sandbox.run({ kind: 'persona-hub', name: 'ph', parentPath: sandbox.root, memberPaths: ['/w/x'] });
 
-      for (const result of [noMembers, noDescription, noDescriptionHub]) {
+      for (const result of [noMembers, emptyMembers, noDescription, blankDescription, noDescriptionHub]) {
         expect(result.isError).toBe(true);
       }
       expect(noMembers.structuredContent.error).toContain('memberPaths is required');
+      expect(emptyMembers.structuredContent.error).toContain('memberPaths is required');
       expect(noDescription.structuredContent.error).toContain('description is required');
+      expect(blankDescription.structuredContent.error).toContain('description is required');
       expect(noDescriptionHub.structuredContent.error).toContain('description is required');
       expect(sandbox.ports.folders.createHub).not.toHaveBeenCalled();
       expect(sandbox.ports.creators.create).not.toHaveBeenCalled();

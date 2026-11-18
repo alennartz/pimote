@@ -1,7 +1,9 @@
 import type { ExtensionFactory, ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { realpath } from 'node:fs/promises';
 import { sep } from 'node:path';
-import { Type, type Static } from 'typebox';
+import { arr, bool, oneOf, opt, str, type Static } from '@earendil-works/pi-schema';
+import { Type } from 'typebox';
+import { toolObject } from '../tool-parameters.js';
 import { enrichActiveSessionCounts, isValidFolderName } from '../folder-registry.js';
 import { errorToolResult, jsonToolResult, type JsonToolResult } from '../tool-result.js';
 import { spillRows } from './spill.js';
@@ -282,11 +284,11 @@ async function listFolderRows(context: ManagerToolContext, signal?: AbortSignal)
   return (await context.folders.listLazy?.(signal)) ?? context.folders.list(signal);
 }
 
-const FindSessionsParametersSchema = Type.Object({
-  query: Type.Optional(Type.String({ description: 'Case-insensitive substring of session name or first message, default no text filter, with blank equivalent to omission.' })),
-  folderPath: Type.Optional(Type.String({ description: 'Canonical path of a known code or persona folder, default all known folders, with blank equivalent to omission.' })),
-  open: Type.Optional(Type.Boolean({ default: false, description: 'true keeps only sessions held by live slots, false applies no open-state filter, default false.' })),
-  includeArchived: Type.Optional(Type.Boolean({ default: false, description: 'Include archived sessions, default false.' })),
+const FindSessionsParametersSchema = toolObject({
+  query: opt(str({ description: 'Case-insensitive substring of session name or first message, default no text filter, with blank equivalent to omission.' })),
+  folderPath: opt(str({ description: 'Canonical path of a known code or persona folder, default all known folders, with blank equivalent to omission.' })),
+  open: opt(bool({ description: 'true keeps only sessions held by live slots, false applies no open-state filter, default false.' })),
+  includeArchived: opt(bool({ description: 'Include archived sessions, default false.' })),
 });
 
 export function createManagerExtension(context: ManagerToolContext): ExtensionFactory {
@@ -301,13 +303,11 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         'Returns folders with known identities, curation, git facts, hub membership, and live session counts. ' +
         'It keeps a model-facing prefix and adds spill for saved JSONL rows, or warning if saving fails. ' +
         'The serialized-row prefix targets 16KB but retains an oversized first row, while structuredContent always carries every row.',
-      parameters: Type.Object({
-        query: Type.Optional(
-          Type.String({ description: 'Case-insensitive substring of folder name, path, tags, or persona name, default no text filter, with blank equivalent to omission.' }),
-        ),
-        nature: Type.Optional(Type.Union([Type.Literal('code'), Type.Literal('persona')], { description: 'Base nature filter for all folder shapes, default code and persona.' })),
-        hub: Type.Optional(Type.Boolean({ description: 'true selects hubs, false excludes hubs, omission includes both.' })),
-        includeArchived: Type.Optional(Type.Boolean({ default: false, description: 'Include archived folders, default false.' })),
+      parameters: toolObject({
+        query: opt(str({ description: 'Case-insensitive substring of folder name, path, tags, or persona name, default no text filter, with blank equivalent to omission.' })),
+        nature: opt(oneOf(['code', 'persona'], { description: 'Base nature filter for all folder shapes, default code and persona.' })),
+        hub: opt(bool({ description: 'true selects hubs, false excludes hubs, omission includes both.' })),
+        includeArchived: opt(bool({ description: 'Include archived folders, default false.' })),
       }),
       annotations: { readOnlyHint: true },
       outputSchema: Type.Object({
@@ -461,9 +461,9 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
       description:
         'Creates a new session in a known folder, returning sessionId, folderPath, and firstMessageSent. ' +
         'firstMessageSent confirms a nonblank message dispatch was requested, not that the background run completed.',
-      parameters: Type.Object({
-        folderPath: Type.String({ description: 'Absolute canonical path of the known folder for the new session.' }),
-        firstMessage: Type.Optional(Type.String({ description: 'Initial user message dispatched in the background, omitted or blank for no dispatch.' })),
+      parameters: toolObject({
+        folderPath: str({ description: 'Absolute canonical path of the known folder for the new session.' }),
+        firstMessage: opt(str({ description: 'Initial user message dispatched in the background, omitted or blank for no dispatch.' })),
       }),
       outputSchema: Type.Object({
         sessionId: Type.String(),
@@ -490,8 +490,8 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
       description:
         'Reopens the original saved session and clears its archive flag when needed. ' +
         'Returns sessionId, folderPath when found, and outcome: resumed, already_open, or not_found, without creating a replacement.',
-      parameters: Type.Object({
-        sessionId: Type.String({ description: 'Existing session identifier to resume.' }),
+      parameters: toolObject({
+        sessionId: str({ description: 'Existing session identifier to resume.' }),
       }),
       outputSchema: SessionResumeOutcomeSchema,
       execute: async (_callId, params, _signal, _onUpdate): Promise<JsonToolResult> => {
@@ -508,13 +508,16 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
       description:
         'Archives saved records without deletion and closes any live runtimes and their observers. ' +
         'Returns results with sessionId and outcome for each request: archived, open_slot_evicted, or not_found.',
-      parameters: Type.Object({
-        sessionIds: Type.Array(Type.String(), { minItems: 1, description: 'One or more session identifiers to archive.' }),
+      parameters: toolObject({
+        sessionIds: arr(str(), { description: 'One or more session identifiers to archive.' }),
       }),
       outputSchema: Type.Object({
         results: Type.Array(SessionArchiveOutcomeSchema),
       }),
-      execute: async (_callId, params) => jsonToolResult({ results: await context.sessions.archiveSessions(params.sessionIds) }),
+      execute: async (_callId, params) => {
+        if (params.sessionIds.length === 0) return errorToolResult('sessionIds is required — pass one or more session identifiers to archive');
+        return jsonToolResult({ results: await context.sessions.archiveSessions(params.sessionIds) });
+      },
     });
 
     pi.registerTool({
@@ -527,47 +530,29 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         'Creates the selected folder kind, returning canonical folderPath, invalidating discovery, and broadcasting the change. ' +
         'It seeds AGENTS.md, initializes code folders and hubs with git, and adds memory.md for persona kinds. ' +
         'Hub kinds add members as symlinks or, with memberRepresentation "worktree", as nested detached worktrees, leaving member directories unchanged.',
-      parameters: Type.Object(
-        {
-          kind: Type.Union([Type.Literal('code'), Type.Literal('persona'), Type.Literal('code-hub'), Type.Literal('persona-hub')], {
-            description: 'Folder shape to create.',
+      parameters: toolObject({
+        kind: oneOf(['code', 'persona', 'code-hub', 'persona-hub'], { description: 'Folder shape to create.' }),
+        name: str({ description: 'New folder basename: one nonempty segment other than "." or "..", with no existing destination.' }),
+        parentPath: str({ description: 'Absolute path of an existing scan root or skipped folder within one, outside included folders and their descendants.' }),
+        memberPaths: opt(
+          arr(str(), {
+            description: 'Hub-only canonical paths of known code or persona folders, required and nonempty, with unique basenames and no containment with the hub.',
           }),
-          name: Type.String({ description: 'New folder basename: one nonempty segment other than "." or "..", with no existing destination.' }),
-          parentPath: Type.String({
-            description: 'Absolute path of an existing scan root or skipped folder within one, outside included folders and their descendants.',
+        ),
+        memberRepresentation: opt(
+          oneOf(['symlink', 'worktree'], {
+            description: 'Hub-only code-member layout: symlinks (default) or nested detached worktrees created at source HEAD. Persona members always use symlinks.',
           }),
-          memberPaths: Type.Optional(
-            Type.Array(Type.String(), {
-              description: 'Hub-only canonical paths of known code or persona folders, required and nonempty, with unique basenames and no containment with the hub.',
-            }),
-          ),
-          memberRepresentation: Type.Optional(
-            Type.Union([Type.Literal('symlink'), Type.Literal('worktree')], {
-              description: 'Hub-only code-member layout: symlinks (default) or nested detached worktrees created at source HEAD. Persona members always use symlinks.',
-            }),
-          ),
-          description: Type.Optional(Type.String({ description: 'Persona-only nonblank description written to AGENTS.md front matter, required for both persona kinds.' })),
-          prompt: Type.Optional(
-            Type.String({
-              description:
-                'Persona-only prompt, prepended to the shipped template for persona folders and used directly for persona hubs, with omission or blank adding no caller text.',
-            }),
-          ),
-          body: Type.Optional(Type.String({ description: 'Code-only AGENTS.md text, default empty, with a stub written even when omitted or blank.' })),
-        },
-        {
-          allOf: [
-            {
-              if: Type.Object({ kind: Type.Union([Type.Literal('persona'), Type.Literal('persona-hub')]) }),
-              then: Type.Object({ description: Type.String({ pattern: '\\S' }) }),
-            },
-            {
-              if: Type.Object({ kind: Type.Union([Type.Literal('code-hub'), Type.Literal('persona-hub')]) }),
-              then: Type.Object({ memberPaths: Type.Array(Type.String(), { minItems: 1 }) }),
-            },
-          ],
-        },
-      ),
+        ),
+        description: opt(str({ description: 'Persona-only nonblank description written to AGENTS.md front matter, required for both persona kinds.' })),
+        prompt: opt(
+          str({
+            description:
+              'Persona-only prompt, prepended to the shipped template for persona folders and used directly for persona hubs, with omission or blank adding no caller text.',
+          }),
+        ),
+        body: opt(str({ description: 'Code-only AGENTS.md text, default empty, with a stub written even when omitted or blank.' })),
+      }),
       outputSchema: FolderPathResultSchema,
       execute: async (_callId, params): Promise<JsonToolResult> => {
         const kind: CreateFolderKind = params.kind;
@@ -647,17 +632,13 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
       description:
         'Persists folder curation and broadcasts the change, returning folderPath without moving or deleting the directory. ' +
         'Tag removals follow additions, and patches without flags or nonempty tag arrays return an error.',
-      parameters: Type.Object({
-        folderPath: Type.String({ description: 'Canonical path of the known folder to curate.' }),
-        favorite: Type.Optional(Type.Boolean({ description: 'Favorite flag: true marks the folder, false clears the flag, and omission preserves its current value.' })),
-        archived: Type.Optional(
-          Type.Boolean({ description: 'Archive flag: true hides the folder from default listings, false restores it, and omission preserves its current value.' }),
-        ),
-        addTags: Type.Optional(
-          Type.Array(Type.String(), { description: 'User tags to add, trimmed with blanks ignored, default none, with an empty array leaving current tags unchanged.' }),
-        ),
-        removeTags: Type.Optional(
-          Type.Array(Type.String(), {
+      parameters: toolObject({
+        folderPath: str({ description: 'Canonical path of the known folder to curate.' }),
+        favorite: opt(bool({ description: 'Favorite flag: true marks the folder, false clears the flag, and omission preserves its current value.' })),
+        archived: opt(bool({ description: 'Archive flag: true hides the folder from default listings, false restores it, and omission preserves its current value.' })),
+        addTags: opt(arr(str(), { description: 'User tags to add, trimmed with blanks ignored, default none, with an empty array leaving current tags unchanged.' })),
+        removeTags: opt(
+          arr(str(), {
             description: 'Exact user tags to remove, not source or inherited tags, default none, with an empty array leaving current tags unchanged.',
           }),
         ),
@@ -692,16 +673,14 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         "Removes members before adding members, updating hub symlinks or nested worktrees per the hub's representation, managed AGENTS.md lines, and the hub's existing .gitignore without changing member directories. " +
         'Returns independent results with memberPath, action, outcome (added, removed, or error), and error text when present, broadcasting each successful change. ' +
         'A batch with no additions or removals returns an error.',
-      parameters: Type.Object({
-        hubPath: Type.String({ description: 'Canonical path of a known hub folder.' }),
-        add: Type.Optional(
-          Type.Array(Type.String(), {
+      parameters: toolObject({
+        hubPath: str({ description: 'Canonical path of a known hub folder.' }),
+        add: opt(
+          arr(str(), {
             description: 'Canonical paths of known folders to add, with no hub containment or basename collisions, default none, with empty arrays adding nothing.',
           }),
         ),
-        remove: Type.Optional(
-          Type.Array(Type.String(), { description: 'Canonical member paths to remove, including missing targets, default none, with an empty array removing nothing.' }),
-        ),
+        remove: opt(arr(str(), { description: 'Canonical member paths to remove, including missing targets, default none, with an empty array removing nothing.' })),
       }),
       outputSchema: Type.Object({ results: Type.Array(MemberOutcomeSchema) }),
       execute: async (_callId, params): Promise<JsonToolResult> => {
@@ -740,8 +719,8 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         'Disbands a worktree hub: removes its nested detached worktrees through Git and deletes the hub directory, without merging, committing, stashing, or deleting branches. ' +
         'Symlink hubs reject. The registry refuses hubs with active sessions or external pi processes, dirty checkouts, or detached HEAD commits unreachable from a branch ref, ' +
         'keeping the hub on disk for a retry. Returns removedWorktreePaths.',
-      parameters: Type.Object({
-        hubPath: Type.String({ description: 'Canonical path of a known worktree hub folder.' }),
+      parameters: toolObject({
+        hubPath: str({ description: 'Canonical path of a known worktree hub folder.' }),
       }),
       outputSchema: Type.Object({
         removedWorktreePaths: Type.Array(Type.String(), { description: 'Nested checkout paths removed through Git before the hub directory was deleted.' }),

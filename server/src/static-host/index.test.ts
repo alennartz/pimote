@@ -7,7 +7,6 @@ import { InMemoryStaticHostRegistry } from './registry.js';
 import { FileStaticHostStore } from './store.js';
 import type { StaticHostStore } from './store.js';
 import { createStaticHostExtension } from './index.js';
-import { validateSlug } from './tools.js';
 import type { Card } from '../../../shared/dist/index.js';
 
 // --- Fake ExtensionAPI ----------------------------------------------------
@@ -187,6 +186,7 @@ describe('createStaticHostExtension', () => {
     expect(tool.description).toMatch(/source files intact/);
     expect(tool.description).toMatch(/false for unknown slugs.*another session/);
     expect(tool.parameters.properties.slug.description).toMatch(/Resolved slug returned by pimote_static_host/);
+    expect(tool.parameters.additionalProperties).toBe(false);
     expect(Value.Check(tool.parameters, { slug: `${'a'.repeat(64)}-2` })).toBe(true);
     expect(tool.promptGuidelines).toEqual([]);
   });
@@ -195,22 +195,21 @@ describe('createStaticHostExtension', () => {
     const tool = pi.toolDefs.find((t) => t.name === 'pimote_static_host')!;
     expect(tool.parameters.properties.tag.description).toMatch(/no tag displayed when omitted or empty/);
     expect(tool.parameters.properties.color.description).toMatch(/Omit for an ordinary border/);
+    expect(tool.parameters.additionalProperties).toBe(false);
+    expect(tool.parameters.properties.color.enum).toEqual(['accent', 'active', 'success', 'warning', 'error', 'muted']);
     expect(Value.Check(tool.parameters, { slug: 'report', folder: '/bundle', title: 'Report' })).toBe(true);
     expect(Value.Check(tool.parameters, { slug: 'report', folder: '/bundle', title: 'Report', tag: '' })).toBe(true);
     expect(Value.Check(tool.parameters, { slug: 'report', folder: '/bundle', title: 'Report', color: 'active' })).toBe(true);
+    expect(Value.Check(tool.parameters, { slug: 'report', folder: '/bundle', title: 'Report', color: 'violet' })).toBe(false);
   });
 
-  it('declares slug validation that matches the runtime grammar and length limits', () => {
+  it('describes slug limits and keeps input validation in the runtime', () => {
     const tool = pi.toolDefs.find((t) => t.name === 'pimote_static_host')!;
-    expect(tool.parameters.properties.slug).toMatchObject({
-      description: expect.stringContaining('1–64 characters'),
-      pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$',
-      minLength: 1,
-      maxLength: 64,
-    });
-    for (const slug of ['a', 'demo-1', 'abc-def-2', 'a'.repeat(64), '', '-demo', 'demo-', 'demo--1', 'UPPER', 'has space', 'a'.repeat(65)]) {
-      expect(Value.Check(tool.parameters, { slug, folder: '/bundle', title: 'Report' }), slug).toBe(validateSlug(slug) !== null);
-    }
+    expect(tool.parameters.additionalProperties).toBe(false);
+    expect(tool.parameters.properties.slug).toMatchObject({ type: 'string', description: expect.stringContaining('1–64 characters') });
+    expect(tool.parameters.properties.slug).not.toHaveProperty('pattern');
+    expect(tool.parameters.properties.slug).not.toHaveProperty('minLength');
+    expect(tool.parameters.properties.slug).not.toHaveProperty('maxLength');
   });
 
   it('on session_start, replays persisted entries into the registry and emits panel cards', async () => {

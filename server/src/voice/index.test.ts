@@ -186,6 +186,7 @@ describe('speak tool contract', () => {
     expect(tool.promptGuidelines ?? []).toEqual([]);
     expect(tool.description).toContain('call-state acceptance, not confirmed playback');
     expect(tool.description).toContain('top-level assistant streaming');
+    expect(tool.parameters.additionalProperties).toBe(false);
   });
 
   it('adds speak only while a call is active', async () => {

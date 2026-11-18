@@ -1,8 +1,9 @@
 import type { ExtensionAPI, ExtensionContext, ExtensionFactory } from '@earendil-works/pi-coding-agent';
-import { Type } from 'typebox';
+import { str } from '@earendil-works/pi-schema';
 import type { DownloadManager, DownloadUpdateEvent } from './manager.js';
 import { executeCancelFileSendTool, executeSendFileTool, CancelFileSendToolOutputSchema, SendFileToolOutputSchema, type FileDownloadToolContext } from './tools.js';
 import { jsonToolResult } from '../tool-result.js';
+import { toolObject } from '../tool-parameters.js';
 import {
   FILE_DOWNLOAD_TOOL_DESCRIPTION,
   FILE_DOWNLOAD_TOOL_GUIDELINES,
@@ -42,8 +43,8 @@ export function createFileDownloadExtension(options: CreateFileDownloadExtension
       promptSnippet: FILE_DOWNLOAD_TOOL_SNIPPET,
       promptGuidelines: FILE_DOWNLOAD_TOOL_GUIDELINES,
       exposure: 'direct',
-      parameters: Type.Object({
-        path: Type.String({ description: 'Regular-file path, absolute or relative to the current working directory.' }),
+      parameters: toolObject({
+        path: str({ description: 'Regular-file path, absolute or relative to the current working directory.' }),
       }),
       outputSchema: SendFileToolOutputSchema,
       execute: async (_callId, input, _signal, _onUpdate, ctx) => {
@@ -59,8 +60,8 @@ export function createFileDownloadExtension(options: CreateFileDownloadExtension
       promptSnippet: CANCEL_FILE_SEND_TOOL_SNIPPET,
       promptGuidelines: [],
       exposure: 'direct',
-      parameters: Type.Object({
-        id: Type.String({ description: 'Opaque offer id returned by pimote_send_file.' }),
+      parameters: toolObject({
+        id: str({ description: 'Opaque offer id returned by pimote_send_file.' }),
       }),
       annotations: { idempotentHint: true },
       outputSchema: CancelFileSendToolOutputSchema,

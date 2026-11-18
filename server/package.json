@@ -12,6 +12,7 @@
   "dependencies": {
     "@earendil-works/pi-agent-core": "1.5.2",
     "@earendil-works/pi-coding-agent": "1.5.2",
+    "@earendil-works/pi-schema": "^1.5.2",
     "@pimote/sdk": "*",
     "@streamparser/json": "^0.0.22",
     "jiti": "^2.7.0",

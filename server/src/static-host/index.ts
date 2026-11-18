@@ -1,7 +1,8 @@
 import type { ExtensionFactory, ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
-import { Type } from 'typebox';
+import { oneOf, opt, str } from '@earendil-works/pi-schema';
 import type { Card } from '../../../shared/dist/index.js';
 import { jsonToolResult } from '../tool-result.js';
+import { toolObject } from '../tool-parameters.js';
 import type { StaticHostRegistry } from './registry.js';
 import type { StaticHostStore } from './store.js';
 import { executeRegisterTool, executeRemoveTool, resolveSlugCollision, withStaticHostMutation, RegisterToolOutputSchema, RemoveToolOutputSchema, type ToolDeps } from './tools.js';
@@ -96,18 +97,13 @@ export function createStaticHostExtension(opts: CreateStaticHostExtensionOptions
       promptGuidelines: STATIC_HOST_TOOL_GUIDELINES,
       exposure: 'direct',
       annotations: { idempotentHint: true },
-      parameters: Type.Object({
-        slug: Type.String({
-          description: 'Requested URL identifier of 1–64 characters, using lowercase letters, digits, and single separating hyphens.',
-          pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$',
-          minLength: 1,
-          maxLength: 64,
-        }),
-        folder: Type.String({ description: 'Absolute path to a bundle directory containing index.html.' }),
-        title: Type.String({ description: 'Title displayed on the panel card.' }),
-        tag: Type.Optional(Type.String({ description: 'Short tag beside the title, with no tag displayed when omitted or empty.' })),
-        color: Type.Optional(
-          Type.Union([Type.Literal('accent'), Type.Literal('active'), Type.Literal('success'), Type.Literal('warning'), Type.Literal('error'), Type.Literal('muted')], {
+      parameters: toolObject({
+        slug: str({ description: 'Requested URL identifier of 1–64 characters, using lowercase letters, digits, and single separating hyphens.' }),
+        folder: str({ description: 'Absolute path to a bundle directory containing index.html.' }),
+        title: str({ description: 'Title displayed on the panel card.' }),
+        tag: opt(str({ description: 'Short tag beside the title, with no tag displayed when omitted or empty.' })),
+        color: opt(
+          oneOf(['accent', 'active', 'success', 'warning', 'error', 'muted'], {
             description:
               'Semantic card accent: active while work is in flight, success when settled without an error, warning for caution, error for failure, muted for low priority, or accent for general emphasis. Omit for an ordinary border.',
           }),
@@ -128,8 +124,8 @@ export function createStaticHostExtension(opts: CreateStaticHostExtensionOptions
       promptSnippet: STATIC_HOST_REMOVE_TOOL_SNIPPET,
       promptGuidelines: [],
       exposure: 'direct',
-      parameters: Type.Object({
-        slug: Type.String({ description: 'Resolved slug returned by pimote_static_host.' }),
+      parameters: toolObject({
+        slug: str({ description: 'Resolved slug returned by pimote_static_host.' }),
       }),
       annotations: { destructiveHint: true },
       outputSchema: RemoveToolOutputSchema,

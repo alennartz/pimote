@@ -63,6 +63,7 @@ describe('createFileDownloadExtension', () => {
     const factory = createFileDownloadExtension({ manager });
     await factory(pi.api);
     expect(pi.toolDefs.map((tool) => tool.name).sort()).toEqual(['pimote_cancel_file_send', 'pimote_send_file']);
+    for (const tool of pi.toolDefs) expect(tool.parameters.additionalProperties).toBe(false);
   });
 
   it('exposes both tools directly with concise planner snippets and caller descriptions', async () => {
