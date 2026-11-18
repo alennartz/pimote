@@ -82,6 +82,29 @@ function blockKind(b: BlockState): string {
   return b.kind;
 }
 
+// ---- Interpreter model ref parsing ----------------------------------------
+
+const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+export type InterpreterModelRef = { modelId: string; thinkingLevel?: (typeof THINKING_LEVELS)[number] };
+
+/** Split a trailing `:level` off a model ref when the segment names a
+ *  thinking level, mirroring the `provider/model:level` form pi's tier
+ *  files and the my-pi subagent model field accept. Refs whose trailing
+ *  colon segment is not a level — including ids that legitimately contain
+ *  colons — keep their full form.
+ *
+ *  The provider segment has already been split off by the caller; the
+ *  input here is everything after the first `/`.
+ */
+export function splitThinkingLevelSuffix(modelRef: string): InterpreterModelRef {
+  const at = modelRef.lastIndexOf(':');
+  if (at === -1 || at === modelRef.length - 1) return { modelId: modelRef };
+  const candidate = modelRef.slice(at + 1);
+  if (!(THINKING_LEVELS as readonly string[]).includes(candidate)) return { modelId: modelRef };
+  return { modelId: modelRef.slice(0, at), thinkingLevel: candidate as (typeof THINKING_LEVELS)[number] };
+}
+
 // ---- Re-exports kept for back-compat with callers/tests -------------------
 
 export { walkBack, isAbortedEmptyAssistant } from './walk-back.js';
@@ -198,7 +221,11 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
             return;
           }
           const provider = action.modelSlug.slice(0, separator);
-          const modelId = action.modelSlug.slice(separator + 1);
+          const { modelId, thinkingLevel } = splitThinkingLevelSuffix(action.modelSlug.slice(separator + 1));
+          if (modelId.length === 0) {
+            console.warn(`[voice] set_interpreter_model: malformed model ${action.modelSlug}`);
+            return;
+          }
           const model = lastCtx.modelRegistry.find(provider, modelId);
           if (!model) {
             console.warn(`[voice] set_interpreter_model: no model ${action.modelSlug}`);
@@ -209,6 +236,7 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
             console.warn(`[voice] set_interpreter_model: pi.setModel returned false for ${action.modelSlug}`);
             return;
           }
+          if (thinkingLevel) pi.setThinkingLevel(thinkingLevel);
           await dispatch({ type: 'interpreter_model_applied' });
           return;
         }

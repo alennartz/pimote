@@ -16,23 +16,23 @@ The file is `$XDG_CONFIG_HOME/pimote/config.json`, which defaults to `~/.config/
 }
 ```
 
-| Field                                                 | Type                            | Default                          | Effect                                                           |
-| ----------------------------------------------------- | ------------------------------- | -------------------------------- | ---------------------------------------------------------------- |
-| `roots`                                               | string[]                        | required                         | Scan roots for folder discovery.                                 |
-| `managerRoot`                                         | string                          | `$XDG_STATE_HOME/pimote/manager` | Working directory of the manager session. A leading `~` expands. |
-| `port`                                                | number                          | `3000`                           | HTTP listen port.                                                |
-| `appName`                                             | string                          | `Pimote`                         | Display name for the tab title and the installed PWA.            |
-| `idleTimeout`                                         | number                          | `1800000`                        | Milliseconds before the reaper closes an idle session.           |
-| `bufferSize`                                          | number                          | `1000`                           | Events retained per session replay buffer.                       |
-| `defaultProvider`, `defaultModel`                     | string                          | automatic                        | Model for each new session.                                      |
-| `defaultThinkingLevel`                                | string                          | automatic                        | Thinking level for each new session.                             |
-| `defaultInterpreterModel`                             | string or `{provider, modelId}` | automatic                        | Voice interpreter model.                                         |
-| `defaultWorkerModel`                                  | string or `{provider, modelId}` | automatic                        | Voice worker model.                                              |
-| `voice.speechmuxSignalUrl`, `voice.speechmuxLlmWsUrl` | string                          | none                             | Voice signalling and interpreter endpoints.                      |
-| `settingsFiles`                                       | string[]                        | none                             | Extra files in the global Settings catalog.                      |
-| `tagSnippets`                                         | string[]                        | none                             | Wrap-tag palette in the `AGENTS.md` editor.                      |
-| `updateCheck`                                         | boolean                         | `true`                           | Check npm for newer releases.                                    |
-| `vapidPublicKey`, `vapidPrivateKey`, `vapidEmail`     | string                          | generated at first boot          | Web push credentials.                                            |
+| Field                                                 | Type                            | Default                          | Effect                                                                     |
+| ----------------------------------------------------- | ------------------------------- | -------------------------------- | -------------------------------------------------------------------------- |
+| `roots`                                               | string[]                        | required                         | Scan roots for folder discovery.                                           |
+| `managerRoot`                                         | string                          | `$XDG_STATE_HOME/pimote/manager` | Working directory of the manager session. A leading `~` expands.           |
+| `port`                                                | number                          | `3000`                           | HTTP listen port.                                                          |
+| `appName`                                             | string                          | `Pimote`                         | Display name for the tab title and the installed PWA.                      |
+| `idleTimeout`                                         | number                          | `1800000`                        | Milliseconds before the reaper closes an idle session.                     |
+| `bufferSize`                                          | number                          | `1000`                           | Events retained per session replay buffer.                                 |
+| `defaultProvider`, `defaultModel`                     | string                          | automatic                        | Model for each new session.                                                |
+| `defaultThinkingLevel`                                | string                          | automatic                        | Thinking level for each new session.                                       |
+| `defaultInterpreterModel`                             | string or `{provider, modelId}` | automatic                        | Voice interpreter model; the slug form accepts a `:level` thinking suffix. |
+| `defaultWorkerModel`                                  | string or `{provider, modelId}` | automatic                        | Voice worker model; the slug form accepts a `:level` thinking suffix.      |
+| `voice.speechmuxSignalUrl`, `voice.speechmuxLlmWsUrl` | string                          | none                             | Voice signalling and interpreter endpoints.                                |
+| `settingsFiles`                                       | string[]                        | none                             | Extra files in the global Settings catalog.                                |
+| `tagSnippets`                                         | string[]                        | none                             | Wrap-tag palette in the `AGENTS.md` editor.                                |
+| `updateCheck`                                         | boolean                         | `true`                           | Check npm for newer releases.                                              |
+| `vapidPublicKey`, `vapidPrivateKey`, `vapidEmail`     | string                          | generated at first boot          | Web push credentials.                                                      |
 
 `folderSourcesDir` is a legacy field. The extension host ignores it.
 

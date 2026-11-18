@@ -103,6 +103,7 @@ function harness(options: { defaultInterpreterModel?: string } = {}) {
       activeTools.splice(0, activeTools.length, ...toolNames);
     }),
     setModel: vi.fn(async () => true),
+    setThinkingLevel: vi.fn(),
     sendMessage: vi.fn(),
     appendEntry: vi.fn(),
     sendUserMessage: (text: string, options?: { deliverAs?: 'steer' | 'followUp' }) => {
@@ -306,8 +307,45 @@ describe('interpreter model lifecycle', () => {
     h.deactivate();
   });
 
+  it('splits a thinking-level suffix off the model ref and applies it after the model', async () => {
+    const h = harness({ defaultInterpreterModel: 'test/voice:low' });
+    await h.sessionStart('new');
+    await h.activate(false);
+    expect(h.modelFind).toHaveBeenCalledWith('test', 'voice');
+    expect(h.pi.setModel).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(h.pi.setThinkingLevel).mock.invocationCallOrder[0]).toBeGreaterThan(vi.mocked(h.pi.setModel).mock.invocationCallOrder[0]);
+    expect(h.pi.setThinkingLevel).toHaveBeenCalledWith('low');
+    h.deactivate();
+  });
+
+  it('keeps refs whose colon segment is not a thinking level intact', async () => {
+    const h = harness({ defaultInterpreterModel: 'test/voice:weird' });
+    await h.sessionStart('new');
+    await h.activate(false);
+    expect(h.modelFind).toHaveBeenCalledWith('test', 'voice:weird');
+    expect(h.pi.setModel).toHaveBeenCalledTimes(1);
+    expect(h.pi.setThinkingLevel).not.toHaveBeenCalled();
+    h.deactivate();
+  });
+
+  it('does not set a thinking level when the ref carries no suffix', async () => {
+    const h = harness();
+    await h.sessionStart('new');
+    await h.activate(false);
+    expect(h.pi.setThinkingLevel).not.toHaveBeenCalled();
+    h.deactivate();
+  });
+
+  it('does not set a thinking level when the model application fails', async () => {
+    const h = harness({ defaultInterpreterModel: 'test/voice:low' });
+    vi.mocked(h.pi.setModel).mockResolvedValueOnce(false);
+    await h.activate();
+    expect(h.pi.setThinkingLevel).not.toHaveBeenCalled();
+    h.deactivate();
+  });
+
   it('rejects model refs with an empty provider or model id', async () => {
-    for (const modelRef of ['test/', '/voice']) {
+    for (const modelRef of ['test/', '/voice', 'test/:low']) {
       const h = harness({ defaultInterpreterModel: modelRef });
       await h.sessionStart('new');
       await h.activate(false);
