@@ -56,30 +56,24 @@ describe('loadConfig — voice model references', () => {
     });
   });
 
-  it('supports mixed string and object references while preserving provider defaults', async () => {
+  it('supports mixed string and object references', async () => {
     fs.readFile.mockResolvedValue(
       configJson({
-        defaultProvider: 'openai',
-        defaultModel: 'gpt-4o',
         defaultInterpreterModel: { provider: 'anthropic', modelId: 'claude-sonnet-4-5' },
         defaultWorkerModel: 'custom/worker',
       }),
     );
 
     await expect(loadConfig()).resolves.toMatchObject({
-      defaultProvider: 'openai',
-      defaultModel: 'gpt-4o',
       defaultInterpreterModel: 'anthropic/claude-sonnet-4-5',
       defaultWorkerModel: 'custom/worker',
     });
   });
 
   it('leaves missing references undefined', async () => {
-    fs.readFile.mockResolvedValue(configJson({ defaultProvider: 'openai', defaultModel: 'gpt-4o' }));
+    fs.readFile.mockResolvedValue(configJson({}));
 
     await expect(loadConfig()).resolves.toMatchObject({
-      defaultProvider: 'openai',
-      defaultModel: 'gpt-4o',
       defaultInterpreterModel: undefined,
       defaultWorkerModel: undefined,
     });

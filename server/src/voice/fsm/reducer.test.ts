@@ -70,6 +70,20 @@ describe('voice FSM — interpreter model success owns applied state', () => {
     });
     expect(rebound.actions.some((action) => action.kind === 'set_interpreter_model')).toBe(false);
   });
+
+  it('skips the interpreter model override when no ref is configured', () => {
+    const { next, actions } = reduce(
+      initialState(),
+      {
+        type: 'eb:activate',
+        msg: { type: 'pimote:voice:activate', sessionId: 'sess-1', speechmuxWsUrl: 'ws://x' },
+      },
+      { config: { defaultInterpreterModel: '' } },
+    );
+    expect(actions.some((action) => action.kind === 'set_interpreter_model')).toBe(false);
+    expect(actions.some((action) => action.kind === 'send_user_message')).toBe(true);
+    expect(next.lifecycle.kind).toBe('activating');
+  });
 });
 
 describe('voice FSM — turn_end/agent_end routed through the buffer (M2)', () => {

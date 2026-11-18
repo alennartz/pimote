@@ -344,6 +344,16 @@ describe('interpreter model lifecycle', () => {
     h.deactivate();
   });
 
+  it('leaves the session model untouched when no interpreter model is configured', async () => {
+    const h = harness({ defaultInterpreterModel: '' });
+    await h.sessionStart('new');
+    await h.activate(false);
+    expect(h.modelFind).not.toHaveBeenCalled();
+    expect(h.pi.setModel).not.toHaveBeenCalled();
+    expect(h.pi.setThinkingLevel).not.toHaveBeenCalled();
+    h.deactivate();
+  });
+
   it('rejects model refs with an empty provider or model id', async () => {
     for (const modelRef of ['test/', '/voice', 'test/:low']) {
       const h = harness({ defaultInterpreterModel: modelRef });

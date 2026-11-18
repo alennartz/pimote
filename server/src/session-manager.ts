@@ -824,27 +824,22 @@ export class PimoteSessionManager {
 
   /**
    * Build the voice extension factory for this server's config, if possible.
-   * Returns undefined when voice is not configured (no speechmux URLs) or
-   * when neither voice-specific model refs nor fallback defaultProvider/
-   * defaultModel are configured. Non-voice deployments continue to work
-   * unchanged — sessions simply don't load `@pimote/voice` at all.
+   * Returns undefined when voice is not configured (no speechmux URLs).
+   * Model refs are optional: an empty interpreter ref leaves the session
+   * model to pi, and an empty worker ref lets spawned workers inherit the
+   * interpreter's model. Non-voice deployments continue to work unchanged —
+   * sessions simply don't load `@pimote/voice` at all.
    */
   private buildVoiceExtensionFactory(getSession: () => AgentSession): ExtensionFactory | undefined {
-    const config = this.currentConfig();
-    // Voice transport is startup-only. Model defaults are read for each new
+    // Voice transport is startup-only. Model refs are read for each new
     // voice extension so a native-config reload affects future consumers.
     if (!this.config.voice?.speechmuxSignalUrl || !this.config.voice?.speechmuxLlmWsUrl) {
       return undefined;
     }
-    const interpreter = config.defaultInterpreterModel ?? (config.defaultProvider && config.defaultModel ? `${config.defaultProvider}/${config.defaultModel}` : undefined);
-    const worker = config.defaultWorkerModel ?? (config.defaultProvider && config.defaultModel ? `${config.defaultProvider}/${config.defaultModel}` : undefined);
-    if (!interpreter || !worker) {
-      console.warn('[pimote] voice extension disabled: no defaultInterpreterModel/defaultWorkerModel or fallback defaultProvider/defaultModel in config');
-      return undefined;
-    }
+    const config = this.currentConfig();
     return createVoiceExtension({
-      defaultInterpreterModel: interpreter,
-      defaultWorkerModel: worker,
+      defaultInterpreterModel: config.defaultInterpreterModel ?? '',
+      defaultWorkerModel: config.defaultWorkerModel ?? '',
       getSession,
     });
   }
@@ -1177,27 +1172,6 @@ export class PimoteSessionManager {
     // Diagnostics: log model runtime state after factory has loaded extensions
     const availableModels = await this.modelRuntime.getAvailable();
     console.log(`[pimote] openSession: ${availableModels.length} models available, session model: ${session.model ? `${session.model.provider}/${session.model.id}` : 'none'}`);
-
-    // Apply default model from config (only for new sessions without an existing model preference)
-    const currentConfig = this.currentConfig();
-    // Apply defaults only to newly-created sessions. Existing sessions retain
-    // their persisted model and thinking settings.
-    if (!sessionFilePath && currentConfig.defaultProvider && currentConfig.defaultModel) {
-      const models = await this.modelRuntime.getAvailable();
-      const defaultModel = models.find((m) => m.provider === currentConfig.defaultProvider && m.id === currentConfig.defaultModel);
-      if (defaultModel) {
-        await session.setModel(defaultModel);
-        console.log(`[pimote] Set default model: ${defaultModel.provider}/${defaultModel.id}`);
-      } else {
-        console.warn(`[pimote] Default model not found: ${currentConfig.defaultProvider}/${currentConfig.defaultModel}`);
-      }
-    }
-
-    // Apply default thinking level from config
-    if (!sessionFilePath && currentConfig.defaultThinkingLevel) {
-      session.setThinkingLevel(currentConfig.defaultThinkingLevel as AgentSession['thinkingLevel']);
-      console.log(`[pimote] Set default thinking level: ${currentConfig.defaultThinkingLevel}`);
-    }
 
     // Pimote convention: drain the entire steering / follow-up queue into a
     // single consolidated run rather than one message per run. Matches the

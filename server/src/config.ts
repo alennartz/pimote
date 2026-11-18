@@ -34,12 +34,9 @@ export interface PimoteConfig {
   port: number;
   /** Display name for the web app and installed PWA (tab title, manifest, app name). Default "Pimote". */
   appName?: string;
-  defaultProvider?: string;
-  defaultModel?: string;
-  defaultThinkingLevel?: string;
-  /** Voice interpreter model. Falls back to defaultProvider/defaultModel if absent. */
+  /** Voice interpreter model ref (`provider/model[:level]`). Empty or unset leaves the session model to pi. */
   defaultInterpreterModel?: string;
-  /** Voice worker model for `my-pi` subagent spawns. */
+  /** Voice worker model ref. Empty or unset lets spawned workers inherit the interpreter's model. */
   defaultWorkerModel?: string;
   /** Voice subsystem config. */
   voice?: VoiceConfig;
@@ -144,9 +141,6 @@ function parseConfigObject(obj: Record<string, unknown>, configPath: string, hom
     bufferSize: typeof obj.bufferSize === 'number' ? obj.bufferSize : DEFAULTS.bufferSize,
     port: typeof obj.port === 'number' ? obj.port : DEFAULTS.port,
     appName: typeof obj.appName === 'string' ? obj.appName : undefined,
-    defaultProvider: typeof obj.defaultProvider === 'string' ? obj.defaultProvider : undefined,
-    defaultModel: typeof obj.defaultModel === 'string' ? obj.defaultModel : undefined,
-    defaultThinkingLevel: typeof obj.defaultThinkingLevel === 'string' ? obj.defaultThinkingLevel : undefined,
     defaultInterpreterModel: normalizeModelRef(obj.defaultInterpreterModel),
     defaultWorkerModel: normalizeModelRef(obj.defaultWorkerModel),
     voice: parseVoiceConfig(obj.voice),

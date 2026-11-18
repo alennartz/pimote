@@ -156,14 +156,12 @@ async function main() {
   await mkdir(agentDir, { recursive: true });
   await gitInit(projectDir, 'main');
 
-  let modelAvailable;
   try {
     const { readFile } = await import('node:fs/promises');
     const models = JSON.parse(await readFile(join(REAL_AGENT_DIR, 'models.json'), 'utf8'));
-    modelAvailable = Boolean(models.providers?.jetson?.models?.length);
-    if (modelAvailable) await copyFile(join(REAL_AGENT_DIR, 'models.json'), join(agentDir, 'models.json'));
+    if (models.providers?.jetson?.models?.length) await copyFile(join(REAL_AGENT_DIR, 'models.json'), join(agentDir, 'models.json'));
   } catch {
-    modelAvailable = false;
+    // No host model catalog; sessions fall back to pi's built-in defaults.
   }
 
   const sessionsRoot = join(agentDir, 'sessions');
@@ -178,7 +176,7 @@ async function main() {
   await writeFile(
     configPath,
     JSON.stringify(
-      { roots: [projectDir], port, bufferSize: 100, updateCheck: false, ...(modelAvailable ? { defaultProvider: 'jetson', defaultModel: 'qwen3.8-27b' } : {}) },
+      { roots: [projectDir], port, bufferSize: 100, updateCheck: false },
       null,
       2,
     ),

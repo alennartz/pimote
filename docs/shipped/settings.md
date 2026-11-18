@@ -16,23 +16,21 @@ The file is `$XDG_CONFIG_HOME/pimote/config.json`, which defaults to `~/.config/
 }
 ```
 
-| Field                                                 | Type                            | Default                          | Effect                                                                     |
-| ----------------------------------------------------- | ------------------------------- | -------------------------------- | -------------------------------------------------------------------------- |
-| `roots`                                               | string[]                        | required                         | Scan roots for folder discovery.                                           |
-| `managerRoot`                                         | string                          | `$XDG_STATE_HOME/pimote/manager` | Working directory of the manager session. A leading `~` expands.           |
-| `port`                                                | number                          | `3000`                           | HTTP listen port.                                                          |
-| `appName`                                             | string                          | `Pimote`                         | Display name for the tab title and the installed PWA.                      |
-| `idleTimeout`                                         | number                          | `1800000`                        | Milliseconds before the reaper closes an idle session.                     |
-| `bufferSize`                                          | number                          | `1000`                           | Events retained per session replay buffer.                                 |
-| `defaultProvider`, `defaultModel`                     | string                          | automatic                        | Model for each new session.                                                |
-| `defaultThinkingLevel`                                | string                          | automatic                        | Thinking level for each new session.                                       |
-| `defaultInterpreterModel`                             | string or `{provider, modelId}` | automatic                        | Voice interpreter model; the slug form accepts a `:level` thinking suffix. |
-| `defaultWorkerModel`                                  | string or `{provider, modelId}` | automatic                        | Voice worker model; the slug form accepts a `:level` thinking suffix.      |
-| `voice.speechmuxSignalUrl`, `voice.speechmuxLlmWsUrl` | string                          | none                             | Voice signalling and interpreter endpoints.                                |
-| `settingsFiles`                                       | string[]                        | none                             | Extra files in the global Settings catalog.                                |
-| `tagSnippets`                                         | string[]                        | none                             | Wrap-tag palette in the `AGENTS.md` editor.                                |
-| `updateCheck`                                         | boolean                         | `true`                           | Check npm for newer releases.                                              |
-| `vapidPublicKey`, `vapidPrivateKey`, `vapidEmail`     | string                          | generated at first boot          | Web push credentials.                                                      |
+| Field                                                 | Type                            | Default                          | Effect                                                                                                                       |
+| ----------------------------------------------------- | ------------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `roots`                                               | string[]                        | required                         | Scan roots for folder discovery.                                                                                             |
+| `managerRoot`                                         | string                          | `$XDG_STATE_HOME/pimote/manager` | Working directory of the manager session. A leading `~` expands.                                                             |
+| `port`                                                | number                          | `3000`                           | HTTP listen port.                                                                                                            |
+| `appName`                                             | string                          | `Pimote`                         | Display name for the tab title and the installed PWA.                                                                        |
+| `idleTimeout`                                         | number                          | `1800000`                        | Milliseconds before the reaper closes an idle session.                                                                       |
+| `bufferSize`                                          | number                          | `1000`                           | Events retained per session replay buffer.                                                                                   |
+| `defaultInterpreterModel`                             | string or `{provider, modelId}` | automatic                        | Voice interpreter model; the slug form accepts a `:level` thinking suffix. Empty or unset leaves the session model to pi.    |
+| `defaultWorkerModel`                                  | string or `{provider, modelId}` | automatic                        | Voice worker model; the slug form accepts a `:level` thinking suffix. Empty or unset lets workers inherit the session model. |
+| `voice.speechmuxSignalUrl`, `voice.speechmuxLlmWsUrl` | string                          | none                             | Voice signalling and interpreter endpoints.                                                                                  |
+| `settingsFiles`                                       | string[]                        | none                             | Extra files in the global Settings catalog.                                                                                  |
+| `tagSnippets`                                         | string[]                        | none                             | Wrap-tag palette in the `AGENTS.md` editor.                                                                                  |
+| `updateCheck`                                         | boolean                         | `true`                           | Check npm for newer releases.                                                                                                |
+| `vapidPublicKey`, `vapidPrivateKey`, `vapidEmail`     | string                          | generated at first boot          | Web push credentials.                                                                                                        |
 
 `folderSourcesDir` is a legacy field. The extension host ignores it.
 
@@ -55,7 +53,6 @@ A field with the wrong type falls back to its default. Only the cases above fail
 | Field                                                                         | Applies                                                    |
 | ----------------------------------------------------------------------------- | ---------------------------------------------------------- |
 | `settingsFiles`, `tagSnippets`                                                | At once.                                                   |
-| `defaultProvider`, `defaultModel`, `defaultThinkingLevel`                     | To the next new session.                                   |
 | `defaultInterpreterModel`, `defaultWorkerModel`                               | To the next voice extension build.                         |
 | `idleTimeout`                                                                 | At the next reaper check.                                  |
 | `bufferSize`                                                                  | To new session buffers, including reset and fork rebuilds. |

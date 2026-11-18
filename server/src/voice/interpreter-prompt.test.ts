@@ -5,8 +5,14 @@ describe('renderInterpreterPrompt', () => {
   it('substitutes the configured worker model without changing the raw template', () => {
     const prompt = renderInterpreterPrompt({ workerModel: 'test/worker' });
     expect(prompt).toContain('model: "test/worker"');
-    expect(prompt).not.toContain('{{workerModel}}');
-    expect(RAW_INTERPRETER_PROMPT).toContain('{{workerModel}}');
+    expect(RAW_INTERPRETER_PROMPT).toContain('{{workerSpawnModelRule}}');
+  });
+
+  it('omits the model pin when no worker model is configured so spawns inherit the session model', () => {
+    const prompt = renderInterpreterPrompt({ workerModel: '' });
+    expect(prompt).toContain("omit `model` so the worker uses this call's model.");
+    expect(prompt).not.toContain('model: "');
+    expect(prompt).not.toContain('{{workerSpawnModelRule}}');
   });
 
   it('states audio routing and acknowledgement order once within the voice prompt', () => {

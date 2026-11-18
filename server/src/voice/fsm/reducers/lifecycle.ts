@@ -15,6 +15,7 @@ import type { Event } from '../events.js';
 import type { LifecycleState, RuntimeState } from '../state.js';
 
 export interface LifecycleConfig {
+  /** Interpreter model ref. Empty disables the override; the session keeps pi's default model. */
   defaultInterpreterModel: string;
 }
 
@@ -52,7 +53,7 @@ export function reduceLifecycle(prev: LifecycleState, event: Event, ctx: { inter
         return { next: prev, interpreterAppliedNow: false, actions: [] };
       }
       const actions: Action[] = [];
-      if (!ctx.interpreterApplied) {
+      if (!ctx.interpreterApplied && ctx.config.defaultInterpreterModel) {
         actions.push({
           kind: 'set_interpreter_model',
           modelSlug: ctx.config.defaultInterpreterModel,

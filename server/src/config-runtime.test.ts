@@ -35,65 +35,43 @@ describe('Native config runtime', () => {
     expect(config.validate('{"roots":["/roots"],"settingsFiles":["b.md","a.md"]}').settingsFiles).toEqual(['b.md', 'a.md']);
   });
 
-  it('reloads settings, future-session defaults, idle policy, and new-buffer policy', () => {
+  it('reloads settings, voice model refs, idle policy, and new-buffer policy', () => {
     const config = runtime();
     const candidate = {
       ...initial,
       settingsFiles: ['extra.md'],
       tagSnippets: ['new'],
-      defaultProvider: 'provider',
-      defaultModel: 'model',
-      defaultThinkingLevel: 'high',
       defaultInterpreterModel: 'voice/model',
       defaultWorkerModel: 'worker/model',
       idleTimeout: 2000,
       bufferSize: 200,
     };
     const applied = config.apply(candidate);
-    for (const field of [
-      'settingsFiles',
-      'tagSnippets',
-      'defaultProvider',
-      'defaultModel',
-      'defaultThinkingLevel',
-      'defaultInterpreterModel',
-      'defaultWorkerModel',
-      'idleTimeout',
-      'bufferSize',
-    ] as const) {
+    for (const field of ['settingsFiles', 'tagSnippets', 'defaultInterpreterModel', 'defaultWorkerModel', 'idleTimeout', 'bufferSize'] as const) {
       expect(applied[field]).toEqual(candidate[field]);
     }
   });
 
   it('supplies new consumer policies without changing captured session, voice, or buffer policies', async () => {
     const config = runtime();
-    const sessionPolicy = () => {
-      const value = config.snapshot();
-      return { provider: value.defaultProvider, model: value.defaultModel, thinking: value.defaultThinkingLevel, bufferSize: value.bufferSize };
-    };
     const voicePolicy = () => {
       const value = config.snapshot();
       return { interpreter: value.defaultInterpreterModel, worker: value.defaultWorkerModel };
     };
-    const existingSession = sessionPolicy();
     const existingVoice = voicePolicy();
-    const beforeSession = { ...existingSession };
-    const beforeVoice = { ...existingVoice };
+    const existingBufferSize = config.snapshot().bufferSize;
     const next = {
       ...initial,
-      defaultProvider: 'new-provider',
-      defaultModel: 'new-model',
-      defaultThinkingLevel: 'high',
       defaultInterpreterModel: 'new-interpreter',
       defaultWorkerModel: 'new-worker',
       bufferSize: 200,
       idleTimeout: 2000,
     };
     await config.putFile(path, JSON.stringify(next));
-    expect(sessionPolicy()).toEqual({ provider: 'new-provider', model: 'new-model', thinking: 'high', bufferSize: 200 });
     expect(voicePolicy()).toEqual({ interpreter: 'new-interpreter', worker: 'new-worker' });
-    expect(existingSession).toEqual(beforeSession);
-    expect(existingVoice).toEqual(beforeVoice);
+    expect(existingVoice).toEqual({ interpreter: undefined, worker: undefined });
+    expect(config.snapshot().bufferSize).toBe(200);
+    expect(existingBufferSize).toBe(100);
     const idleAt = 1500;
     expect(idleAt >= config.snapshot().idleTimeout).toBe(false);
   });

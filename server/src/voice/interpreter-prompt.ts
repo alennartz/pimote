@@ -8,11 +8,11 @@
 // pi custom tool; free-text assistant output is discarded from the audio
 // channel by the extension.
 //
-// Placeholder `{{workerModel}}` is substituted once at factory time by
-// `createVoiceExtension` so the registered string is static by the time
-// pi's `before_agent_start` hook sees it.
+// Placeholder `{{workerSpawnModelRule}}` is substituted once at factory time
+// by `createVoiceExtension`, which picks between a pinned worker model and
+// spawn-time inheritance based on `defaultWorkerModel` being non-empty.
 
-/** Raw template — contains `{{workerModel}}` placeholder. */
+/** Raw template — contains the `{{workerSpawnModelRule}}` placeholder. */
 export const RAW_INTERPRETER_PROMPT = `You are a voice interpreter connecting a user on a phone-like call with a coding worker subagent.
 
 <role>
@@ -62,7 +62,7 @@ For subsequent tasks, use \`send\` to dispatch new work to the existing worker.
 This preserves its files, decisions, and reasoning across the call.
 Only tear it down at the end of the call or when it is clearly broken.
 
-When spawning the worker, always pass \`model: "{{workerModel}}"\` to use the configured worker model.
+When spawning the worker, {{workerSpawnModelRule}}
 
 While the worker runs:
 
@@ -83,13 +83,16 @@ Respond to the new message without apologising or resuming the interrupted sente
 `;
 
 export interface InterpreterPromptSubstitutions {
+  /** Worker model ref. Empty renders the inherit rule instead of a fixed model. */
   workerModel: string;
 }
 
 /**
- * Substitute the `{{workerModel}}` placeholder with a concrete value.
- * Called once at factory time.
+ * Substitute the worker-spawn rule. A configured worker model pins every
+ * spawn to that model; an empty ref omits `model` at spawn time so the
+ * worker inherits the interpreter's session model.
  */
 export function renderInterpreterPrompt(vars: InterpreterPromptSubstitutions): string {
-  return RAW_INTERPRETER_PROMPT.replace(/\{\{workerModel\}\}/g, vars.workerModel);
+  const rule = vars.workerModel ? `always pass \`model: "${vars.workerModel}"\` to use the configured worker model.` : "omit `model` so the worker uses this call's model.";
+  return RAW_INTERPRETER_PROMPT.replace('{{workerSpawnModelRule}}', rule);
 }

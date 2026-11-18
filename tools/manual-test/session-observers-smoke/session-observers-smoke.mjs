@@ -93,8 +93,6 @@ async function main() {
   // session is seeded, so no LLM call is required — but pi's prompt preflight
   // (steer queue) and voice extension loading need a configured model.
   let modelAvailable;
-  let defaultProvider;
-  let defaultModel;
   try {
     const modelsPath = join(REAL_AGENT_DIR, 'models.json');
     const models = JSON.parse(await readFile(modelsPath, 'utf8'));
@@ -102,8 +100,6 @@ async function main() {
     modelAvailable = Boolean(providerEntry);
     if (modelAvailable) {
       await copyFile(modelsPath, join(agentDir, 'models.json'));
-      defaultProvider = providerEntry[0];
-      defaultModel = providerEntry[1].models[0].id;
     }
   } catch {
     modelAvailable = false;

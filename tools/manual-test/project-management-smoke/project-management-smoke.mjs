@@ -298,7 +298,6 @@ async function main() {
     port: 0, // replaced below
     bufferSize: 100,
     updateCheck: false,
-    ...(jetsonUsable ? { defaultProvider: 'jetson', defaultModel: 'qwen3.8-27b' } : {}),
   };
   const port = await freePort();
   config.port = port;

@@ -64,7 +64,7 @@ describe('cli config initialization', () => {
     const configPath = join(configDir, 'config.json');
     await mkdir(scanRoot, { recursive: true });
     await mkdir(configDir, { recursive: true });
-    await writeFile(configPath, JSON.stringify({ bufferSize: 42, defaultModel: 'sonnet' }, null, 2));
+    await writeFile(configPath, JSON.stringify({ bufferSize: 42 }, null, 2));
 
     const cli = await loadCliModule();
     await cli.initializeConfig({ command: 'init', cliPort: 3456, cliRoots: [scanRoot] });
@@ -72,7 +72,6 @@ describe('cli config initialization', () => {
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     expect(written).toEqual({
       bufferSize: 42,
-      defaultModel: 'sonnet',
       roots: [scanRoot],
       port: 3456,
     });

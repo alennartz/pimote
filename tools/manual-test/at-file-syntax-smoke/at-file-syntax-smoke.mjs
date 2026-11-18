@@ -346,10 +346,9 @@ async function main() {
   const configPath = join(xdgConfig, 'pimote', 'config.json');
   // Seed the host's model catalog when a provider carries a model: the
   // prompt-acceptance phase needs pi's preflight to accept a send, which
-  // requires a configured model with credentials.
+  // requires a configured model with credentials. Sessions pick models
+  // through pi's own defaults.
   let modelAvailable = false;
-  let defaultProvider;
-  let defaultModel;
   try {
     const models = JSON.parse(await readFile(join(process.env.HOME ?? '', '.pi', 'agent', 'models.json'), 'utf8'));
     const providerEntry = Object.entries(models.providers ?? {}).find(([, p]) => (p.models?.length ?? 0) > 0);
@@ -358,15 +357,13 @@ async function main() {
       await mkdir(agentDir, { recursive: true });
       await copyFile(join(process.env.HOME ?? '', '.pi', 'agent', 'models.json'), join(agentDir, 'models.json'));
       modelAvailable = true;
-      defaultProvider = providerEntry[0];
-      defaultModel = providerEntry[1].models[0].id;
     }
   } catch {
     modelAvailable = false;
   }
   await writeFile(
     configPath,
-    JSON.stringify({ roots: [projectsRoot], port, bufferSize: 100, ...(modelAvailable ? { defaultProvider, defaultModel } : {}) }, null, 2),
+    JSON.stringify({ roots: [projectsRoot], port, bufferSize: 100 }, null, 2),
   );
 
   const logPath = join(sandboxHome, 'pimote.log');

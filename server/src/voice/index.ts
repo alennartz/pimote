@@ -120,7 +120,9 @@ export { createDefaultSpeechmuxClientFactory } from './speechmux-client.js';
 // ---- Public factory -------------------------------------------------------
 
 export interface CreateVoiceExtensionOptions {
+  /** Interpreter model ref. Empty leaves the session model to pi. */
   defaultInterpreterModel: string;
+  /** Worker model ref. Empty lets spawned workers inherit the session model. */
   defaultWorkerModel: string;
   /** Session-owned operations, bound before extensions receive session_start. */
   getSession: () => VoiceSessionControl;
