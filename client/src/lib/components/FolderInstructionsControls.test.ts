@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
+import { drainBodyScrollLockCleanup } from '../../test/bits-ui-cleanup.js';
 import StatusBar from './StatusBar.svelte';
 import SessionDetailsDialog from './SessionDetailsDialog.svelte';
 import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
@@ -33,6 +34,7 @@ afterEach(async () => {
   sessionRegistry.viewedSessionId = null;
   connection.ready = false;
   connection.status = 'disconnected';
+  await drainBodyScrollLockCleanup();
 });
 
 async function renderControl(surface: string): Promise<HTMLButtonElement> {
