@@ -17,7 +17,7 @@
 // `assistantMessageEvent` that never fires inside `message_update`). The
 // FSM split + correct reset-on-message_start eliminates that bug class.
 
-import type { ExtensionAPI, ExtensionContext, ExtensionFactory, BeforeAgentStartEvent, ContextEvent, TurnEndEvent } from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI, ExtensionFactory, BeforeAgentStartEvent, ContextEvent, TurnEndEvent } from '@earendil-works/pi-coding-agent';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import { str } from '@earendil-works/pi-schema';
 import { Type } from 'typebox';
@@ -82,27 +82,13 @@ function blockKind(b: BlockState): string {
   return b.kind;
 }
 
-// ---- Interpreter model ref parsing ----------------------------------------
+// ---- Interpreter model resolution -----------------------------------------
 
-const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
-
-export type InterpreterModelRef = { modelId: string; thinkingLevel?: (typeof THINKING_LEVELS)[number] };
-
-/** Split a trailing `:level` off a model ref when the segment names a
- *  thinking level, mirroring the `provider/model:level` form pi's tier
- *  files and the my-pi subagent model field accept. Refs whose trailing
- *  colon segment is not a level — including ids that legitimately contain
- *  colons — keep their full form.
- *
- *  The provider segment has already been split off by the caller; the
- *  input here is everything after the first `/`.
- */
-export function splitThinkingLevelSuffix(modelRef: string): InterpreterModelRef {
-  const at = modelRef.lastIndexOf(':');
-  if (at === -1 || at === modelRef.length - 1) return { modelId: modelRef };
-  const candidate = modelRef.slice(at + 1);
-  if (!(THINKING_LEVELS as readonly string[]).includes(candidate)) return { modelId: modelRef };
-  return { modelId: modelRef.slice(0, at), thinkingLevel: candidate as (typeof THINKING_LEVELS)[number] };
+/** A model ref resolved through pi's reference parser (`resolveCliModel`). */
+export interface ResolvedInterpreterModel {
+  model: Parameters<ExtensionAPI['setModel']>[0];
+  /** Thinking level parsed from a `:level` ref suffix, when present. */
+  thinkingLevel?: Parameters<ExtensionAPI['setThinkingLevel']>[0];
 }
 
 // ---- Re-exports kept for back-compat with callers/tests -------------------
@@ -124,6 +110,8 @@ export interface CreateVoiceExtensionOptions {
   defaultInterpreterModel: string;
   /** Worker model ref. Empty lets spawned workers inherit the session model. */
   defaultWorkerModel: string;
+  /** Resolve a full model ref — provider, id, `:level` suffix — via pi's reference parser. */
+  resolveModelRef: (ref: string) => Promise<ResolvedInterpreterModel | undefined>;
   /** Session-owned operations, bound before extensions receive session_start. */
   getSession: () => VoiceSessionControl;
   /** Optional client factory override — tests inject a fake. */
@@ -139,7 +127,6 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
   return (pi: ExtensionAPI) => {
     // ---- Per-extension-instance state (per pimote session) ---------------
     let state: RuntimeState = initialState();
-    let lastCtx: ExtensionContext | null = null;
     const utterances = new VoiceUtteranceQueue(opts.getSession, (error) => {
       console.warn('[voice] user message submission failed', error);
     });
@@ -213,32 +200,26 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
     const execute = async (action: FsmAction): Promise<void> => {
       switch (action.kind) {
         case 'set_interpreter_model': {
-          if (!lastCtx) {
-            console.warn('[voice] set_interpreter_model: no ExtensionContext yet');
+          // Resolution goes through pi's reference parser (exact id first,
+          // then a trailing `:level`), so this side never re-implements
+          // ref syntax.
+          let resolved: ResolvedInterpreterModel | undefined;
+          try {
+            resolved = await opts.resolveModelRef(action.modelSlug);
+          } catch (err) {
+            console.warn(`[voice] set_interpreter_model: resolution failed for ${action.modelSlug}`, err);
             return;
           }
-          const separator = action.modelSlug.indexOf('/');
-          if (separator <= 0 || separator === action.modelSlug.length - 1) {
-            console.warn(`[voice] set_interpreter_model: malformed model ${action.modelSlug}`);
-            return;
-          }
-          const provider = action.modelSlug.slice(0, separator);
-          const { modelId, thinkingLevel } = splitThinkingLevelSuffix(action.modelSlug.slice(separator + 1));
-          if (modelId.length === 0) {
-            console.warn(`[voice] set_interpreter_model: malformed model ${action.modelSlug}`);
-            return;
-          }
-          const model = lastCtx.modelRegistry.find(provider, modelId);
-          if (!model) {
+          if (!resolved) {
             console.warn(`[voice] set_interpreter_model: no model ${action.modelSlug}`);
             return;
           }
-          const applied = await pi.setModel(model);
+          const applied = await pi.setModel(resolved.model);
           if (!applied) {
             console.warn(`[voice] set_interpreter_model: pi.setModel returned false for ${action.modelSlug}`);
             return;
           }
-          if (thinkingLevel) pi.setThinkingLevel(thinkingLevel);
+          if (resolved.thinkingLevel) pi.setThinkingLevel(resolved.thinkingLevel);
           await dispatch({ type: 'interpreter_model_applied' });
           return;
         }
@@ -436,21 +417,16 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
       if (state.lifecycle.kind !== 'dormant') {
         await dispatch({ type: 'eb:deactivate', msg: { type: 'pimote:voice:deactivate', sessionId: state.lifecycle.sessionId } });
       }
-      lastCtx = null;
     });
 
-    pi.on('session_start', (_event, ctx) => {
+    pi.on('session_start', () => {
       // A resumed transcript can still carry an old speak declaration. Voice
       // owns that declaration, so restore the dormant loadout before a new
       // call bind adds it again.
       setSpeakToolActive(false);
-      // Activation can follow session_start directly during call_bind reopen.
-      // Capture the context here, but leave model application to activation.
-      lastCtx = ctx;
     });
 
-    pi.on('before_agent_start', (event: BeforeAgentStartEvent, ctx: ExtensionContext) => {
-      lastCtx = ctx;
+    pi.on('before_agent_start', (event: BeforeAgentStartEvent) => {
       // Carry the interpreter prompt as a named prompt section (pi 0.87+).
       // pi diffs the desired sections against the transcript-replayed ones and
       // persists a SystemMessage delta, so voice-mode prompt state survives
@@ -471,8 +447,7 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
       void dispatch({ type: 'sdk:message_start', message: event.message });
     });
 
-    pi.on('message_update', (event, ctx) => {
-      lastCtx = ctx;
+    pi.on('message_update', (event) => {
       // Walkback no longer needs a captured snapshot — it operates on
       // the messages array passed to `sdk:context` directly.
       if (state.lifecycle.kind === 'dormant') return;
@@ -516,8 +491,7 @@ export function createVoiceExtension(opts: CreateVoiceExtensionOptions): Extensi
       void dispatch({ type: 'sdk:agent_end', error: null });
     });
 
-    pi.on('context', (event: ContextEvent, ctx: ExtensionContext) => {
-      lastCtx = ctx;
+    pi.on('context', (event: ContextEvent) => {
       // The walkback reducer always runs walkBack (even when no rewrite is
       // pending — to strip aborted-empty assistants) and emits the result as a
       // `rewrite_context` action. Drive the reduction synchronously and read

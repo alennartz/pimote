@@ -10,6 +10,7 @@ import {
   createEventBus,
   ModelRuntime,
   getAgentDir,
+  resolveCliModel,
   SessionManager as PiSessionManager,
 } from '@earendil-works/pi-coding-agent';
 import type { AgentSession, AgentSessionRuntime, EventBusController, CreateAgentSessionRuntimeFactory, ExtensionCommandContextActions } from '@earendil-works/pi-coding-agent';
@@ -840,6 +841,17 @@ export class PimoteSessionManager {
     return createVoiceExtension({
       defaultInterpreterModel: config.defaultInterpreterModel ?? '',
       defaultWorkerModel: config.defaultWorkerModel ?? '',
+      // Ref syntax (provider, id, `:level` suffix) belongs to pi's reference
+      // parser; this side only decides what to do with the resolved model.
+      resolveModelRef: async (ref) => {
+        const result = resolveCliModel({ cliModel: ref, modelRuntime: this.modelRuntime });
+        if (!result.model) {
+          if (result.error) console.warn(`[voice] model ref '${ref}': ${result.error}`);
+          return undefined;
+        }
+        if (result.warning) console.warn(`[voice] model ref '${ref}': ${result.warning}`);
+        return { model: result.model, thinkingLevel: result.thinkingLevel };
+      },
       getSession,
     });
   }

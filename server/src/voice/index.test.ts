@@ -29,13 +29,30 @@ function harness(options: { defaultInterpreterModel?: string } = {}) {
   const calls: { text: string; options: unknown; start: () => Promise<void> }[] = [];
   const activeTools = ['read', 'bash', 'edit', 'write'];
   const status = { idle: true };
-  const modelFind = vi.fn((provider: string, id: string): { provider: string; id: string } | undefined => ({ provider, id }));
+  // Fake of pi's reference parser (resolveCliModel): exact `provider/id`,
+  // optional trailing `:level`, undefined when provider or id is empty.
+  const resolveModelRef = vi.fn(async (ref: string) => {
+    const separator = ref.indexOf('/');
+    if (separator <= 0 || separator === ref.length - 1) return undefined;
+    const provider = ref.slice(0, separator);
+    let modelId = ref.slice(separator + 1);
+    let thinkingLevel: string | undefined;
+    const at = modelId.lastIndexOf(':');
+    if (at > 0 && at < modelId.length - 1) {
+      const suffix = modelId.slice(at + 1);
+      if (['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(suffix)) {
+        modelId = modelId.slice(0, at);
+        thinkingLevel = suffix;
+      }
+    }
+    if (modelId.length === 0 || modelId.startsWith(':')) return undefined;
+    return { model: { provider, id: modelId }, thinkingLevel };
+  });
   const ctx = {
     isIdle: () => status.idle,
     abort: () => {
       void session.abort();
     },
-    modelRegistry: { find: modelFind },
   } as unknown as ExtensionContext;
   const emit = async (name: string, event: unknown = {}) => {
     for (const handler of [...(handlers.get(name) ?? [])]) await handler(event, ctx);
@@ -115,6 +132,7 @@ function harness(options: { defaultInterpreterModel?: string } = {}) {
     defaultWorkerModel: 'test/worker',
     speechmuxClientFactory: async () => client,
     getSession: () => session,
+    resolveModelRef,
   })(pi);
 
   const settle = async () => {
@@ -138,7 +156,7 @@ function harness(options: { defaultInterpreterModel?: string } = {}) {
     client,
     pi,
     activeTools,
-    modelFind,
+    resolveModelRef,
     emit,
     sessionStart: (reason: string) => emit('session_start', { type: 'session_start', reason }),
     settle,
@@ -289,12 +307,12 @@ describe('speak tool contract', () => {
 });
 
 describe('interpreter model lifecycle', () => {
-  it.each(['new', 'resume', 'fork'])('captures context on session_start (%s) before activation', async (reason) => {
+  it.each(['new', 'resume', 'fork'])('resolves the ref through the parser on activation (%s)', async (reason) => {
     const h = harness();
     await h.sessionStart(reason);
     await h.activate(false);
     expect(h.pi.setModel).toHaveBeenCalledTimes(1);
-    expect(h.modelFind).toHaveBeenCalledWith('test', 'voice');
+    expect(h.resolveModelRef).toHaveBeenCalledWith('test/voice');
     h.deactivate();
   });
 
@@ -302,16 +320,16 @@ describe('interpreter model lifecycle', () => {
     const h = harness({ defaultInterpreterModel: 'test/model/with/slashes' });
     await h.sessionStart('new');
     await h.activate(false);
-    expect(h.modelFind).toHaveBeenCalledWith('test', 'model/with/slashes');
+    expect(h.resolveModelRef).toHaveBeenCalledWith('test/model/with/slashes');
     expect(h.pi.setModel).toHaveBeenCalledTimes(1);
     h.deactivate();
   });
 
-  it('splits a thinking-level suffix off the model ref and applies it after the model', async () => {
+  it('applies the thinking level parsed from the ref suffix after the model', async () => {
     const h = harness({ defaultInterpreterModel: 'test/voice:low' });
     await h.sessionStart('new');
     await h.activate(false);
-    expect(h.modelFind).toHaveBeenCalledWith('test', 'voice');
+    expect(h.resolveModelRef).toHaveBeenCalledWith('test/voice:low');
     expect(h.pi.setModel).toHaveBeenCalledTimes(1);
     expect(vi.mocked(h.pi.setThinkingLevel).mock.invocationCallOrder[0]).toBeGreaterThan(vi.mocked(h.pi.setModel).mock.invocationCallOrder[0]);
     expect(h.pi.setThinkingLevel).toHaveBeenCalledWith('low');
@@ -322,7 +340,7 @@ describe('interpreter model lifecycle', () => {
     const h = harness({ defaultInterpreterModel: 'test/voice:weird' });
     await h.sessionStart('new');
     await h.activate(false);
-    expect(h.modelFind).toHaveBeenCalledWith('test', 'voice:weird');
+    expect(h.resolveModelRef).toHaveBeenCalledWith('test/voice:weird');
     expect(h.pi.setModel).toHaveBeenCalledTimes(1);
     expect(h.pi.setThinkingLevel).not.toHaveBeenCalled();
     h.deactivate();
@@ -348,18 +366,18 @@ describe('interpreter model lifecycle', () => {
     const h = harness({ defaultInterpreterModel: '' });
     await h.sessionStart('new');
     await h.activate(false);
-    expect(h.modelFind).not.toHaveBeenCalled();
+    expect(h.resolveModelRef).not.toHaveBeenCalled();
     expect(h.pi.setModel).not.toHaveBeenCalled();
     expect(h.pi.setThinkingLevel).not.toHaveBeenCalled();
     h.deactivate();
   });
 
-  it('rejects model refs with an empty provider or model id', async () => {
+  it('rejects model refs the parser cannot resolve', async () => {
     for (const modelRef of ['test/', '/voice', 'test/:low']) {
       const h = harness({ defaultInterpreterModel: modelRef });
       await h.sessionStart('new');
       await h.activate(false);
-      expect(h.modelFind).not.toHaveBeenCalled();
+      expect(h.resolveModelRef).toHaveBeenCalledWith(modelRef);
       expect(h.pi.setModel).not.toHaveBeenCalled();
       h.deactivate();
       await flush();
@@ -390,20 +408,9 @@ describe('interpreter model lifecycle', () => {
     h.deactivate();
   });
 
-  it('retries when no context exists, then applies after a later hook captures it', async () => {
+  it('retries when the configured model cannot be resolved', async () => {
     const h = harness();
-    await h.activate(false);
-    expect(h.pi.setModel).not.toHaveBeenCalled();
-    h.deactivate();
-    await flush();
-    await h.activate();
-    expect(h.pi.setModel).toHaveBeenCalledTimes(1);
-    h.deactivate();
-  });
-
-  it('retries when the configured model is missing', async () => {
-    const h = harness();
-    h.modelFind.mockReturnValueOnce(undefined).mockReturnValueOnce({ provider: 'test', id: 'voice' });
+    h.resolveModelRef.mockResolvedValueOnce(undefined).mockResolvedValueOnce({ model: { provider: 'test', id: 'voice' }, thinkingLevel: undefined });
     await h.activate();
     expect(h.pi.setModel).not.toHaveBeenCalled();
     h.deactivate();
