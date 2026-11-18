@@ -18,6 +18,19 @@ function showMoreButton(target: HTMLElement): HTMLButtonElement | undefined {
   return Array.from(target.querySelectorAll('button')).find((button) => button.textContent?.startsWith('Show more'));
 }
 
+function stubClipboard(): string[] {
+  const writes: string[] = [];
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async (text: string) => writes.push(text) },
+  });
+  return writes;
+}
+
+function copyButton(target: HTMLElement): HTMLButtonElement | undefined {
+  return target.querySelector<HTMLButtonElement>('.output-copy-btn') ?? undefined;
+}
+
 describe('BoundedOutput', () => {
   it('keeps a bounded single-line result capped and scrollable', async () => {
     const target = document.createElement('div');
@@ -90,5 +103,50 @@ describe('BoundedOutput', () => {
     expect(bodyState(target)).toBe('expanded');
     expect(target.textContent).toContain('line 11');
     expect(target.textContent).toContain('Show less');
+  });
+
+  it('copies the full text even when the view is collapsed', async () => {
+    const writes = stubClipboard();
+    const text = Array.from({ length: 30 }, (_, index) => `line ${index + 1}`).join('\n');
+    const target = document.createElement('div');
+    const component = mount(BoundedOutput, {
+      target,
+      props: { text, bounded: true, copyable: true },
+    });
+    destroy = () => unmount(component);
+    await tick();
+
+    expect(bodyState(target)).toBe('clamped');
+    expect(target.textContent).not.toContain('line 30');
+
+    copyButton(target)!.click();
+    await tick();
+
+    expect(writes).toEqual([text]);
+  });
+
+  it('copies plain text for ANSI-styled output', async () => {
+    const writes = stubClipboard();
+    const target = document.createElement('div');
+    const component = mount(BoundedOutput, {
+      target,
+      props: { text: '\u001b[31mred\u001b[0m plain', renderAnsi: true, copyable: true },
+    });
+    destroy = () => unmount(component);
+    await tick();
+
+    copyButton(target)!.click();
+    await tick();
+
+    expect(writes).toEqual(['red plain']);
+  });
+
+  it('renders no copy button by default', async () => {
+    const target = document.createElement('div');
+    const component = mount(BoundedOutput, { target, props: { text: 'hi' } });
+    destroy = () => unmount(component);
+    await tick();
+
+    expect(copyButton(target)).toBeUndefined();
   });
 });

@@ -1,6 +1,8 @@
 <script lang="ts">
-  import { ansiToHtml } from '$lib/ansi-to-html.js';
+  import { ansiToHtml, stripAnsi } from '$lib/ansi-to-html.js';
   import CollapsibleText from './CollapsibleText.svelte';
+  import Copy from '@lucide/svelte/icons/copy';
+  import Check from '@lucide/svelte/icons/check';
 
   let {
     text,
@@ -9,6 +11,7 @@
     accent = 'default',
     bounded = false,
     renderAnsi = false,
+    copyable = false,
   }: {
     text: string;
     streaming?: boolean;
@@ -18,6 +21,8 @@
     bounded?: boolean;
     /** Render ANSI color codes and escape the input text. */
     renderAnsi?: boolean;
+    /** Show a corner copy button. Copies the full text, even when collapsed. */
+    copyable?: boolean;
   } = $props();
 
   // Auto-expand while streaming so users can follow live output. The block
@@ -89,9 +94,37 @@
       bodyEl.scrollTop = bodyEl.scrollHeight;
     }
   });
+
+  let copied = $state(false);
+  let resetTimer: ReturnType<typeof setTimeout> | undefined;
+  $effect(() => () => {
+    if (resetTimer) clearTimeout(resetTimer);
+  });
+
+  // Copies the source text, never the clipped display: a collapsed or capped
+  // view renders only the first lines. Styled output copies plain text.
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(renderAnsi ? stripAnsi(text) : text);
+      copied = true;
+      if (resetTimer) clearTimeout(resetTimer);
+      resetTimer = setTimeout(() => (copied = false), 1200);
+    } catch {
+      // Clipboard unavailable — leave button as-is.
+    }
+  }
 </script>
 
-<div class="bounded-output" class:accent-purple={accent === 'purple'}>
+<div class="bounded-output" class:accent-purple={accent === 'purple'} class:copyable>
+  {#if copyable}
+    <button type="button" class="copy-button output-copy-btn" class:copied aria-label={copied ? 'Copied' : 'Copy output'} title="Copy output" onclick={copy}>
+      {#if copied}
+        <Check size={14} />
+      {:else}
+        <Copy size={14} />
+      {/if}
+    </button>
+  {/if}
   <!-- ansiToHtml escapes input text before creating fixed style spans. -->
   <CollapsibleText
     bind:expanded
@@ -120,6 +153,22 @@
 
   .bounded-output.accent-purple {
     --_accent: var(--custom-accent);
+  }
+
+  .bounded-output.copyable {
+    position: relative;
+  }
+
+  /* Reserve the corner strip so wrapped lines don't run under the button. */
+  .bounded-output.copyable .bounded-output-text {
+    padding-right: 56px;
+  }
+
+  .output-copy-btn {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 1;
   }
 
   .bounded-output-text {

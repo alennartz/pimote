@@ -390,7 +390,7 @@
         {#if resultText}
           <div class="tool-section">
             <div class="tool-section-label">{inProgress ? 'Output (streaming)' : 'Result'}</div>
-            <BoundedOutput text={resultText} streaming={inProgress} bounded renderAnsi={isBash} />
+            <BoundedOutput text={resultText} streaming={inProgress} bounded renderAnsi={isBash} copyable />
           </div>
         {/if}
       {/if}
