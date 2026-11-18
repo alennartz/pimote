@@ -32,6 +32,28 @@ describe('tool results', () => {
     expect(target.querySelector('.tool-content [data-state]')?.getAttribute('data-state')).toBe('capped');
   });
 
+  it('offers copy on the arguments and result sections', async () => {
+    const target = document.createElement('div');
+    const component = mount(ToolCall, {
+      target,
+      props: {
+        content: {
+          type: 'tool_result',
+          toolName: 'grep',
+          toolCallId: 'copy-wiring-1',
+          args: { pattern: 'x' },
+          result: 'done',
+        },
+      },
+    });
+    destroy = () => unmount(component);
+
+    target.querySelector<HTMLButtonElement>('.tool-header')?.click();
+    await tick();
+
+    expect(target.querySelectorAll('.output-copy-btn').length).toBe(2);
+  });
+
   it.each(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp'])('renders live read output for %s', async (mimeType) => {
     const target = document.createElement('div');
     const note = `Read image file [${mimeType}]`;

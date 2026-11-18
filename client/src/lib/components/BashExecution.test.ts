@@ -80,6 +80,23 @@ describe('BashExecution presentation contract', () => {
     dispatchError.destroy();
   });
 
+  it('copies ANSI-stripped output through the copy button', async () => {
+    const writes: string[] = [];
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async (text: string) => writes.push(text) },
+    });
+    const view = render(runningExecution({ output: '\u001b[31mred\u001b[0m plain' }));
+
+    const copy = view.target.querySelector<HTMLButtonElement>('.output-copy-btn');
+    expect(copy).toBeDefined();
+    copy!.click();
+    await tick();
+
+    expect(writes).toEqual(['red plain']);
+    view.destroy();
+  });
+
   it('keeps long output bounded until the user expands it', async () => {
     const output = Array.from({ length: 100 }, (_, index) => `line ${index + 1}`).join('\n');
     const view = render(runningExecution({ output, status: 'complete', result: { output, exitCode: 0, cancelled: false, truncated: false } }));

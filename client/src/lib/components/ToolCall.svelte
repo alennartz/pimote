@@ -383,7 +383,7 @@
         {:else if argsText}
           <div class="tool-section">
             <div class="tool-section-label">Arguments</div>
-            <BoundedOutput text={argsText} streaming={streaming && !isCompleted} />
+            <BoundedOutput text={argsText} streaming={streaming && !isCompleted} copyable />
           </div>
         {/if}
 

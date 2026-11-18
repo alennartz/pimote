@@ -112,7 +112,7 @@
 
   {#if output}
     <div class="bash-output">
-      <BoundedOutput text={output} bounded renderAnsi />
+      <BoundedOutput text={output} bounded renderAnsi copyable />
     </div>
   {/if}
 
