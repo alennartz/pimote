@@ -477,7 +477,9 @@
             <div><span class="metadata-label">Waits</span><span>{inspectorNode.waitingFor.map(pathLabel).join(' · ')}</span></div>
           {/if}
           {#if hasDistinctWorkingDirectory(inspectorNode)}
-            <div><span class="metadata-label">Working directory</span><span title={inspectorNode.cwd}>{inspectorNode.cwd}</span></div>
+            <div class="agent-inspector-wide">
+              <span class="metadata-label">Working directory</span><span class="agent-inspector-wrap" title={inspectorNode.cwd}>{inspectorNode.cwd}</span>
+            </div>
           {/if}
           {#if inspectorViewOpen}
             <div><span class="metadata-label">View</span><span>open</span></div>
@@ -737,6 +739,16 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: 0.75rem;
+  }
+  .agent-inspector-wide {
+    grid-column: 1 / -1;
+    min-width: 0;
+  }
+  .agent-inspector .metadata-label + span.agent-inspector-wrap {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
   .agent-inspector-usage {
     min-width: 0;
