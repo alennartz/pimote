@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
+import { drainBodyScrollLockCleanup } from '../../test/bits-ui-cleanup.js';
 import type { PimoteEvent } from '@pimote/shared';
 import SessionDetailsDialog from './SessionDetailsDialog.svelte';
 import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
@@ -38,6 +39,7 @@ afterEach(async () => {
   sessionRegistry.viewedSessionId = null;
   connection.ready = false;
   connection.status = 'disconnected';
+  await drainBodyScrollLockCleanup();
 });
 
 function openChildView(): void {

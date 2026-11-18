@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PimoteResponse } from '@pimote/shared';
 import { mount, tick, unmount } from 'svelte';
+import { drainBodyScrollLockCleanup } from '../../test/bits-ui-cleanup.js';
 
 class TestResizeObserver {
   observe() {}
@@ -128,13 +129,14 @@ beforeEach(() => {
   sessionRegistry.switchTo(id);
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.useRealTimers();
   mobileListener?.({ matches: false });
   destroy?.();
   destroy = null;
   sessionRegistry.removeSession(id);
   document.body.innerHTML = '';
+  await drainBodyScrollLockCleanup();
 });
 
 describe('active session bar behavior', () => {

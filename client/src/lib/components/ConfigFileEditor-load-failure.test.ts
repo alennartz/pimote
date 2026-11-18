@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
+import { drainBodyScrollLockCleanup } from '../../test/bits-ui-cleanup.js';
 import type { PimoteCommand, PimoteResponse } from '@pimote/shared';
 
 // The lazy editor chunk fails to load (stale PWA chunk after a deploy, offline).
@@ -55,6 +56,7 @@ afterEach(async () => {
   component = undefined;
   document.body.innerHTML = '';
   vi.mocked(connection.send).mockReset();
+  await drainBodyScrollLockCleanup();
 });
 
 describe('ConfigFileEditor editor chunk failure', () => {

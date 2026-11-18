@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
+import { drainBodyScrollLockCleanup } from '../../test/bits-ui-cleanup.js';
 import GlobalSettingsDialog from './GlobalSettingsDialog.svelte';
 import { GlobalSettingsStore } from '../stores/global-settings.svelte.js';
 
@@ -9,6 +10,7 @@ afterEach(async () => {
   if (component) await unmount(component);
   component = undefined;
   document.body.innerHTML = '';
+  await drainBodyScrollLockCleanup();
 });
 
 async function render(viewport: 'desktop' | 'mobile' = 'desktop') {

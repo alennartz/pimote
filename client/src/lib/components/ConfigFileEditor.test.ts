@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
+import { drainBodyScrollLockCleanup } from '../../test/bits-ui-cleanup.js';
 import { EditorView } from '@codemirror/view';
 import type { PimoteCommand, PimoteResponse } from '@pimote/shared';
 
@@ -110,6 +111,7 @@ afterEach(async () => {
   component = undefined;
   document.body.innerHTML = '';
   vi.mocked(connection.send).mockReset();
+  await drainBodyScrollLockCleanup();
 });
 
 describe('ConfigFileEditor', () => {
