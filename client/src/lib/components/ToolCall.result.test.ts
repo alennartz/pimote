@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
 import ToolCall from './ToolCall.svelte';
 
@@ -8,6 +8,7 @@ let destroy: (() => void) | undefined;
 afterEach(() => {
   destroy?.();
   destroy = undefined;
+  vi.unstubAllGlobals();
 });
 
 describe('tool results', () => {
@@ -110,6 +111,44 @@ describe('tool results', () => {
     expect(target.querySelector('.tool-content')?.textContent?.trim()).toBe('');
     expect(target.querySelector('.tool-content .tool-section-label')).toBeNull();
     expect(target.querySelector('.tool-image-caption')).toBeNull();
+  });
+
+  it('keeps a settled read image open when it scrolls out of view', async () => {
+    let emit: ((entries: readonly IntersectionObserverEntry[]) => void) | undefined;
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(callback: (entries: readonly IntersectionObserverEntry[]) => void) {
+          emit = callback;
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+
+    const target = document.createElement('div');
+    const component = mount(ToolCall, {
+      target,
+      props: {
+        content: { type: 'tool_call', toolName: 'read', toolCallId: 'read-image-stay', args: { path: 'chart.png' } },
+        result: 'Read image file [image/png]',
+        images: [{ data: 'AQIDBA==', mimeType: 'image/png' }],
+      },
+    });
+    destroy = () => unmount(component);
+    await tick();
+    expect(target.querySelector('.tool-content img')).not.toBeNull();
+
+    // The reader scrolled the settled block out of view: the image stays open.
+    emit?.([{ isIntersecting: true } as IntersectionObserverEntry]);
+    emit?.([{ isIntersecting: false } as IntersectionObserverEntry]);
+    await tick();
+    expect(target.querySelector('.tool-content img')).not.toBeNull();
+
+    // The reader can still fold it.
+    target.querySelector<HTMLButtonElement>('.tool-header')?.click();
+    await tick();
+    expect(target.querySelector('.tool-content')).toBeNull();
   });
 
   it('keeps arguments and result sections for text-only read calls', async () => {

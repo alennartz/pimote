@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
 import { fromStore, writable } from 'svelte/store';
 import type { AgentPath, PimoteAgentMessage, PimoteMessageContent, PimoteSubagentFinalData, PimoteSubagentStartData, SubagentNodeSnapshot } from '@pimote/shared';
@@ -16,6 +16,7 @@ const chipStateRoot = 'chip-state-root';
 afterEach(async () => {
   if (component) await unmount(component);
   component = undefined;
+  vi.unstubAllGlobals();
   sessionRegistry.clearSubagentRoot(chipStateRoot);
   delete sessionRegistry.sessions[chipStateRoot];
   sessionRegistry.viewedSessionId = null;
@@ -162,31 +163,25 @@ describe('subagent transcript cards', () => {
   });
 
   it('keeps a settled spawn card folded when its data updates', async () => {
-    const callbacks: ((entries: IntersectionObserverEntry[]) => void)[] = [];
-    class RecordingIntersectionObserver {
-      callback: IntersectionObserverCallback;
-      constructor(callback: IntersectionObserverCallback) {
-        this.callback = callback;
-        callbacks.push((entries) => callback(entries, this as unknown as IntersectionObserver));
-      }
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-      takeRecords() {
-        return [];
-      }
-    }
-    const nativeObserver = globalThis.IntersectionObserver;
-    globalThis.IntersectionObserver = RecordingIntersectionObserver as unknown as typeof IntersectionObserver;
+    let emit: ((entries: readonly IntersectionObserverEntry[]) => void) | undefined;
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(callback: (entries: readonly IntersectionObserverEntry[]) => void) {
+          emit = callback;
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
 
     const delegation = (task: string): SubagentContent => operation({ operation: 'delegation', parameters: {}, result: { children: [{ path: ['team', 'worker'], task }] } });
     const { target, update } = await render(delegation('Review the config.'));
     expect(card(target, 'delegation').querySelector('.subagent-body')).not.toBeNull();
 
     // The reader scrolled the settled card out of view: it folds.
-    const report = (isIntersecting: boolean) => callbacks[callbacks.length - 1]([{ isIntersecting }] as unknown as IntersectionObserverEntry[]);
-    report(true);
-    report(false);
+    emit?.([{ isIntersecting: true } as IntersectionObserverEntry]);
+    emit?.([{ isIntersecting: false } as IntersectionObserverEntry]);
     await tick();
     expect(card(target, 'delegation').querySelector('.subagent-body')).toBeNull();
 
@@ -194,7 +189,39 @@ describe('subagent transcript cards', () => {
     await update(delegation('Review the config and the tests.'));
 
     expect(card(target, 'delegation').querySelector('.subagent-body')).toBeNull();
-    globalThis.IntersectionObserver = nativeObserver;
+  });
+
+  it('keeps a settled custom-message card open when it scrolls out of view', async () => {
+    let emit: ((entries: readonly IntersectionObserverEntry[]) => void) | undefined;
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(callback: (entries: readonly IntersectionObserverEntry[]) => void) {
+          emit = callback;
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+
+    const received = {
+      ...operation({ operation: 'send', result: { from: ['team', 'worker'], to: [], message: 'Status **update**.' } }, 'complete', 'message_received'),
+      placement: { entryId: 'custom-entry' } as const,
+    };
+    const { target } = await render(received, { custom: true });
+    const messageCard = card(target, 'message_received');
+    expect(messageCard.querySelector('.subagent-body')).not.toBeNull();
+
+    // The reader scrolled the settled card out of view: it stays open.
+    emit?.([{ isIntersecting: true } as IntersectionObserverEntry]);
+    emit?.([{ isIntersecting: false } as IntersectionObserverEntry]);
+    await tick();
+    expect(card(target, 'message_received').querySelector('.subagent-body')).not.toBeNull();
+
+    // The reader can still fold it.
+    messageCard.querySelector<HTMLButtonElement>('.subagent-header')?.click();
+    await tick();
+    expect(card(target, 'message_received').querySelector('.subagent-body')).toBeNull();
   });
 
   it('bounds long spawn tasks and offers show-more', async () => {

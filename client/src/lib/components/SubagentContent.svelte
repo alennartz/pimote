@@ -36,6 +36,10 @@
   let startedAt = $state<number | undefined>();
   let measuredDurationMs = $state<number | undefined>();
 
+  // Blocks projected over a custom message entry (no native tool call behind
+  // them) settle open for the reader; tool-call replacements fold offscreen.
+  let replacesCustomEntry = $derived(content.placement === undefined || !('toolCallId' in content.placement));
+
   let active = $derived(content.subagentState === 'active');
   let title = $derived(titleFor(content));
   let status = $derived(statusFor(content));
@@ -64,6 +68,7 @@
       expanded = true;
       return;
     }
+    if (replacesCustomEntry) return;
     if (!expanded || !rootEl) return;
     return observeFullyOffscreen(rootEl, () => {
       expanded = false;

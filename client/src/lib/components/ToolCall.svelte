@@ -120,9 +120,10 @@
   });
 
   // Once a specialized tool section settles, keep it expanded and collapse
-  // it the first time it fully scrolls out of view.
+  // it the first time it fully scrolls out of view. Image-body reads keep
+  // their rendered image open; only the reader folds them.
   $effect(() => {
-    if (!isEdit && !isWrite && !isCodemode && !isBash && !hasReadImages) return;
+    if (!isEdit && !isWrite && !isCodemode && !isBash) return;
     if (streaming || inProgress) return;
     if (!expanded) return;
     if (!rootEl) return;
