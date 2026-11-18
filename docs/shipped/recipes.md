@@ -1,121 +1,131 @@
 # Topology recipes
 
-Recipes for the four folder kinds, each created with `pimote_create_folder`.
-Select an existing scan root or skipped folder within one as the parent.
-Keep it outside included folders and their descendants, where discovery stops.
-Use `pimote_find_folders` to select canonical member homes, not parent locations.
-See `folders.md` for placement and discovery rules.
+Four folder kinds exist, and `pimote_create_folder` builds each one. This page gives a worked call for each kind and the failures that follow from a wrong shape.
+
+Read `folders.md` for the walk and the identity, and `hubs.md` for membership and disband.
+
+## Select the parent
+
+The parent must be an existing scan root, or a skipped folder inside one. Keep it outside every included folder and its descendants, because the walk treats an included folder as a leaf.
+
+`parentPath` is checked against the scan roots only. A parent inside an included folder, or inside a pruned directory, succeeds and returns a path that discovery never shows.
+
+Use `pimote_find_folders` to select member homes. Its rows are included folders, and a real subfolder of a row is not a candidate for either job.
 
 ## Code folder
 
-```
+```text
 pimote_create_folder { kind: "code", name: "app", parentPath: "/srv/repos", body: "What this repo is for." }
 ```
 
-Creates `app/` with `git init` and a seeded `AGENTS.md`. Discovery follows from the `.git` marker.
+Creates `app/` with a seeded `AGENTS.md` and runs `git init`. The `.git` entry is what makes discovery include the folder.
 
 ## Persona folder
 
-```
+```text
 pimote_create_folder { kind: "persona", name: "ada", parentPath: "/srv/repos", description: "debugging specialist", prompt: "You are Ada." }
 ```
 
-Creates `ada/` with a persona-marker `AGENTS.md` and a `memory.md` stub.
-The caller prompt precedes the shipped persona template and its memory-maintenance instruction.
-Sessions run in this folder.
+Creates `ada/` with a persona marker, a `memory.md` stub, and no `git init`.
+
+```text
+---
+kind: persona
+name: "ada"
+description: "debugging specialist"
+---
+
+You are Ada.
+
+You are a persona agent. This folder is your identity and home.
+```
+
+`description` is required. The `prompt` text precedes the shipped persona template, and the file continues with its memory-maintenance instruction. Sessions run rooted in this folder.
 
 ## Code hub
 
-```
+```text
 pimote_create_folder { kind: "code-hub", name: "platform", parentPath: "/srv/repos", memberPaths: ["/srv/repos/api", "/srv/repos/web"] }
 ```
 
-Creates `platform/` with symlinks to `api` and `web`, a generated `AGENTS.md` with the managed member block, `git init`, and a member `.gitignore`. Members keep their canonical homes and appear at top level too.
+Creates `platform/` with one absolute symlink per member, a generated `AGENTS.md` with the managed member block, a `.gitignore` with one `/<member>` line each, and `git init`.
 
-Add `memberRepresentation: "worktree"` to hold code members as nested detached worktrees instead of symlinks:
-
+```text
+/srv/repos/
+├── platform/                 code hub
+│   ├── AGENTS.md             generated, with the managed member block
+│   ├── .gitignore
+│   ├── api -> /srv/repos/api
+│   └── web -> /srv/repos/web
+├── api/
+└── web/
 ```
-pimote_create_folder { kind: "code-hub", name: "platform", parentPath: "/srv/repos", memberPaths: ["/srv/repos/api", "/srv/repos/web"], memberRepresentation: "worktree" }
-```
 
-Each code member becomes a detached checkout at its source `HEAD` (`platform/api`, `platform/web`). The source repositories and their branches stay untouched. Pimote performs no branch operations; the user or an agent owns branch work. The hub writes `.pimote-hub.json` to preserve worktree mode, and the `.gitignore` ignores member names and the marker.
+Members keep their canonical homes and also appear at the top level of the listing.
+
+Every member must be a known folder, with a unique basename, and with no containment between it and the hub in either direction. Pass canonical absolute paths. Pimote stores the string you pass as the link target.
 
 ## Persona hub
 
-```
+```text
 pimote_create_folder { kind: "persona-hub", name: "danny", parentPath: "/srv/repos", description: "crew lead", prompt: "You are Danny Ocean.", memberPaths: ["/srv/repos/rusty", "/srv/repos/livingston"] }
 ```
 
-The hub itself is a persona, with a persona marker and a `memory.md` stub.
-Unlike a plain persona folder, it uses the caller prompt directly before the hub text and managed member block.
-It does not add the shipped persona template.
-The remaining structure matches a code hub. Pass `memberRepresentation: "worktree"` to detach code members; persona members always stay symlinks either way.
-The expected listing has one hub row with two members, plus one row per member.
+The hub itself is a persona. It carries a persona marker, the `prompt` text as its persona text, the generated member block, a `memory.md` stub, `.gitignore`, and `git init`.
 
-```
+```text
 /srv/repos/
-├── danny/                  persona (the hub)
-│   ├── AGENTS.md           marker + managed member block
-│   ├── memory.md
-│   ├── rusty      -> /srv/repos/rusty        (shortcut)
-│   └── livingston -> /srv/repos/livingston   (shortcut)
-├── rusty/                  persona (canonical home)
-└── livingston/             persona (canonical home)
-```
-
-Sessions can start at any of the three folders. Change membership later through `pimote_update_hub_members`. Never hand-edit inside the managed member block of a hub `AGENTS.md`, which is the lines between `<!-- pimote:members (managed block) -->` and `<!-- /pimote:members -->`.
-
-## Worktree hub lifecycle
-
-A worktree hub's members live as nested detached checkouts:
-
-```
-/srv/repos/
-├── platform/                 code hub (worktree mode)
-│   ├── AGENTS.md             managed member block
-│   ├── .pimote-hub.json      {"memberRepresentation":"worktree"}
+├── danny/                    persona (the hub)
+│   ├── AGENTS.md             marker, intro, managed member block
 │   ├── .gitignore
-│   ├── api/                  detached worktree of /srv/repos/api
-│   └── web/                  detached worktree of /srv/repos/web
-├── api/                      canonical home
-└── web/                      canonical home
+│   ├── memory.md
+│   ├── rusty -> /srv/repos/rusty
+│   └── livingston -> /srv/repos/livingston
+├── rusty/                    persona (canonical home)
+└── livingston/               persona (canonical home)
 ```
 
-`pimote_update_hub_members` follows the hub's mode: a new code member detaches at its source `HEAD`; a new persona member symlinks. Removing a worktree member requires a clean checkout and removes only the nested checkout. The canonical home keeps its branch and history.
+Unlike a plain persona folder, a persona hub adds no shipped persona template. The prompt stands alone. The remaining structure matches a code hub.
 
-A finished worktree hub is disbanded, not hand-deleted:
+Sessions can start in the hub or in any member.
 
-```
-pimote_disband_hub { hubPath: "/srv/repos/platform" }
-```
+## Worktree hub
 
-Disband requires a known hub row and a valid `.pimote-hub.json` marker. A Git-verified nested worktree alone does not authorize deletion. It closes idle, observerless sessions in the hub subtree first, then refuses remaining session or external pi activity. It also rejects dirty checkouts or hub content, unexpected children, edited generated metadata, and detached `HEAD`s unreachable from local or remote-tracking branch refs. Generated-file baselines protect content even when Git ignores those files. Fix the reported state and retry; the hub remains on disk. Symlink hubs reject disband.
+Add `memberRepresentation: "worktree"` to either hub kind to hold code members as nested detached checkouts:
 
-## Global Pimote extension
-
-Place a module in `$XDG_CONFIG_HOME/pimote/extensions/`:
-
-```ts
-import type { PimoteExtension } from '@pimote/sdk/pimote';
-
-export default ((context) => {
-  context.folders.registerSource({ id: 'team-folders', list: async () => [] });
-  context.settings.registerFile('./team-instructions.md');
-  context.on('shutdown', () => {});
-}) satisfies PimoteExtension;
+```text
+pimote_create_folder { kind: "code-hub", name: "platform", parentPath: "/srv/repos", memberPaths: ["/srv/repos/api", "/srv/repos/web"], memberRepresentation: "worktree" }
 ```
 
-The host loads the module at startup and on server-wide `/reload`. Relative Settings paths use the module directory. User-installed packages can declare `pimote.extensions`; Pi-only and project-scoped package entries stay outside this host. A failed module produces a diagnostic but does not discard valid registrations.
+```text
+/srv/repos/
+├── platform/                        code hub, worktree mode
+│   ├── AGENTS.md
+│   ├── .gitignore                   marker line plus one /<member> line each
+│   ├── .pimote-hub.json             {"memberRepresentation":"worktree"}
+│   ├── api/                         detached worktree of /srv/repos/api
+│   └── web/                         detached worktree of /srv/repos/web
+├── api/
+└── web/
+```
 
-## Anti-patterns and their symptoms
+Each code member becomes a checkout detached at its source `HEAD`. Source repositories and branches stay untouched, and Pimote performs no branch operation. The user or an agent owns branch work. Persona members always stay symlinks.
 
-| Attempt                                                                 | Symptom                                                                                                                          | Fix                                                                                                               |
-| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| Nest a real persona folder inside another persona folder.               | Parent shows no children. The nested folder never registers. No session can start in it.                                         | Move the member back to its canonical home at top level, then link it with `pimote_update_hub_members` and `add`. |
-| Build a hub by hand with symlinks and custom `AGENTS.md` prose.         | Membership tools work from the symlink shape. Custom member lines do not match the seeded strings and stay untouched on removal. | Use `pimote_update_hub_members`. It edits only exact seeded lines and adds a managed block for later edits.       |
-| Manual `mv` of a folder, then an immediate read.                        | Cached listings lag. Curation remains at the old canonical path.                                                                 | Wait for cache expiry, then search again. Reapply curation at the new path.                                       |
-| Hand-edit the managed member block.                                     | Membership tools and the block drift apart.                                                                                      | Use `pimote_update_hub_members`. Edits outside the block markers stay yours.                                      |
-| Remove a worktree member or disband the hub with uncommitted changes.   | Rejection: `Worktree has uncommitted changes`. The hub stays on disk.                                                            | Commit or clean the checkout, then retry.                                                                         |
-| Disband a hub with edited generated metadata or unexpected hub content. | Rejection: generated content changed or the hub contains unrecognized content.                                                   | Restore generated files and remove disposable extra content, then retry.                                          |
-| Disband a hub whose worktree holds unreachable detached work.           | Rejection: the detached `HEAD` is not reachable from a branch ref.                                                               | Create a branch (local or pushed) so a ref holds the commit, then disband.                                        |
-| Disband while a session or pi process works in the hub.                 | Rejection: the hub is in use.                                                                                                    | Close the session and wait for external pi processes to leave, then retry.                                        |
+Change membership later with `pimote_update_hub_members`. It follows the hub's layout: a new code member detaches in a worktree hub and symlinks in a symlink hub. Never hand-edit inside the managed member block of a hub `AGENTS.md`.
+
+Retire a worktree hub with `pimote_disband_hub`. Never delete one by hand while its checkouts hold work that only the hub's Git still references.
+
+## Never do this
+
+| Attempt                                                      | Symptom                                                                                                               | Fix                                                                                        |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Create a folder inside an included folder                    | The parent shows no children, the new folder never appears, and no session starts in it.                              | Create it under a scan root or an intermediate skipped folder.                             |
+| Link an undiscovered directory into a hub by hand            | The walk shows a shortcut, but the folder is not a hub member and removal fails with `Not a member of <hub>: <path>`. | Add it with `pimote_update_hub_members`.                                                   |
+| Build a hub by hand and edit its `AGENTS.md` prose           | Membership tools leave the custom lines in place, and disband can reject the hub as edited content.                   | Create hubs with `pimote_create_folder`.                                                   |
+| Hand-edit the managed member block                           | Membership edits and the block drift apart, and disband rejects the hub: `Generated hub instructions were edited`.    | Change membership with `pimote_update_hub_members`, and edit prose outside the block only. |
+| Move a folder, then read at once                             | Listings lag, and curation stays recorded at the old canonical path.                                                  | Wait for cache expiry, then search again and reapply curation at the new path.             |
+| Remove a worktree member with uncommitted changes            | Rejection: `Worktree has uncommitted changes: <checkout>`.                                                            | Commit or discard the changes in that checkout.                                            |
+| Disband a hub with an edited generated file or extra content | Rejection: `Generated hub instructions were edited`, or `Unrecognized content in the hub`.                            | Restore the generated files, remove the extra content, and retry.                          |
+| Disband a hub whose checkout holds unreachable detached work | Rejection: `Detached HEAD in <checkout> is not reachable from a branch ref`.                                          | Create or push a branch that holds the commit, then retry.                                 |
+| Disband a hub with uncommitted hub-level changes             | Rejection: `The hub repository has uncommitted changes`.                                                              | Commit or discard the hub repository changes.                                              |
+| Disband a hub while a session or pi process works in it      | Rejection: `Hub is in use by an active session or pi process`.                                                        | Close the session and let external pi processes exit, then retry.                          |

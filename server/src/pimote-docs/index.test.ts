@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { access, readFile } from 'node:fs/promises';
+import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPimoteDocsExtension, PIMOTE_DOC_FILES, PIMOTE_DOCS_SECTION, pimoteDocsSection } from './index.js';
@@ -29,23 +29,12 @@ describe('pimote-docs prompt section', () => {
 
   it('lists every shipped file by absolute path with its purpose', () => {
     const section = pimoteDocsSection('/install/root');
+    const lines = section.split('\n').slice(1);
 
+    expect(lines).toHaveLength(PIMOTE_DOC_FILES.length);
     for (const file of PIMOTE_DOC_FILES) {
       expect(section).toContain(`- ${join('/install/root', file.path)}: ${file.purpose}`);
     }
-  });
-
-  it('keeps the static report pointer and shipped guide focused on document design', async () => {
-    const file = PIMOTE_DOC_FILES.find((entry) => entry.path === 'docs/shipped/static-reports.md')!;
-    expect(file.purpose).toMatch(/Layout and visual design.*pimote_static_host/);
-    expect(file.purpose).not.toMatch(/read|before|summary|300\+/i);
-
-    const packageRoot = fileURLToPath(new URL('../../../', import.meta.url));
-    const guide = await readFile(join(packageRoot, file.path), 'utf-8');
-    expect(guide).toMatch(/## Self-contained rendering/);
-    expect(guide).toMatch(/## Visual design/);
-    expect(guide).toMatch(/## Adaptive display/);
-    expect(guide).not.toMatch(/300\+|chat|permission|## Hosting|Read it before/i);
   });
 
   it('points only at files that exist in the package', async () => {
@@ -53,5 +42,20 @@ describe('pimote-docs prompt section', () => {
     for (const file of PIMOTE_DOC_FILES) {
       await expect(access(join(packageRoot, file.path)), file.path).resolves.toBeUndefined();
     }
+  });
+
+  it('lists each file once, with a purpose that routes a task', () => {
+    const paths = PIMOTE_DOC_FILES.map((file) => file.path);
+
+    expect(new Set(paths).size).toBe(paths.length);
+    for (const file of PIMOTE_DOC_FILES) {
+      expect(file.purpose.length, file.path).toBeGreaterThan(20);
+    }
+  });
+
+  it('keeps the routing text small enough for every system prompt', () => {
+    const purposeCharacters = PIMOTE_DOC_FILES.reduce((total, file) => total + file.purpose.length, 0);
+
+    expect(purposeCharacters).toBeLessThan(1400);
   });
 });

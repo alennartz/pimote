@@ -11,16 +11,36 @@ const PACKAGE_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 /** Shipped documentation files, relative to the package root, with the task each one serves. */
 export const PIMOTE_DOC_FILES: ReadonlyArray<{ path: string; purpose: string }> = [
   {
-    path: 'docs/shipped/manager.md',
-    purpose: 'Manager tool surface and freshness rules. Read it before folder, hub, or session work through the pimote_* tools.',
+    path: 'docs/shipped/tools.md',
+    purpose: 'Manager tool reference: which sessions carry the tools, every parameter and result, error recovery, and the spill guard.',
   },
   {
     path: 'docs/shipped/folders.md',
-    purpose: 'Folder model: nature detection, identity, leaves, hubs, and curation. Read it before you change folder structure or membership.',
+    purpose: 'Folder model: scan roots, prune rules, leaves, shortcuts, identity, curation, and cache freshness.',
+  },
+  {
+    path: 'docs/shipped/hubs.md',
+    purpose: 'Hub shapes: symlink and worktree layouts, the managed member block, membership edits, and disband guards.',
+  },
+  {
+    path: 'docs/shipped/sessions.md',
+    purpose: 'Session model: folders that accept sessions, live state, archive and resume, idle reaping, and interrupted runs.',
   },
   {
     path: 'docs/shipped/recipes.md',
-    purpose: 'Creation recipes for the four folder kinds, with expected shapes and anti-patterns. Read it before you create or restructure folders or hubs.',
+    purpose: 'Creation recipes for the four folder kinds, with expected layouts and failure modes. Read it before you create or restructure folders or hubs.',
+  },
+  {
+    path: 'docs/shipped/settings.md',
+    purpose: 'Native config fields and the global Settings catalog: file set, validation, and when each change applies.',
+  },
+  {
+    path: 'docs/shipped/extensions.md',
+    purpose: 'Pimote extension host: module locations, package entries, the factory context, reload, and diagnostics.',
+  },
+  {
+    path: 'docs/shipped/delivery.md',
+    purpose: 'Report hosting and file download offers: URLs, serving rules, lifetime, and the choice between them.',
   },
   {
     path: 'docs/shipped/static-reports.md',
@@ -29,7 +49,7 @@ export const PIMOTE_DOC_FILES: ReadonlyArray<{ path: string; purpose: string }> 
   {
     path: 'packages/sdk/README.md',
     purpose:
-      'The @pimote/sdk API for Pi session bridges and the @pimote/sdk/pimote host: panels, activity, folder sources, Settings files, package scopes, and reload lifecycles. Read it before you write an extension.',
+      'The @pimote/sdk API for session extensions and the process-global Pimote host: panels, activity, folder sources, Settings files, scopes, and reload. Read it before you write an extension.',
   },
 ];
 

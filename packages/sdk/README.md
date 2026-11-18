@@ -8,7 +8,7 @@ Pimote's extensibility SDK provides APIs for [Pi](https://github.com/earendil-wo
 - **`@pimote/sdk/subagents`** — register or discover a typed per-session subagent provider
 - **`@pimote/sdk/pimote`** — define global `PimoteExtension` factories for sources and Settings files
 
-The root `@pimote/sdk` import re-exports session-scoped modules and Pimote extension types.
+The root `@pimote/sdk` import re-exports the panels, folders, activity, and subagents modules, plus the Pimote extension types.
 
 ## Install
 
@@ -103,42 +103,120 @@ interface BodySection {
 - **`header.tag`** — Optional short label displayed next to the title.
 - **`body`** — Optional content sections, each with a style (`text`, `code`, or `secondary`).
 - **`footer`** — Optional array of short strings displayed at the bottom.
-- **`href`** — Optional same-origin URL. When set, the client renders the
-  entire card as a clickable link that opens in a new tab. Use for cards
-  that point at a hosted resource — e.g. a bundle served by pimote's
-  static-host tool.
+- **`href`** — Optional link. The session panel renders the whole card as a link that opens in a new tab. Use a same-origin path for a hosted resource, such as a bundle served by pimote's static-host tool (`/s/<slug>/`). Pimote does not validate the value, and other card lists render it without the new-tab behavior.
 
 ### How it works
 
 Detection uses pi's EventBus for a synchronous in-process round-trip — pimote's server listens for `pimote:detect:request` and responds on `pimote:detect:response`. Card updates are emitted on the `pimote:panels` channel, which pimote's session manager picks up and pushes to the web client over WebSocket.
 
-When pimote isn't present, the EventBus emit fires with no listener, `detect()` returns `null`, and there's zero overhead.
+When pimote isn't present, the EventBus emit fires with no listener and `detect()` returns `null`.
+
+### Repaint on claim
+
+The client can drop your cards: a browser claim and a session reset both clear the panel. Pimote then emits `pimote:panels:sync` with `{reason: 'claim' | 'reset'}` on the session's EventBus. Listen on that channel and call `updateCards()` again with your current cards.
+
+### Validation
+
+Pimote validates a card set before it stores it. One invalid card rejects the entire `updateCards()` message: the previous cards stay, and no error reaches your extension. Check the `Card` shape above against your payload.
+
+Cards from different namespaces merge in the panel. Pimote prefixes each rendered id with its namespace, so two extensions can both use `status`. Pushes coalesce, so a burst of updates can arrive as one repaint.
 
 ## Subagents — `@pimote/sdk/subagents`
 
-This module defines the per-session presentation provider for interactive subagent views. A provider publishes a root-relative hierarchy, typed subagent operations, one ordered replay cursor, and leases to existing child sessions. Pimote discovers providers on the root session's EventBus; child runtimes stay owned by the extension that created them.
+This module lets an extension supply the interactive subagent view for a root session. The provider publishes a root-relative hierarchy, typed operations, one ordered replay cursor, and leases to child sessions that already exist. Pimote discovers the provider on the root session's EventBus. The child runtimes stay owned by the extension that created them.
 
-A borrowed session exposes native `clearQueue` and `isBashRunning` alongside its conversation controls. Pimote restores drained messages to their senders. Providers list admitted commands in `capabilities.operations`. An absent list admits no commands. The owner-control port still authorizes Stop, teardown, and resurrection.
+The my-pi subagents extension implements this provider for Pimote.
 
-Use `registerProvider(pi, provider)` to publish a provider. Use `discoverProvider(pi, onProvider)` or the discovery handle to find providers, including late registration and replacement. Registration and discovery return cleanup functions or handles. Cleanup stops discovery or registration; it does not dispose the provider or child sessions. The `SubagentPresentationProvider` contract, typed operation data, cursors, snapshots, and borrowed-session lease types are exported from this module. The my-pi subagents extension implements this provider for Pimote.
+### Register and discover
 
-Provider operations carry typed placement through `toolCallId` and `contentIndex`, or through the containing custom entry's `entryId`. Pimote's server projector suppresses the declared native renderers and places each operation as typed subagent content inside its originating assistant row, preserving surrounding native content order.
+```ts
+import { discoverProvider, registerProvider } from '@pimote/sdk/subagents';
 
-Tool-backed final payloads use `{ operation, parameters, result }`. Parameters contain the complete normalized public inputs. Results retain output, errors, outcome flags, and received metadata. Target references use root-relative agent paths. Router correlation IDs stay inside my-pi. Asynchronous custom messages carry result-only payloads rather than invented tool parameters. Pimote renders these fields as labeled data and uses its transcript Markdown renderer for free-form prose.
+const unregister = registerProvider(pi, provider);
 
-Await starts only after complete tool arguments arrive. Omitted or empty `parameters.agents` means all agents. Named targets remain in the final parameters, including when a wait is interrupted or returns no child results. Send and respond retain progressive prose in `parameters.message`; send responses stream into `result.response`. Existing lifecycle event types remain unchanged.
+const discovery = discoverProvider(pi, (found) => {
+  // `found` is the current provider, or undefined when none is registered.
+});
+```
 
-An await result contains the child completions returned by that tool call. Standalone completion operations replace asynchronous subagent custom messages only. Pimote restores persisted operations through provider hydration. The provider normalizes older saved payloads into the current envelope rather than making the client decode extension details.
+Both functions accept an `ExtensionAPI` or a bare `EventBus`, so tests can use the seam without a full pi object.
+
+`registerProvider` publishes one provider per session EventBus. Registering again on the same bus deactivates the previous responder and delivers the new provider to a discovery that already runs. It returns a function that stops answering. Neither call owns the provider or its child sessions: cleanup stops registration or discovery only.
+
+`discoverProvider` reports the current provider, then every later registration and replacement. It returns a handle with `provider`, `subscribe` (alias `onProvider`), and `close`.
+
+`SUBAGENT_PROVIDER_REQUEST` and `SUBAGENT_PROVIDER_RESPONSE` name the two EventBus channels. The `register` and `discover` aliases match the longer names.
+
+### Provider contract
+
+A provider implements the lifecycle controls and the presentation feed:
+
+| Member                        | Purpose                                                          |
+| ----------------------------- | ---------------------------------------------------------------- |
+| `acquire(path)`               | Lease an existing child session for a view.                      |
+| `stop(request)`               | Stop one child.                                                  |
+| `teardown(path, incarnation)` | Tear one child down and report the agents it affected.           |
+| `resurrect(request)`          | Revive a torn-down child.                                        |
+| `snapshot()`                  | Manifest, nodes, cursor, and active operations for a fresh view. |
+| `subscribe(listener)`         | Stream provider events. Returns an unsubscribe function.         |
+| `replay(after?)`              | Return events after a cursor, or ask for a new snapshot.         |
+| `rehydrate({session, path})`  | Restore a persisted child view for one borrowed session.         |
+
+`snapshot()` reports `hiddenToolNames` and `hiddenCustomTypes` in its manifest. Pimote suppresses those native renderers and renders the provider's own operation data instead.
+
+### Operations and placement
+
+An operation names its kind, its root-relative agent `path`, and where it belongs in the transcript:
+
+```ts
+type SubagentPlacement = { toolCallId: string; contentIndex: number; entryId?: string } | { entryId: string };
+```
+
+Placement follows the operation's source. A tool-backed operation uses `toolCallId` and `contentIndex`. An operation carried by a custom entry uses `entryId`. Pimote places each operation inside its originating assistant row and keeps the surrounding native content in order.
+
+The operation kinds are `send`, `message_received`, `respond`, `await`, `delegation`, `completion`, `interrupt`, `teardown`, `resurrect`, and `protocol_error`.
+
+### Payload envelope
+
+A start and end payload for a tool-backed operation holds three fields:
 
 ```ts
 {
   operation: 'await',
   parameters: { agents: [['worker']] },
-  result: {
-    statuses: [{ path: ['worker'], state: 'idle', output: 'Checks passed.' }]
-  }
+  result: { statuses: [{ path: ['worker'], state: 'idle', output: 'Checks passed.' }] },
 }
 ```
+
+- `parameters` holds the complete normalized public inputs. Its type is `Record<string, unknown>`, so the shape is the provider's contract with its own tool, not an SDK guarantee.
+- `result` holds output, errors, outcome flags, and received metadata. Each kind narrows its own result type, such as `SubagentAwaitResult` or `SubagentCompletionResult`.
+- Target references use root-relative agent paths.
+
+An asynchronous custom message carries a result-only payload instead of inventing tool parameters. A completion operation replaces an asynchronous subagent message.
+
+Deltas arrive per kind: delegation children, send request and response text, respond text, and await statuses. Pimote renders these fields as labeled data and renders free-form prose with its transcript Markdown renderer.
+
+### Leases
+
+`acquire()` returns a `SubagentLease` for a child session that already exists. A lease exposes the borrowed `BorrowedAgentSession` with native `clearQueue` and `isBashRunning`, plus conversation controls.
+
+- `lease.session` throws after the lease is released.
+- `release()` is idempotent and never disposes the child.
+- A lease event is `rebound` with a new session and optional capabilities, or `closed` with reason `removed` or `unavailable`.
+
+Pimote restores a drained queue to the senders that queued the messages.
+
+### Capabilities
+
+`capabilities.operations` lists the identity-preserving commands the child view admits. An absent list admits no commands.
+
+`capabilities` also carries `renderer.visible`, `resolveModel`, `getSettings`, and `nativeBash` with its `admitted`, `execute`, and `abort` members.
+
+### Replay and persistence
+
+`replay(after)` returns events after a cursor, or `{kind: 'snapshot_required'}` with reason `epoch_changed` or `history_unavailable`. Pimote requests a new snapshot in that case.
+
+Pimote restores persisted operations through `rehydrate()` and then `replay()`. A provider normalizes older saved payloads into the current envelope, so the client never decodes extension-specific details.
 
 ## Pimote extensions — `@pimote/sdk/pimote`
 
@@ -163,7 +241,13 @@ const extension: PimoteExtension = (context) => {
 export default extension;
 ```
 
-`registerSource()` contributes folder discovery. `registerFile()` contributes a global Settings tab. Relative file paths resolve from the extension entry module, while absolute and leading-`~` paths remain explicit. Registrations become inert after shutdown or reload. The host replaces all extension registrations on `/reload`, awaits shutdown handlers, and reports isolated diagnostics while continuing valid modules. Shutdown handlers have no timeout, so an extension must let them settle. Folder creation remains a Pimote core capability, so the public SDK has no external creator registration seam.
+`registerSource()` contributes folder discovery. `registerFile()` contributes a global Settings tab. Relative file paths resolve from the extension entry module, while absolute and leading-`~` paths remain explicit. `on()` accepts only `'shutdown'` and returns a function that removes the handler.
+
+Registrations count only while the factory runs. The host seals the context when the factory resolves, so a later call does nothing and reports nothing. Await setup before you return, and keep the context out of timers and event handlers.
+
+Registrations become inert after shutdown or reload. The host replaces all extension registrations on `/reload`, awaits shutdown handlers, and reports isolated diagnostics while continuing valid modules. Shutdown handlers have no timeout, so an extension must let them settle. Diagnostics reach the server log only.
+
+Folder creation remains a Pimote core capability, so the public SDK has no external creator registration seam.
 
 ## Folders — `@pimote/sdk/folders`
 
@@ -172,6 +256,8 @@ This type-only module defines the source discovery seam used by `PimoteExtension
 ### `FolderSource`
 
 `list()` returns current entries without mutation. The optional `onFolderOpen(folderPath)` hook is awaited before row, new-session, and manager opens. A thrown error aborts the open.
+
+Pimote owns the facts it can observe. For a path that exists, Pimote probes `branch`, `dirty`, `ahead`, and `behind` itself and replaces the source values, while `tags` and `lastActivity` merge into the row. A source entry whose path classifies as a persona home appears as a persona row, not a repo row. Duplicate hub paths keep the first source, and a throwing `list()` skips only that source.
 
 ### Entry shapes
 
@@ -202,7 +288,9 @@ Repo facts: `path`, `name`, `branch` (`string | null`), `dirty`, `ahead`, `behin
 
 Answer pimote's background-activity poll so the idle reaper does not close a session that holds live work (for example: background subagents still running while the root session is settled).
 
-Pimote reaps sessions that are idle past a timeout, with no connected client and no running bash command. Before closing, it emits `pimote:activity:request` on the session's EventBus and reads the answer synchronously. Register a responder if your extension manages work the root session cannot see:
+Pimote reaps sessions that hold no work. It checks every 60 seconds and closes a session whose idle time exceeds `idleTimeout`, which defaults to 30 minutes. A session is busy while a browser observes it, a voice call is active, a bash command runs or is dispatching, tree navigation runs, a turn has not settled, or an extension reports activity.
+
+Before closing, Pimote emits `pimote:activity:request` on the session's EventBus and reads the answer synchronously. Register a responder if your extension manages work the root session cannot see:
 
 ```ts
 import { answerActivity } from '@pimote/sdk/activity';
@@ -217,7 +305,9 @@ export default extension;
 
 The callback must be synchronous — the round-trip is a plain inline emit, so an async answer is indistinguishable from no answer. It is read at poll time, not registration time, so it may consult live state through a stable owner object. If it throws, the responder answers `active: true`: a broken predicate parks the session (recoverable by explicit close) instead of destroying work.
 
-What counts as "live work" is extension policy — pimote learns only the boolean. With no responder, pimote reaps as it always did.
+What counts as "live work" is extension policy — pimote learns only the boolean. With no responder, pimote applies its own busy rule.
+
+The same answer also holds a session open when archiving or disbanding a hub needs it to close, so an extension that answers `true` forever keeps its sessions alive across those operations.
 
 ### API
 
