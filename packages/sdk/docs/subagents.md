@@ -145,3 +145,7 @@ type FeedCursor = { epoch: string; sequence: number };
 `snapshot()` returns a cursor with the state it describes, and each event advances the sequence. A provider replies to `replay(after)` from that cursor.
 
 Change the epoch when the previous sequence no longer means anything, such as after a provider restart. Pimote then gets `{ kind: 'snapshot_required' }` with reason `epoch_changed` and reads a fresh snapshot instead of a partial replay. Use `history_unavailable` when the events exist but are gone.
+
+## Exports
+
+`registerProvider`, `discoverProvider`, their aliases `register` and `discover`, the channel constants `SUBAGENT_PROVIDER_REQUEST` and `SUBAGENT_PROVIDER_RESPONSE`, and the types for providers, operations, placement, nodes, leases, capabilities, cursors, and replay.

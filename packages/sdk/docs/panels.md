@@ -1,6 +1,6 @@
 # Panels
 
-The panels module pushes structured cards from a pi extension into the Pimote web client. A card is a small block of text in the session panel. Use cards for status, build results, or links to a hosted report. Do not use them for prose answers, and do not use them for dialogs: pi's own UI APIs cover dialogs.
+The panels module pushes structured cards from a pi extension into the Pimote web client. A card is a small block of text in the session panel. Use cards for status, build results, or links to a hosted report. Do not use them for prose answers, and do not use them for dialogs. pi's own [extension UI APIs](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md) cover dialogs.
 
 ## Detect Pimote
 
@@ -96,3 +96,7 @@ Check your payload against the `Card` shape above. Pimote does not log the rejec
 Cards from all namespaces merge into one panel list. Namespaces keep insertion order, and each namespace keeps its own card order. Pimote coalesces pushes, so a burst of `updateCards` calls can arrive as a single repaint. Do not emit per token.
 
 Cards are not persisted. A session that restarts runs the extension factory again, so paint in the factory or in a `session_start` handler.
+
+## Exports
+
+`detect`, and the types `Card`, `CardColor`, `BodySection`, `BodySectionStyle`, `PanelHandle`, and `PanelMessage`.

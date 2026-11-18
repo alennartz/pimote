@@ -50,3 +50,7 @@ That is your policy. Pimote learns only a boolean, and it never inspects what th
 `askActivity(bus)` is the Pimote-side twin of the poll. It emits `pimote:activity:request`, reads every answer inline, and returns `true` when any responder claims work. It fails open: no responder means no background work.
 
 Extensions do not call it. It ships in the SDK so the whole protocol lives in one module and tests can drive both ends.
+
+## Exports
+
+`answerActivity`, `askActivity`, and the type `ActivityMessage`.

@@ -61,6 +61,26 @@ export default extension;
 
 In a pi terminal, `detect()` returns `null` and the extension does nothing.
 
+## EventBus channels
+
+Pimote talks to session extensions over pi's EventBus. The SDK wraps most channels in a function. These are the channels themselves, so a non-TypeScript consumer can speak them directly.
+
+| Channel                     | Direction           | Payload                                                             | Wrapped by             |
+| --------------------------- | ------------------- | ------------------------------------------------------------------- | ---------------------- |
+| `pimote:detect:request`     | Extension to Pimote | None.                                                               | `detect()`             |
+| `pimote:detect:response`    | Pimote to extension | `{detected: true}`                                                  | `detect()`             |
+| `pimote:panels`             | Extension to Pimote | `{type: 'cards', namespace, cards}` or `{type: 'clear', namespace}` | `PanelHandle`          |
+| `pimote:panels:sync`        | Pimote to extension | `{reason: 'claim' \| 'reset'}`                                      | None. Listen directly. |
+| `pimote:activity:request`   | Pimote to extension | None.                                                               | `askActivity()`        |
+| `pimote:activity:response`  | Extension to Pimote | `{active: boolean}`                                                 | `answerActivity()`     |
+| `pimote:subagents:request`  | Pimote to extension | `{version?}`                                                        | `discoverProvider()`   |
+| `pimote:subagents:response` | Extension to Pimote | `{provider}`                                                        | `registerProvider()`   |
+| `pimote:navigate`           | Extension to Pimote | `{url}`                                                             | None. Emit directly.   |
+
+`pimote:navigate` asks the browser to open a URL in a new tab. Pimote forwards it only for the session the reader is viewing, and a popup blocker can drop it. Emit a path on the Pimote origin, such as `/s/<slug>/`.
+
+Every channel is per session. A message never crosses into another session.
+
 ## Versioning
 
 The SDK follows the Pimote version. A breaking change ships with a major or a pre-1.0 minor bump and a note in [Breaking changes](../README.md#breaking-changes). Read that section before you upgrade across a minor version in the 0.x range.

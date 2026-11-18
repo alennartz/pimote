@@ -29,7 +29,9 @@ A missing extensions directory is not an error. The host starts with no extensio
 
 ## Package entries
 
-A pi package contributes Pimote extensions only through its `pimote.extensions` manifest field, resolved against the installed package root:
+A pi package is a pi concept. See pi's [Pi Packages](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md) page for install, scope, and manifest discovery. Pimote reads one field from that manifest:
+
+A package contributes Pimote extensions only through its `pimote.extensions` field, resolved against the installed package root:
 
 ```json
 {

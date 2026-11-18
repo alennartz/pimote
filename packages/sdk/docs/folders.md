@@ -140,3 +140,7 @@ const source: FolderSource = {
 The listing holds for 30 seconds and serves stale rows while a background refresh runs, so `list` runs on that cadence and after invalidation, not per request. A refresh that changes a row broadcasts it to connected clients.
 
 A cold read waits for your `list`. Keep a network fetch inside it bounded, or an unreachable service delays the whole listing.
+
+## Exports
+
+The module is type-only: `FolderSource`, `SourceEntry`, `RepoSourceEntry`, `HubSourceEntry`, and `RepoInfo`. Pimote owns the runtime side.
