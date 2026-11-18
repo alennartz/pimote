@@ -50,7 +50,7 @@ import type {
   BashResult,
   FolderInfo,
   BashExecutionUpdateEvent,
-  AbortResponseData,
+  CommandInfo,
   QueueUpdateEvent,
   QueuedDraftsRestoredEvent,
   AgentPath,
@@ -96,10 +96,6 @@ export const MAX_BASH_LIVE_OUTPUT_BYTES = 256 * 1024;
 export const MAX_TOOL_PARTIAL_CHARS = 256 * 1024;
 
 const bashTextEncoder = new TextEncoder();
-/** Tracked live-output byte counts per child attachment, so a growing bash
- *  buffer is appended without re-encoding the accumulated output per delta. */
-const attachmentBashBytes = new WeakMap<object, Map<string, number>>();
-
 export type SubagentPath = AgentPath;
 
 /** Stable key used for attachment state. JSON preserves path segment identity. */
@@ -126,43 +122,14 @@ function isSubagentTopologyEvent(event: WireSubagentTopologyEvent): boolean {
 /** A local close keeps its own reason; the server never sends `released`. */
 export type SubagentAttachmentCloseReason = SubagentViewClosedEvent['reason'] | 'released';
 
-/** Client state for one root-relative child attachment. This state never enters
- * `sessions`, `activeSessions`, or URL routing. */
-export interface SubagentAttachmentState {
+/** Session state plus the identity and lifetime of its borrowed child view. */
+export interface SubagentAttachmentState extends PerSessionState {
   readonly rootSessionId: string;
   readonly path: AgentPath;
   incarnation: string;
-  childSessionId: string;
-  state: SessionState;
-  /** Child-local meta is kept beside the native state so inspectors and
-   *  surface controls never need to promote a child into `sessions`. */
-  contextUsage: { percent: number | null; contextWindow: number } | null;
-  lifetimeCostUsd: number;
-  usageBreakdown?: PimoteUsageBreakdown;
-  lastBotActivityTimestamp: string | null;
-  messageKeys: string[];
-  optimisticEntries: OptimisticEntry[];
-  bashExecutions: Record<string, BashExecutionState>;
-  messages: PimoteAgentMessage[];
-  /** Raw native branch at the last child snapshot boundary. */
-  branchEntryIds?: readonly string[];
-  /** Alias kept for consumers that call the saved transcript `transcript`. */
-  transcript: PimoteAgentMessage[];
-  streamingMessage: StreamingMessage | null;
-  /** Stable render key for the child partial, kept separate from the native message. */
-  streamingKey: string | null;
-  runningToolCallIds: string[];
-  /** Projected subagent blocks and accumulated in-flight operations. */
-  projectedSubagentContent: SubagentContentState;
-  /** Last child EventBuffer position delivered by the server. */
   viewCursor: number;
-  /** Observer cursor kept separately so reconnect code can reason about gaps. */
-  observerCursor: number;
-  pendingSteeringMessages: string[];
-  draftText: string;
   closed: boolean;
   closeReason?: SubagentAttachmentCloseReason;
-  toolExecutions: Record<string, ToolExecutionRecord>;
 }
 
 export interface SubagentRootState {
@@ -361,14 +328,6 @@ function rebuildToolExecutionsFromMessages(messages: readonly PimoteAgentMessage
   return executions;
 }
 
-function cloneSessionState(state: SessionState): SessionState {
-  return {
-    ...state,
-    ...(state.model ? { model: { ...state.model } } : { model: null }),
-    availableThinkingLevels: Array.isArray(state.availableThinkingLevels) ? [...state.availableThinkingLevels] : [],
-  };
-}
-
 /** Zip saved tail IDs into finalized messages, skipping entries Pi never persists. */
 function hydrateMessageEntryIds(session: Pick<PerSessionState, 'messages' | 'messageKeys' | 'optimisticEntries'>, ids: readonly string[]): void {
   const pendingKeys = session.optimisticEntries.map((entry) => entry.key);
@@ -434,220 +393,6 @@ function applyProjectedEventToStreaming(transcript: ProjectedTranscript & Pick<P
   if (!operationIsStreaming && !streamingParentTargetsFutureRow(event.parentMessageId, transcript)) return false;
   transcript.streamingMessage = applySubagentContentToStreaming(streaming, event);
   return true;
-}
-
-function applyChildNativeEvent(attachment: SubagentAttachmentState, event: PimoteEvent, generateKeys: (count: number) => string[]): void {
-  if (isSubagentContentEvent(event)) {
-    if (applyProjectedEventToStreaming(attachment, event)) return;
-    applyProjectedEventToTranscript(attachment, event, generateKeys);
-    attachment.transcript = attachment.messages;
-    attachment.state = { ...attachment.state, messageCount: attachment.messages.length };
-    return;
-  }
-  if (event.type === 'full_resync') {
-    const full = event as FullResyncEvent;
-    attachment.state = cloneSessionState(full.state);
-    attachment.messages = [...full.messages];
-    attachment.projectedSubagentContent = hydrateSubagentContent(full.messages, full.activeSubagentContent ?? []);
-    attachment.messages = [...attachment.projectedSubagentContent.messages];
-    attachment.branchEntryIds = full.branchEntryIds !== undefined ? [...full.branchEntryIds] : undefined;
-    attachment.transcript = attachment.messages;
-    attachment.messageKeys = attachment.messages.map((_, index) => `child-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${index}`);
-    attachment.optimisticEntries = [];
-    attachmentBashBytes.delete(attachment);
-    attachment.bashExecutions = {};
-    attachment.streamingMessage = full.streamingMessage ? { ...full.streamingMessage, content: full.streamingMessage.content.map((block) => ({ ...block })) } : null;
-    attachment.streamingKey = full.streamingMessage ? `child-stream-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${attachment.childSessionId}` : null;
-    attachment.runningToolCallIds = [...(full.runningToolCallIds ?? [])];
-    attachment.toolExecutions = rebuildToolExecutionsFromMessages(attachment.messages, attachment.runningToolCallIds);
-    attachment.bashExecutions = {};
-    return;
-  }
-  switch (event.type) {
-    case 'queue_update':
-      attachment.pendingSteeringMessages = [...(event as QueueUpdateEvent).steering];
-      break;
-    case 'agent_start':
-      attachment.state = { ...attachment.state, isStreaming: true };
-      break;
-    case 'agent_settled':
-      attachment.state = { ...attachment.state, isStreaming: false, isCompacting: false };
-      attachment.streamingMessage = null;
-      attachment.streamingKey = null;
-      attachment.runningToolCallIds = [];
-      break;
-    case 'agent_end': {
-      const end = event as AgentEndEvent;
-      if (!end.willRetry) {
-        attachment.streamingMessage = null;
-        attachment.streamingKey = null;
-        if (end.messageEntryIds) hydrateMessageEntryIds(attachment, end.messageEntryIds);
-      }
-      break;
-    }
-    case 'auto_retry_end':
-      if (!(event as AutoRetryEndEvent).success) {
-        attachment.state = { ...attachment.state, isStreaming: false };
-        attachment.streamingMessage = null;
-        attachment.streamingKey = null;
-      }
-      break;
-    case 'message_start': {
-      const start = event as MessageStartEvent;
-      attachment.streamingKey = `child-stream-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${attachment.childSessionId}`;
-      attachment.streamingMessage = {
-        role: start.role,
-        content: [],
-        ...(start.usage ? { usage: start.usage } : {}),
-        ...(start.customType ? { customType: start.customType } : {}),
-        ...(start.display !== undefined ? { display: start.display } : {}),
-      };
-      break;
-    }
-    case 'message_update': {
-      const update = event as MessageUpdateEvent;
-      const streaming = attachment.streamingMessage;
-      if (!streaming) break;
-      const content = streaming.content.slice();
-      if (update.subtype === 'start') {
-        content[update.contentIndex] = {
-          type: update.content.type,
-          text: '',
-          streaming: true,
-          ...(update.toolCallId ? { toolCallId: update.toolCallId } : {}),
-          ...(update.toolName ? { toolName: update.toolName } : {}),
-        };
-      } else if (update.subtype === 'delta') {
-        const block = content[update.contentIndex];
-        if (block) content[update.contentIndex] = { ...block, text: `${block.text ?? ''}${update.content.text}` };
-      } else {
-        const block = content[update.contentIndex];
-        if (block) content[update.contentIndex] = { ...block, streaming: false };
-      }
-      attachment.streamingMessage = { ...streaming, content, ...(update.usage ? { usage: update.usage } : {}) };
-      break;
-    }
-    case 'message_end': {
-      const end = event as MessageEndEvent;
-      const ownEntry =
-        end.message.role === 'user' && end.clientMessageId !== undefined ? attachment.optimisticEntries.find((entry) => entry.clientMessageId === end.clientMessageId) : undefined;
-      const ownIndex = ownEntry ? attachment.messageKeys.indexOf(ownEntry.key) : -1;
-      if (ownEntry && ownIndex >= 0) {
-        const messages = [...attachment.messages];
-        messages[ownIndex] = end.message;
-        attachment.messages = messages;
-        attachment.optimisticEntries = attachment.optimisticEntries.filter((entry) => entry !== ownEntry);
-        attachment.projectedSubagentContent = projectMessage(attachment.projectedSubagentContent, end.message, ownIndex, attachment.messages);
-      } else {
-        attachment.messages = [...attachment.messages, end.message];
-        attachment.messageKeys = [...attachment.messageKeys, `child-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${attachment.messages.length - 1}`];
-        attachment.projectedSubagentContent = projectMessage(attachment.projectedSubagentContent, end.message, attachment.messages.length - 1, attachment.messages);
-      }
-      attachment.transcript = attachment.messages;
-      attachment.state = { ...attachment.state, messageCount: attachment.messages.length };
-      attachment.streamingMessage = null;
-      attachment.streamingKey = null;
-      break;
-    }
-    case 'custom_entry': {
-      attachment.messages = [...attachment.messages, (event as CustomEntryEvent).message];
-      attachment.projectedSubagentContent = projectMessage(
-        attachment.projectedSubagentContent,
-        (event as CustomEntryEvent).message,
-        attachment.messages.length - 1,
-        attachment.messages,
-      );
-      attachment.transcript = attachment.messages;
-      attachment.messageKeys = [...attachment.messageKeys, `child-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${attachment.messages.length - 1}`];
-      attachment.state = { ...attachment.state, messageCount: attachment.messages.length };
-      break;
-    }
-    case 'bash_execution_update': {
-      const update = event as BashExecutionUpdateEvent;
-      const running = Object.values(attachment.bashExecutions).find((execution) => execution.status === 'running' && (!update.id || execution.id === update.id));
-      if (running) {
-        let runningBytes = attachmentBashBytes.get(attachment);
-        if (!runningBytes) {
-          runningBytes = new Map(); // eslint-disable-line svelte/prefer-svelte-reactivity -- byte bookkeeping, never read reactively
-          attachmentBashBytes.set(attachment, runningBytes);
-        }
-        const bounded = appendBoundedBashOutput(running.output, update.delta, MAX_BASH_LIVE_OUTPUT_BYTES, runningBytes.get(running.id));
-        runningBytes.set(running.id, bounded.bytes);
-        attachment.bashExecutions = {
-          ...attachment.bashExecutions,
-          [running.id]: {
-            ...running,
-            output: bounded.output,
-            ...(running.outputTruncated || bounded.truncated ? { outputTruncated: true } : {}),
-          },
-        };
-      }
-      break;
-    }
-    case 'tool_execution_start': {
-      const start = event as ToolExecutionStartEvent;
-      attachment.toolExecutions = {
-        ...attachment.toolExecutions,
-        [start.toolCallId]: { name: start.toolName, args: start.args, partialResult: '', status: 'running' },
-      };
-      if (!attachment.runningToolCallIds.includes(start.toolCallId)) attachment.runningToolCallIds = [...attachment.runningToolCallIds, start.toolCallId];
-      break;
-    }
-    case 'tool_execution_update': {
-      const update = event as ToolExecutionUpdateEvent;
-      const execution = attachment.toolExecutions[update.toolCallId];
-      if (execution && execution.partialResult.length < MAX_TOOL_PARTIAL_CHARS) {
-        const remaining = MAX_TOOL_PARTIAL_CHARS - execution.partialResult.length;
-        attachment.toolExecutions = {
-          ...attachment.toolExecutions,
-          [update.toolCallId]: { ...execution, partialResult: execution.partialResult + update.content.slice(0, remaining) },
-        };
-      }
-      break;
-    }
-    case 'tool_execution_end': {
-      const end = event as ToolExecutionEndEvent;
-      const prior = attachment.toolExecutions[end.toolCallId];
-      const reduced = reduceEndEventResult(end.result);
-      attachment.toolExecutions = {
-        ...attachment.toolExecutions,
-        [end.toolCallId]: {
-          name: prior?.name ?? '',
-          args: prior?.args,
-          partialResult: prior?.partialResult ?? '',
-          status: 'completed',
-          result: reduced.text,
-          ...(reduced.data !== undefined ? { data: reduced.data } : {}),
-          ...(end.isError !== undefined ? { isError: end.isError } : {}),
-          ...(end.durationMs !== undefined ? { durationMs: end.durationMs } : {}),
-        },
-      };
-      attachment.runningToolCallIds = attachment.runningToolCallIds.filter((id) => id !== end.toolCallId);
-      break;
-    }
-    case 'auto_compaction_start':
-      attachment.state = { ...attachment.state, isCompacting: true };
-      break;
-    case 'auto_compaction_end':
-      attachment.state = { ...attachment.state, isCompacting: false };
-      break;
-    case 'session_settings_changed': {
-      const settings = event as SessionSettingsChangedEvent;
-      attachment.state = {
-        ...attachment.state,
-        model: settings.model,
-        thinkingLevel: settings.thinkingLevel,
-        availableThinkingLevels: [...settings.availableThinkingLevels],
-        autoCompactionEnabled: settings.autoCompactionEnabled,
-      };
-      break;
-    }
-    case 'session_state_changed': {
-      const changed = event as SessionStateChangedEvent;
-      if (changed.sessionName !== undefined) attachment.state = { ...attachment.state, sessionName: changed.sessionName || undefined };
-      break;
-    }
-  }
 }
 
 export interface BashExecutionState {
@@ -851,6 +596,20 @@ export class SessionRegistry {
   /** Get the currently viewed session's state */
   get viewed(): PerSessionState | null {
     return this.sessions[this.viewedSessionId!] ?? null;
+  }
+
+  get viewedConversation(): PerSessionState | null {
+    return this.viewedSubagentAttachment ?? this.viewed;
+  }
+
+  getSessionState(sessionId: string): PerSessionState | null {
+    if (this.sessions[sessionId]) return this.sessions[sessionId];
+    for (const root of Object.values(this.subagentRoots)) {
+      for (const attachment of Object.values(root.attachments)) {
+        if (!attachment.closed && attachment.sessionId === sessionId) return attachment;
+      }
+    }
+    return null;
   }
 
   /** List sessions that belong to the server restore set, in chip order. */
@@ -1090,83 +849,6 @@ export class SessionRegistry {
     this.subagentNoticeVersion += 1;
   }
 
-  setSubagentDraftText(rootSessionId: string, path: AgentPath, text: string): void {
-    const attachment = this.getSubagentAttachment(rootSessionId, path);
-    if (attachment) attachment.draftText = text;
-  }
-
-  getSubagentDraftText(rootSessionId: string, path: AgentPath): string {
-    return this.getSubagentAttachment(rootSessionId, path)?.draftText ?? '';
-  }
-
-  startSubagentBash(rootSessionId: string, path: AgentPath, execution: Pick<BashExecutionState, 'id' | 'command' | 'excludeFromContext'>): void {
-    const attachment = this.getSubagentAttachment(rootSessionId, path);
-    if (!attachment || attachment.closed) return;
-    let bytesByExecution = attachmentBashBytes.get(attachment);
-    if (!bytesByExecution) {
-      bytesByExecution = new Map(); // eslint-disable-line svelte/prefer-svelte-reactivity -- byte bookkeeping, never read reactively
-      attachmentBashBytes.set(attachment, bytesByExecution);
-    }
-    bytesByExecution.set(execution.id, 0);
-    attachment.bashExecutions = {
-      ...attachment.bashExecutions,
-      [execution.id]: { ...execution, output: '', status: 'running' },
-    };
-  }
-
-  completeSubagentBash(rootSessionId: string, path: AgentPath, id: string, result: BashResult): void {
-    const attachment = this.getSubagentAttachment(rootSessionId, path);
-    const execution = attachment?.bashExecutions[id];
-    if (!attachment || !execution) return;
-    attachmentBashBytes.get(attachment)?.delete(id);
-    const bounded = appendBoundedBashOutput('', result.output, MAX_BASH_LIVE_OUTPUT_BYTES);
-    const boundedResult: BashResult = { ...result, output: bounded.output, truncated: result.truncated || bounded.truncated };
-    attachment.bashExecutions = {
-      ...attachment.bashExecutions,
-      [id]: {
-        ...execution,
-        output: bounded.output,
-        status: result.cancelled ? 'cancelled' : 'complete',
-        result: boundedResult,
-        ...(boundedResult.truncated ? { outputTruncated: true } : {}),
-      },
-    };
-  }
-
-  failSubagentBash(rootSessionId: string, path: AgentPath, id: string, error: string): void {
-    const attachment = this.getSubagentAttachment(rootSessionId, path);
-    const execution = attachment?.bashExecutions[id];
-    if (!attachment || !execution) return;
-    attachmentBashBytes.get(attachment)?.delete(id);
-    attachment.bashExecutions = { ...attachment.bashExecutions, [id]: { ...execution, status: 'error', error } };
-  }
-
-  addSubagentOptimisticUserMessage(rootSessionId: string, path: AgentPath, text: string, clientMessageId?: string, images: readonly string[] = []): void {
-    const attachment = this.getSubagentAttachment(rootSessionId, path);
-    if (!attachment || attachment.closed) return;
-    const content: PimoteMessageContent[] = text ? [{ type: 'text', text }] : [];
-    content.push(...imageContentBlocksFromDataUrls(images));
-    const message: PimoteAgentMessage = { role: 'user', content };
-    const key = `child-${rootSessionId}-${JSON.stringify(path)}-${attachment.messages.length}`;
-    attachment.messages = [...attachment.messages, message];
-    attachment.transcript = attachment.messages;
-    attachment.messageKeys = [...attachment.messageKeys, key];
-    if (clientMessageId) attachment.optimisticEntries = [...attachment.optimisticEntries, { key, clientMessageId }];
-    attachment.state = { ...attachment.state, messageCount: attachment.messages.length };
-  }
-
-  dropSubagentOptimisticUserMessage(attachment: SubagentAttachmentState, clientMessageId: string): void {
-    const entry = attachment.optimisticEntries.find((item) => item.clientMessageId === clientMessageId);
-    if (!entry) return;
-    attachment.optimisticEntries = attachment.optimisticEntries.filter((item) => item !== entry);
-    const index = attachment.messageKeys.indexOf(entry.key);
-    if (index === -1) return;
-    attachment.messages = attachment.messages.filter((_, i) => i !== index);
-    attachment.transcript = attachment.messages;
-    attachment.messageKeys = attachment.messageKeys.filter((_, i) => i !== index);
-    attachment.state = { ...attachment.state, messageCount: attachment.messages.length };
-  }
-
   private notifySubagentClosed(rootSessionId: string, path: AgentPath, reason: SubagentAttachmentCloseReason, node?: SubagentNodeSnapshot): void {
     const selected = this.selectedSubagentPaths[rootSessionId];
     if (selected && (sameAgentPath(selected, path) || pathStartsWith(path, selected))) {
@@ -1199,33 +881,15 @@ export class SessionRegistry {
   }
 
   private createSubagentAttachment(rootSessionId: string, snapshot: SubagentViewSnapshot): SubagentAttachmentState {
-    const state = cloneSessionState(snapshot.state);
-    const messages = [...(snapshot.messages ?? [])];
+    const node = this.getSubagentNode(rootSessionId, snapshot.path);
+    const parent = this.sessions[rootSessionId];
     return {
+      ...this.createSessionState(snapshot.childSessionId, node?.cwd ?? parent?.folderPath ?? '', snapshot.path.at(-1) ?? 'subagent'),
       rootSessionId,
       path: copyAgentPath(snapshot.path),
       incarnation: snapshot.incarnation,
-      childSessionId: snapshot.childSessionId,
-      state,
-      contextUsage: null,
-      lifetimeCostUsd: 0,
-      lastBotActivityTimestamp: null,
-      messageKeys: messages.map((_, index) => `child-${rootSessionId}-${JSON.stringify(snapshot.path)}-${index}`),
-      optimisticEntries: [],
-      bashExecutions: {},
-      messages,
-      ...(snapshot.branchEntryIds !== undefined ? { branchEntryIds: [...snapshot.branchEntryIds] } : {}),
-      transcript: messages,
-      streamingMessage: snapshot.streamingMessage ? { ...snapshot.streamingMessage, content: snapshot.streamingMessage.content.map((block) => ({ ...block })) } : null,
-      streamingKey: snapshot.streamingMessage ? `child-stream-${rootSessionId}-${JSON.stringify(snapshot.path)}-${snapshot.childSessionId}` : null,
-      runningToolCallIds: [...(snapshot.runningToolCallIds ?? [])],
-      projectedSubagentContent: hydrateSubagentContent(messages, snapshot.activeSubagentContent ?? []),
       viewCursor: snapshot.viewCursor,
-      observerCursor: snapshot.viewCursor,
-      pendingSteeringMessages: [...(snapshot.pendingSteeringMessages ?? [])],
-      draftText: '',
       closed: false,
-      toolExecutions: rebuildToolExecutionsFromMessages(messages, snapshot.runningToolCallIds ?? []),
     };
   }
 
@@ -1290,7 +954,7 @@ export class SessionRegistry {
   /** Add an optimistic user message so it renders immediately before the server round-trip.
    *  `clientMessageId` must match the prompt command's id. */
   addOptimisticUserMessage(sessionId: string, text: string, clientMessageId: string, images: readonly string[] = []): void {
-    const session = this.sessions[sessionId];
+    const session = this.getSessionState(sessionId);
     if (!session) return;
 
     const content: PimoteMessageContent[] = [];
@@ -1309,7 +973,7 @@ export class SessionRegistry {
   /** Remove an optimistic user message whose prompt will not echo it
    *  (queued, handled, rejected, or lost with the connection). */
   dropOptimisticUserMessage(sessionId: string, clientMessageId: string): void {
-    const session = this.sessions[sessionId];
+    const session = this.getSessionState(sessionId);
     if (!session) return;
     const entry = session.optimisticEntries.find((e) => e.clientMessageId === clientMessageId);
     if (!entry) return;
@@ -1327,7 +991,7 @@ export class SessionRegistry {
   }
 
   clearAssistantUsageTracking(sessionId: string): void {
-    const session = this.sessions[sessionId];
+    const session = this.getSessionState(sessionId);
     if (session) this.resetAssistantUsageTracking(session, true);
   }
 
@@ -1358,7 +1022,7 @@ export class SessionRegistry {
 
   /** Save draft text for a session and notify a mounted composer, if any. */
   setDraftText(sessionId: string, text: string): void {
-    const session = this.sessions[sessionId];
+    const session = this.getSessionState(sessionId);
     if (session) session.draftText = text;
     setEditorText(sessionId, text);
   }
@@ -1504,51 +1168,28 @@ export class SessionRegistry {
     const root = this.ensureSubagentRoot(snapshot.sessionId);
     const key = subagentPathKey(snapshot.path);
     const current = root.attachments[key];
-    const rebind = current !== undefined && (current.childSessionId !== snapshot.childSessionId || current.incarnation !== snapshot.incarnation);
-    if (current && !current.closed && !rebind && snapshot.viewCursor <= current.observerCursor) return current;
+    const rebind = current !== undefined && (current.sessionId !== snapshot.childSessionId || current.incarnation !== snapshot.incarnation);
+    if (current && !current.closed && !rebind && snapshot.viewCursor <= current.viewCursor) return current;
     const attachment = current && !rebind ? current : this.createSubagentAttachment(snapshot.sessionId, snapshot);
-    const draftText = current?.draftText ?? '';
+    attachment.draftText = current?.draftText ?? '';
     attachment.incarnation = snapshot.incarnation;
-    attachment.childSessionId = snapshot.childSessionId;
-    attachment.state = cloneSessionState(snapshot.state);
-    attachment.messages = [...(snapshot.messages ?? [])];
-    attachment.projectedSubagentContent = hydrateSubagentContent(attachment.messages, snapshot.activeSubagentContent ?? []);
-    attachment.messages = [...attachment.projectedSubagentContent.messages];
-    attachment.branchEntryIds = snapshot.branchEntryIds !== undefined ? [...snapshot.branchEntryIds] : undefined;
-    attachment.transcript = attachment.messages;
-    attachment.messageKeys = attachment.messages.map((_, index) => `child-${snapshot.sessionId}-${JSON.stringify(snapshot.path)}-${index}`);
-    attachment.optimisticEntries = [];
-    attachmentBashBytes.delete(attachment);
-    attachment.bashExecutions = {};
-    attachment.streamingMessage = snapshot.streamingMessage ? { ...snapshot.streamingMessage, content: snapshot.streamingMessage.content.map((block) => ({ ...block })) } : null;
-    attachment.streamingKey = snapshot.streamingMessage ? `child-stream-${snapshot.sessionId}-${JSON.stringify(snapshot.path)}-${snapshot.childSessionId}` : null;
-    attachment.runningToolCallIds = [...(snapshot.runningToolCallIds ?? [])];
+    attachment.sessionId = snapshot.childSessionId;
     attachment.viewCursor = snapshot.viewCursor;
-    attachment.observerCursor = snapshot.viewCursor;
-    attachment.pendingSteeringMessages = [...(snapshot.pendingSteeringMessages ?? [])];
-    attachment.draftText = draftText;
     attachment.closed = false;
     attachment.closeReason = undefined;
-    attachment.toolExecutions = rebuildToolExecutionsFromMessages(attachment.messages, attachment.runningToolCallIds);
     root.attachments[key] = attachment;
-    return attachment;
+    this.applySessionEvent(attachment, { ...snapshot, type: 'full_resync', sessionId: snapshot.childSessionId });
+    return this.getSubagentAttachment(snapshot.sessionId, snapshot.path);
   }
 
   private applySubagentViewEvent(event: SubagentViewEvent): void {
-    const root = this.ensureSubagentRoot(event.sessionId);
-    const attachment = root.attachments[subagentPathKey(event.path)];
-    // Events belong to a view this client has open. Anything else is either a
-    // closed view or a runtime this client has not attached to yet.
-    if (!attachment || attachment.closed) return;
+    const attachment = this.getSubagentAttachment(event.sessionId, event.path);
+    if (!attachment || attachment.closed || event.childSessionId !== attachment.sessionId) return;
     if (event.incarnation && attachment.incarnation !== event.incarnation) return;
     const ephemeral = !('cursor' in event.event) || typeof event.event.cursor !== 'number';
-    if (event.viewCursor < attachment.observerCursor || (event.viewCursor === attachment.observerCursor && !ephemeral)) return;
+    if (event.viewCursor < attachment.viewCursor || (event.viewCursor === attachment.viewCursor && !ephemeral)) return;
     attachment.viewCursor = Math.max(attachment.viewCursor, event.viewCursor);
-    attachment.observerCursor = Math.max(attachment.observerCursor, event.viewCursor);
-    applyChildNativeEvent(attachment, event.event, (count) => this.generateMessageKeys(count));
-    if ('timestamp' in event.event && typeof (event.event as { timestamp?: unknown }).timestamp === 'string') {
-      attachment.lastBotActivityTimestamp = (event.event as { timestamp: string }).timestamp;
-    }
+    this.applySessionEvent(attachment, event.event);
   }
 
   private applySubagentViewClosed(event: SubagentViewClosedEvent): void {
@@ -1564,7 +1205,7 @@ export class SessionRegistry {
   restoreQueuedDrafts(sessionId: string, queued: string[]): void {
     // A full resync can replace the session object while a request is in flight.
     // Read the current snapshot and draft only when restoring.
-    const session = this.sessions[sessionId];
+    const session = this.getSessionState(sessionId);
     if (!session || queued.length === 0) return;
     const recovered = queued.join('\n');
     const text = recovered && session.draftText ? `${recovered}\n${session.draftText}` : recovered || session.draftText;
@@ -1606,20 +1247,28 @@ export class SessionRegistry {
       this.applySubagentViewClosed(event as SubagentViewClosedEvent);
       return;
     }
+    if (!sessionId) return;
+    const session = this.getSessionState(sessionId);
+    if (session) this.applySessionEvent(session, event);
+  }
+
+  private applySessionEvent(session: PerSessionState, event: PimoteEvent): void {
+    const sessionId = session.sessionId;
+    if (event.type === 'buffered_events') {
+      for (const item of event.events) this.applySessionEvent(session, item);
+      return;
+    }
     if (isSubagentContentEvent(event)) {
-      if (!sessionId || !this.sessions[sessionId]) return;
-      const session = this.sessions[sessionId];
       if (applyProjectedEventToStreaming(session, event)) return;
       applyProjectedEventToTranscript(session, event, (count) => this.generateMessageKeys(count));
       session.messageCount = session.messages.length;
       return;
     }
 
-    if (!sessionId) return;
-    const session = this.sessions[sessionId];
-    if (!session) return;
-
     switch (event.type) {
+      case 'connection_restored':
+        if (event.state) this.applyRuntimeState(session, event.state);
+        break;
       case 'agent_start':
         session.streamingRevision++;
         session.status = 'working';
@@ -1941,7 +1590,7 @@ export class SessionRegistry {
           rebuilt.usageBreakdown = session.usageBreakdown;
         }
         rebuilt.gitBranch = session.gitBranch;
-        rebuilt.pendingSteeringMessages = [...session.pendingSteeringMessages];
+        rebuilt.pendingSteeringMessages = [...(resync.pendingSteeringMessages ?? session.pendingSteeringMessages)];
         // Don't carry over panelCards — server will send panel_update if panels are active.
         // Carrying over stale cards causes ghost panels after agent teardown + reconnect.
         // widgetCards get the same treatment: unlike panel cards there is no server-side
@@ -1983,7 +1632,12 @@ export class SessionRegistry {
           const call = this.findToolCall(rebuilt, toolCallId);
           rebuilt.toolExecutions[toolCallId] = { name: call?.toolName ?? '', args: call?.args, partialResult: '', status: 'running' };
         }
-        this.sessions[sessionId] = rebuilt;
+        if ('rootSessionId' in session) {
+          const child = session as SubagentAttachmentState;
+          this.subagentRoots[child.rootSessionId].attachments[subagentPathKey(child.path)] = { ...child, ...rebuilt };
+        } else {
+          this.sessions[sessionId] = rebuilt;
+        }
         break;
       }
 
@@ -2198,7 +1852,7 @@ export class SessionRegistry {
   /** Attention is user-level (D3): a session this user already looks at from
    *  any connection needs none. */
   private userIsLookingAt(sessionId: string): boolean {
-    return sessionId === this.viewedSessionId || sessionId === this.selectedSessionId;
+    return sessionId === this.viewedConversation?.sessionId || sessionId === this.selectedSessionId;
   }
 
   /** Leave the conversation view and return to the dashboard (viewedSessionId = null). */
@@ -2245,19 +1899,19 @@ export class SessionRegistry {
   /** Update session meta (git branch, context usage, lifetime cost) */
   /** Return row usage, including an active-view-only terminal partial fallback. */
   getAssistantRowUsage(sessionId: string, messageIndex: number, toolResultUsageIndex?: ToolResultUsageIndex): import('@pimote/shared').AssistantRowUsage | null {
-    const session = this.sessions[sessionId];
+    const session = this.getSessionState(sessionId);
     const message = session?.messages[messageIndex];
     if (!session || !message || message.role !== 'assistant') return null;
 
     const key = session.messageKeys[messageIndex];
     const fallback = key ? session.assistantUsageOverrides[key] : undefined;
     const snapshot = !hasPositiveUsage(message.usage) && fallback ? { ...message, usage: fallback } : message;
-    const usage = sessionId === this.viewedSessionId ? snapshot : message;
+    const usage = sessionId === this.viewedConversation?.sessionId ? snapshot : message;
     return summarizeAssistantRowUsage(usage, session.messages, toolResultUsageIndex);
   }
 
   updateMeta(sessionId: string, meta: SessionMeta): void {
-    const session = this.sessions[sessionId];
+    const session = this.getSessionState(sessionId);
     if (!session) return;
 
     // Context usage and lifetime cost are session-specific, but git branch is
@@ -2309,7 +1963,9 @@ export class SessionRegistry {
   /** Rebuild toolExecutions from a full message history (for rehydration) */
   /** The tool_call block for `toolCallId`, searched from the newest message. */
   private findToolCall(session: PerSessionState, toolCallId: string): PimoteMessageContent | undefined {
-    return findToolCallInMessages(session.messages, toolCallId);
+    return (
+      session.streamingMessage?.content.find((content) => content.type === 'tool_call' && content.toolCallId === toolCallId) ?? findToolCallInMessages(session.messages, toolCallId)
+    );
   }
 
   rebuildToolExecutions(session: PerSessionState): void {
@@ -2318,7 +1974,7 @@ export class SessionRegistry {
 
   /** Begin tracking a caller-owned native bash execution. */
   startBash(sessionId: string, execution: Pick<BashExecutionState, 'id' | 'command' | 'excludeFromContext'>): void {
-    const session = this.sessions[sessionId];
+    const session = this.getSessionState(sessionId);
     if (!session) return;
 
     this.bashOutputBytes.set(this.bashOutputKey(sessionId, execution.id), 0);
@@ -2336,7 +1992,7 @@ export class SessionRegistry {
 
   /** Apply one live SDK bash output update to its transient execution. */
   updateBash(sessionId: string, update: Pick<BashExecutionUpdateEvent, 'id' | 'delta'>): void {
-    const session = this.sessions[sessionId];
+    const session = this.getSessionState(sessionId);
     if (!session) return;
 
     let targetId = update.id;
@@ -2385,7 +2041,7 @@ export class SessionRegistry {
 
   /** Promote completed entries once the SDK's model turn has settled. */
   private flushCompletedBash(sessionId: string): void {
-    const session = this.sessions[sessionId];
+    const session = this.getSessionState(sessionId);
     if (!session || session.isStreaming) return;
 
     const completed = Object.values(session.bashExecutions).filter((execution) => execution.status === 'complete' || execution.status === 'cancelled');
@@ -2403,7 +2059,7 @@ export class SessionRegistry {
 
   /** Promote a successful native result to the message list and remove its transient state. */
   completeBash(sessionId: string, id: string, result: BashResult): void {
-    const session = this.sessions[sessionId];
+    const session = this.getSessionState(sessionId);
     const execution = session?.bashExecutions[id];
     if (!session || !execution) return;
     this.bashOutputBytes.delete(this.bashOutputKey(sessionId, id));
@@ -2432,7 +2088,7 @@ export class SessionRegistry {
 
   /** Retain a failed dispatch as a visible, non-context transient entry. */
   failBash(sessionId: string, id: string, error: string): void {
-    const session = this.sessions[sessionId];
+    const session = this.getSessionState(sessionId);
     const execution = session?.bashExecutions[id];
     if (!session || !execution) return;
     this.bashOutputBytes.delete(this.bashOutputKey(sessionId, id));
@@ -2449,7 +2105,7 @@ export class SessionRegistry {
 
   /** Drop transient bash state, e.g. after a full resync or session close. */
   clearBash(sessionId: string): void {
-    const session = this.sessions[sessionId];
+    const session = this.getSessionState(sessionId);
     if (!session) return;
     this.clearBashOutputBytes(sessionId);
     session.bashExecutions = {};
@@ -2457,7 +2113,7 @@ export class SessionRegistry {
 
   /** Whether a session has a bash outcome that still needs reconciliation. */
   hasPendingBash(sessionId: string): boolean {
-    const session = this.sessions[sessionId];
+    const session = this.getSessionState(sessionId);
     return session ? Object.values(session.bashExecutions).some((execution) => execution.status !== 'error') : false;
   }
 
@@ -2506,11 +2162,13 @@ export class SessionRegistry {
    *  response, so the attachment exists by the time the response lands. */
   openSubagentView(rootSessionId: string, path: AgentPath, select = true): Promise<SubagentAttachmentState | null> {
     const key = `${rootSessionId}\u0000${subagentPathKey(path)}`;
+    const previous = this.getSubagentAttachment(rootSessionId, path);
+    const pendingBash = previous ? this.hasPendingBash(previous.sessionId) : false;
     const running = this.pendingSubagentOpens.get(key);
     if (running) return running;
     // The attachment's cursor is what this client actually applied; the wire
     // cursor can run ahead of it when an event was rejected on identity.
-    const viewCursor = this.getSubagentAttachment(rootSessionId, path)?.viewCursor ?? connection.getSubagentViewCursor(rootSessionId, path);
+    const viewCursor = this.getSubagentAttachment(rootSessionId, path)?.viewCursor;
     const operation = connection
       .send({
         type: 'subagent_open_view',
@@ -2526,17 +2184,9 @@ export class SessionRegistry {
         const attachment = this.getSubagentAttachment(rootSessionId, path);
         if (!attachment || attachment.closed) return null;
         if (select) this.selectSubagentView(rootSessionId, attachment.path);
-        try {
-          const commands = await this.sendSubagentCommand(rootSessionId, attachment.path, { type: 'get_commands' });
-          if (commands.success && commands.data)
-            commandStore.setCommands(
-              `${rootSessionId}\u0000${subagentPathKey(attachment.path)}`,
-              (commands.data as { commands: import('@pimote/shared').CommandInfo[] }).commands ?? [],
-            );
-        } catch {
-          // The child snapshot remains usable when completion metadata races
-          // a reconnect. The next explicit open refreshes the list.
-        }
+        applyOpenSessionData(attachment.sessionId, (response.data as Pick<OpenSessionResponseData, 'meta' | 'commands'>) ?? {});
+        if (pendingBash) void fetchFullSessionData(attachment.sessionId);
+
         return attachment;
       })
       .catch((error) => {
@@ -2556,7 +2206,6 @@ export class SessionRegistry {
     const root = this.subagentRoots[rootSessionId];
     const attachment = root?.attachments[subagentPathKey(path)];
     if (root && attachment && !attachment.closed) this.closeSubagentAttachment(root, attachment, 'unavailable');
-    connection.clearSubagentViewCursor(rootSessionId, path);
     void connection.send({ type: 'subagent_close_view', sessionId: rootSessionId, path: copyAgentPath(path) } as PimoteCommand).catch(() => undefined);
   }
 
@@ -2575,7 +2224,6 @@ export class SessionRegistry {
       const root = this.subagentRoots[rootSessionId];
       if (root) this.closeSubagentAttachment(root, attachment, 'released');
       if (sameAgentPath(this.getSelectedSubagentPath(rootSessionId), path)) this.selectSubagentView(rootSessionId, null);
-      connection.clearSubagentViewCursor(rootSessionId, path);
       return true;
     } catch (error) {
       console.error('[SessionRegistry] Failed to close child view:', error);
@@ -2623,64 +2271,71 @@ export class SessionRegistry {
     } as PimoteCommand);
   }
 
-  /** Dispatch an identity-preserving child operation with its guarded view
-   * identity. The caller supplies the unprefixed surface command fields. */
-  async sendSubagentCommand(rootSessionId: string, path: AgentPath, command: Record<string, unknown>): Promise<PimoteResponse> {
-    const attachment = this.getSubagentAttachment(rootSessionId, path);
-    if (!attachment || attachment.closed) return Promise.reject(new Error('child view is closed'));
-    const { sessionId: _sessionId, path: _path, incarnation: _incarnation, type: commandType, ...payload } = command;
-    const type = typeof commandType === 'string' && commandType.startsWith('subagent_') ? commandType : `subagent_${String(commandType)}`;
+  /** Dispatch to a session. Only the borrowed-view address differs. */
+  async sendSurfaceCommand(sessionId: string, command: Record<string, unknown>): Promise<PimoteResponse> {
+    const session = this.getSessionState(sessionId);
+    if (!session) throw new Error('session view is closed');
+    const { sessionId: _sessionId, path: _path, incarnation: _incarnation, type, ...payload } = command;
+    const child = 'rootSessionId' in session ? (session as SubagentAttachmentState) : null;
+    const streamingRevision = session.streamingRevision;
     const response = await connection.send({
       ...payload,
-      type,
-      sessionId: rootSessionId,
-      path: attachment.path,
-      incarnation: attachment.incarnation,
+      type: child ? `subagent_${String(type)}` : type,
+      sessionId: child?.rootSessionId ?? session.sessionId,
+      ...(child ? { path: child.path, incarnation: child.incarnation } : {}),
+      ...(child && type === 'abort' ? { expectedSessionId: child.sessionId } : {}),
     } as PimoteCommand);
-    this.applySubagentCommandResponse(attachment, String(commandType), response);
+    this.applySurfaceCommandResponse(sessionId, String(type), response, session, streamingRevision);
     return response;
   }
 
-  /** Send a root command or an allowlisted child command without making the
-   *  caller know which surface is selected. */
-  sendSurfaceCommand(rootSessionId: string, path: AgentPath | null, command: Record<string, unknown>): Promise<PimoteResponse> {
-    if (path && path.length > 0) return this.sendSubagentCommand(rootSessionId, path, command);
-    return connection.send({ ...command, sessionId: rootSessionId } as PimoteCommand);
+  private applyRuntimeState(session: PerSessionState, state: SessionState): void {
+    const { sessionId: _sessionId, ...runtime } = state;
+    Object.assign(session, runtime, {
+      model: state.model ? { ...state.model } : null,
+      availableThinkingLevels: [...state.availableThinkingLevels],
+      sessionName: state.sessionName ?? null,
+      status: state.isStreaming ? 'working' : 'idle',
+    });
   }
 
-  private applySubagentCommandResponse(attachment: SubagentAttachmentState, commandType: string, response: PimoteResponse): void {
-    if (!response.success || !response.data || typeof response.data !== 'object') return;
+  private applySurfaceCommandResponse(sessionId: string, commandType: string, response: PimoteResponse, requestedSession: PerSessionState, streamingRevision: number): void {
+    const session = this.getSessionState(sessionId);
+    if (!session || !response.data || typeof response.data !== 'object') return;
     const data = response.data as Record<string, unknown>;
-    const stateValue = data.state;
-    if (stateValue && typeof stateValue === 'object') {
-      attachment.state = cloneSessionState(stateValue as SessionState);
-      return;
+    if (
+      (commandType === 'abort' || commandType === 'dequeue_steering') &&
+      Array.isArray(data.steering) &&
+      data.steering.every((text) => typeof text === 'string') &&
+      Array.isArray(data.followUp) &&
+      data.followUp.every((text) => typeof text === 'string')
+    ) {
+      this.restoreQueuedDrafts(sessionId, [...data.steering, ...data.followUp]);
+      if (commandType === 'dequeue_steering') session.pendingSteeringMessages = [];
     }
-    if (commandType === 'set_model' && 'model' in data) {
-      attachment.state = {
-        ...attachment.state,
-        model: (data.model as SessionState['model']) ?? null,
-        thinkingLevel: typeof data.thinkingLevel === 'string' ? data.thinkingLevel : attachment.state.thinkingLevel,
-        availableThinkingLevels: Array.isArray(data.availableThinkingLevels) ? [...(data.availableThinkingLevels as string[])] : attachment.state.availableThinkingLevels,
-      };
-    } else if (commandType === 'set_thinking_level' && typeof data.level === 'string') {
-      attachment.state = { ...attachment.state, thinkingLevel: data.level };
+    if (!response.success) return;
+    if (data.state && typeof data.state === 'object') {
+      const state = data.state as SessionState;
+      const current = session === requestedSession && session.streamingRevision === streamingRevision;
+      this.applyRuntimeState(session, { ...state, isStreaming: current ? state.isStreaming : session.isStreaming });
     }
-    if (commandType === 'get_session_meta' && data.meta && typeof data.meta === 'object') {
-      const meta = data.meta as Partial<SessionMeta>;
-      if (meta.contextUsage) attachment.contextUsage = meta.contextUsage;
-      if (typeof meta.lifetimeCostUsd === 'number') attachment.lifetimeCostUsd = meta.lifetimeCostUsd;
-      if (meta.usageBreakdown !== undefined) attachment.usageBreakdown = meta.usageBreakdown;
-    }
+    if ('model' in data) session.model = data.model as SessionState['model'];
+    if (typeof data.thinkingLevel === 'string') session.thinkingLevel = data.thinkingLevel;
+    if (Array.isArray(data.availableThinkingLevels)) session.availableThinkingLevels = [...data.availableThinkingLevels] as string[];
+    if ((commandType === 'set_thinking_level' || commandType === 'cycle_thinking_level') && typeof data.level === 'string') session.thinkingLevel = data.level;
+    if (commandType === 'set_auto_compaction' && typeof data.enabled === 'boolean') session.autoCompactionEnabled = data.enabled;
+    if (commandType === 'get_session_meta' && data.meta && typeof data.meta === 'object') this.updateMeta(sessionId, data.meta as SessionMeta);
     if (commandType === 'get_messages' && Array.isArray(data.messages)) {
-      attachment.messages = [...(data.messages as PimoteAgentMessage[])];
-      attachment.transcript = attachment.messages;
-      attachment.projectedSubagentContent = hydrateSubagentContent(attachment.messages, attachment.projectedSubagentContent.active);
-      attachment.messages = [...attachment.projectedSubagentContent.messages];
-      attachment.transcript = attachment.messages;
-      attachment.messageKeys = attachment.messages.map((_, index) => `child-${attachment.rootSessionId}-${JSON.stringify(attachment.path)}-${index}`);
-      attachment.state = { ...attachment.state, messageCount: attachment.messages.length };
+      this.clearBash(sessionId);
+      this.clearAssistantUsageTracking(sessionId);
+      session.projectedSubagentContent = hydrateSubagentContent(data.messages as PimoteAgentMessage[], session.projectedSubagentContent.active);
+      session.messages = [...session.projectedSubagentContent.messages];
+      session.messageKeys = this.generateMessageKeys(session.messages.length);
+      session.messageCount = session.messages.length;
+      session.firstMessage = this.firstUserMessage(session.messages);
+      this.rebuildToolExecutions(session);
     }
+    if (commandType === 'get_commands' && Array.isArray(data.commands)) commandStore.setCommands(sessionId, data.commands as CommandInfo[]);
   }
 }
 
@@ -2689,54 +2344,16 @@ export const sessionRegistry = new SessionRegistry((event) => {
   coordinateDownloadUpdate(event, downloadUi);
 });
 
-function applyOpenSessionData(sessionId: string, data: OpenSessionResponseData): void {
+function applyOpenSessionData(sessionId: string, data: Pick<OpenSessionResponseData, 'meta' | 'commands'>): void {
   if (data.meta) sessionRegistry.updateMeta(sessionId, data.meta);
   if (data.commands) commandStore.setCommands(sessionId, data.commands);
 }
 
 async function fetchFullSessionData(sessionId: string): Promise<void> {
-  const requestedSession = sessionRegistry.sessions[sessionId];
-  const streamingRevision = requestedSession?.streamingRevision;
   try {
-    const [stateRes, msgRes] = await Promise.all([connection.send({ type: 'get_state', sessionId }), connection.send({ type: 'get_messages', sessionId })]);
-
-    const session = sessionRegistry.sessions[sessionId];
-    if (!session) return;
-
-    if (stateRes.success && stateRes.data) {
-      const state = (stateRes.data as { state: SessionState }).state;
-      session.model = state.model;
-      session.thinkingLevel = state.thinkingLevel;
-      session.availableThinkingLevels = state.availableThinkingLevels;
-      // A lifecycle event or full resync received while these requests were
-      // pending is newer than this snapshot. Never resurrect stale streaming.
-      if (session === requestedSession && session.streamingRevision === streamingRevision) {
-        session.isStreaming = state.isStreaming;
-        session.status = state.isStreaming ? 'working' : 'idle';
-      }
-      session.isCompacting = state.isCompacting;
-      session.autoCompactionEnabled = state.autoCompactionEnabled;
-      session.messageCount = state.messageCount;
-      session.sessionFile = state.sessionFile;
-      session.sessionName = state.sessionName ?? null;
-    }
-
-    if (msgRes.success && msgRes.data) {
-      // A successful message snapshot is the durable boundary for a command
-      // whose response was lost. Replace the pending transient before applying
-      // the canonical list; context-excluded `!!` results may be absent by
-      // design.
-      sessionRegistry.clearBash(sessionId);
-      sessionRegistry.clearAssistantUsageTracking(sessionId);
-      const messages = (msgRes.data as { messages: PimoteAgentMessage[] }).messages;
-      session.messages = messages;
-      session.messageKeys = sessionRegistry.generateMessageKeys(messages.length);
-      session.messageCount = messages.length;
-      session.firstMessage = sessionRegistry.firstUserMessage(messages);
-      sessionRegistry.rebuildToolExecutions(session);
-    }
-  } catch (err) {
-    console.error('[SessionRegistry] Failed to fetch full session data:', err);
+    await Promise.all([sessionRegistry.sendSurfaceCommand(sessionId, { type: 'get_state' }), sessionRegistry.sendSurfaceCommand(sessionId, { type: 'get_messages' })]);
+  } catch (error) {
+    console.error('[SessionRegistry] Failed to fetch session data:', error);
   }
 }
 
@@ -3079,7 +2696,6 @@ connection.onEvent((event) => {
       sessionRegistry.replaceSession(replaced.oldSessionId, replaced.newSessionId, folder?.path ?? '', projectName);
       if (folder) sessionRegistry.bindSessionFolder(replaced.newSessionId, folder);
       applyOpenSessionData(replaced.newSessionId, {
-        sessionId: replaced.newSessionId,
         ...(replaced.meta ? { meta: replaced.meta } : {}),
         ...(replaced.commands ? { commands: replaced.commands } : {}),
       });
@@ -3212,28 +2828,10 @@ export function switchToSession(sessionId: string): void {
 
 /** Abort a session and recover the queues acknowledged by the server into its draft. */
 export async function abortSession(sessionId: string): Promise<void> {
-  if (!sessionRegistry.sessions[sessionId]) return;
-
+  if (!sessionRegistry.getSessionState(sessionId)) return;
   try {
-    const response = await connection.send({ type: 'abort', sessionId });
-    const data = response.data as Partial<AbortResponseData> | undefined;
-    // A failed abort can still have cleared the queues before cancellation timed
-    // out. Recover acknowledged text on either outcome, never from a guessed
-    // local pending list or a second request after the agent has stopped.
-    if (
-      Array.isArray(data?.steering) &&
-      data.steering.every((text) => typeof text === 'string') &&
-      Array.isArray(data.followUp) &&
-      data.followUp.every((text) => typeof text === 'string')
-    ) {
-      sessionRegistry.restoreQueuedDrafts(sessionId, [...data.steering, ...data.followUp]);
-    }
-
-    // agent_settled owns the idle transition. A response (especially a timeout)
-    // must not manufacture a settled session or discard streaming content.
-    if (!response.success) {
-      console.error('[SessionRegistry] Failed to abort session:', response.error ?? 'unknown error');
-    }
+    const response = await sessionRegistry.sendSurfaceCommand(sessionId, { type: 'abort' });
+    if (!response.success) console.error('[SessionRegistry] Failed to abort session:', response.error ?? 'unknown error');
   } catch (error) {
     console.error('[SessionRegistry] Failed to send abort:', error);
   }

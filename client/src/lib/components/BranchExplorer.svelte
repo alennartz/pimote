@@ -52,7 +52,7 @@
       return;
     }
     const sessionId = branchTreeStore.state.sessionId;
-    if (sessionId && sessionRegistry.viewedSessionId !== sessionId) branchTreeStore.close();
+    if (sessionId && sessionRegistry.viewedConversation?.sessionId !== sessionId) branchTreeStore.close();
   });
 
   $effect(() => {
@@ -179,9 +179,7 @@
     if (!sessionId) return;
     const result = await branchTreeStore.navigate(selectedId, compactionPromptValue === undefined ? undefined : { compactionPrompt: compactionPromptValue });
     if (result && !result.cancelled && typeof result.editorText === 'string') {
-      const surface = branchTreeStore.state.surface;
-      if (surface) sessionRegistry.setSubagentDraftText(surface.rootSessionId, surface.path, result.editorText);
-      else sessionRegistry.setDraftText(sessionId, result.editorText);
+      sessionRegistry.setDraftText(sessionId, result.editorText);
     }
   }
 

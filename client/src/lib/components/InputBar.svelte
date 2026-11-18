@@ -5,7 +5,7 @@
   import { commandStore } from '$lib/stores/command-store.svelte.js';
   import { consumeSharedImages, editorTextRequest, sharedImagesRequest } from '$lib/stores/input-bar.svelte.js';
   import { getExtensionUiQueue } from '$lib/stores/extension-ui-queue.svelte.js';
-  import { branchTreeStore, type BranchTreeSurface } from '$lib/stores/branch-tree-store.svelte.js';
+  import { branchTreeStore } from '$lib/stores/branch-tree-store.svelte.js';
   import { loginStore } from '$lib/stores/login-store.js';
   import { isMobileViewport } from '$lib/mobile-viewport.svelte.js';
   import CommandAutocomplete from './CommandAutocomplete.svelte';
@@ -33,12 +33,12 @@
   let dragOver = $state(false);
 
   const activeChild = $derived(sessionRegistry.viewedSubagentAttachment);
+  const conversation = $derived(sessionRegistry.viewedConversation);
   const rootSessionId = $derived(sessionRegistry.viewedSessionId);
-  const activeChildPath = $derived(rootSessionId ? sessionRegistry.getSelectedSubagentPath?.(rootSessionId) : null);
-  const activeSurfaceKey = $derived(activeChild && rootSessionId && activeChildPath ? `${rootSessionId}\u0000${JSON.stringify(activeChildPath)}` : (rootSessionId ?? ''));
+  const activeSurfaceKey = $derived(conversation?.sessionId ?? rootSessionId ?? '');
   const noSession = $derived(rootSessionId === null);
   const isPending = $derived(rootSessionId?.startsWith('pending-') ?? false);
-  const canSend = $derived(!noSession && !isPending && connection.ready && (!activeChild || !activeChild.closed));
+  const canSend = $derived(!noSession && !isPending && connection.ready && conversation !== null);
   const hasContent = $derived(inputText.trim().length > 0 || stagedImages.length > 0);
   // A leading bang switches the composer into shell-command mode. Keep this
   // separate from parsing so the feedback appears as soon as the prefix is
@@ -54,24 +54,18 @@
 
   // The composer owns /new locally, so pi's command stays out of the list —
   // every command shown here still dispatches to the agent.
-  const commandItems = $derived(commandStore.getCommands(activeSurfaceKey).filter((command) => activeChild || command.name !== 'new'));
+  const commandItems = $derived(commandStore.getCommands(activeSurfaceKey).filter((command) => command.name !== 'new'));
 
   function setSurfaceDraft(text: string): void {
-    if (activeChild && rootSessionId && activeChildPath) sessionRegistry.setSubagentDraftText(rootSessionId, activeChildPath, text);
-    else if (sessionRegistry.viewed) sessionRegistry.viewed.draftText = text;
+    if (conversation) conversation.draftText = text;
   }
 
   function getSurfaceDraft(): string {
-    return activeChild && rootSessionId && activeChildPath ? sessionRegistry.getSubagentDraftText(rootSessionId, activeChildPath) : (sessionRegistry.viewed?.draftText ?? '');
-  }
-
-  function sendSurface(command: Record<string, unknown>): Promise<import('@pimote/shared').PimoteResponse> {
-    if (!rootSessionId || (activeChild && !activeChildPath)) return Promise.reject(new Error('No session surface is open'));
-    return sessionRegistry.sendSurfaceCommand(rootSessionId, activeChild ? activeChildPath : null, command);
+    return conversation?.draftText ?? '';
   }
 
   function surfaceStreaming(): boolean {
-    return activeChild?.state.isStreaming ?? sessionRegistry.viewed?.isStreaming ?? false;
+    return conversation?.isStreaming ?? false;
   }
 
   const autocompleteQuery = $derived.by(() => {
@@ -112,8 +106,8 @@
       return;
     }
 
-    if (activeChild && previousSurfaceKey !== surfaceKey) {
-      if (document.activeElement === document.body) focusOnSessionOpen(surfaceKey, document.activeElement);
+    if (previousId === sessionId && previousSurfaceKey !== surfaceKey) {
+      focusOnSessionOpen(surfaceKey, document.activeElement);
     } else if (previousId == null) {
       if (document.activeElement === document.body) focusOnSessionOpen(sessionId, document.activeElement);
     } else if (untrack(() => !!sessionRegistry.sessions[previousId])) {
@@ -132,8 +126,7 @@
     const { sessionId, text, seq } = editorTextRequest;
     if (seq !== lastSeq) {
       lastSeq = seq;
-      // Root restoration must not replace a selected child's composer.
-      if (sessionId === sessionRegistry.viewedSessionId && !activeChild) {
+      if (sessionId === conversation?.sessionId) {
         inputText = text;
         tick().then(() => autoResize());
       }
@@ -346,307 +339,175 @@
 
   async function sendMessage() {
     const text = inputText.trim();
-    if (!canSend) return;
-    // Every continuation below must target the surface that submitted the
-    // request. The user can switch child views while the server responds.
-    const originatingRootSessionId = rootSessionId;
+    const origin = conversation;
+    if (!canSend || !origin) return;
+    const sessionId = origin.sessionId;
     const originatingChild = activeChild;
-    const originatingChildPath = activeChildPath ? [...activeChildPath] : null;
-    const originatingSurfaceRef: BranchTreeSurface | null =
-      originatingChild && originatingRootSessionId && originatingChildPath ? { rootSessionId: originatingRootSessionId, path: [...originatingChildPath] } : null;
     const focusSnapshot = captureTextareaFocus();
+    const send = (command: Record<string, unknown>) => sessionRegistry.sendSurfaceCommand(sessionId, command);
+    const isCurrent = () => sessionRegistry.viewedConversation?.sessionId === sessionId;
 
-    function clearSubmittedComposer(sessionId: string, preserveImages = false): void {
+    function clearSubmittedComposer(preserveImages = false): void {
+      const session = sessionRegistry.getSessionState(sessionId);
+      if (session) session.draftText = '';
+      if (!isCurrent()) return;
       inputText = '';
       autocompleteVisible = false;
       selectedCommand = null;
       fileRefPrefix = null;
       if (!preserveImages) stagedImages = [];
-      if (sessionRegistry.viewedSessionId === sessionId) setSurfaceDraft('');
       if (messageTextareaEl) messageTextareaEl.style.height = 'auto';
       if (bashTextareaEl) bashTextareaEl.style.height = 'auto';
       restoreTextareaFocus(focusSnapshot);
     }
 
-    function restoreSubmittedComposer(sessionId: string, draft: string, images: string[], clientMessageId?: string, preserveImages = false): void {
-      const session = sessionRegistry.sessions[sessionId];
-      const child = originatingChild;
-      const childPath = originatingChildPath;
-      const surfaceDraft = child && childPath ? sessionRegistry.getSubagentDraftText(sessionId, childPath) : (session?.draftText ?? '');
-      if (child ? child.closed || surfaceDraft !== '' : !session || session.draftText !== '') return;
-      // A later optimistic prompt owns the empty composer. Do not put an older
-      // failed submission back on top of it.
-      const optimisticEntries = child?.optimisticEntries ?? session?.optimisticEntries;
-      if (clientMessageId && optimisticEntries?.some((entry) => entry.clientMessageId !== clientMessageId)) return;
+    function restoreSubmittedComposer(draft: string, images: string[], clientMessageId?: string, preserveImages = false): void {
+      const session = sessionRegistry.getSessionState(sessionId);
+      if (!session || session.draftText !== '') return;
+      if (clientMessageId && session.optimisticEntries.some((entry) => entry.clientMessageId !== clientMessageId)) return;
       const retainedImages = preserveImages && stagedImages.length === images.length && stagedImages.every((image, index) => image === images[index]);
-      const selectedPath = sessionRegistry.getSelectedSubagentPath(sessionId);
-      const sameSurface = child ? !!childPath && !!selectedPath && JSON.stringify(selectedPath) === JSON.stringify(childPath) : !sessionRegistry.viewedSubagentAttachment;
-      if (sessionRegistry.viewedSessionId === sessionId && sameSurface && (inputText !== '' || (!preserveImages && stagedImages.length > 0) || (preserveImages && !retainedImages)))
-        return;
-
-      if (child && childPath) sessionRegistry.setSubagentDraftText(sessionId, childPath, draft);
-      else if (session) sessionRegistry.setDraftText(sessionId, draft);
-      if (sessionRegistry.viewedSessionId !== sessionId || !sameSurface) return;
+      if (isCurrent() && (inputText !== '' || (!preserveImages && stagedImages.length > 0) || (preserveImages && !retainedImages))) return;
+      sessionRegistry.setDraftText(sessionId, draft);
+      if (!isCurrent()) return;
       inputText = draft;
       if (!preserveImages) stagedImages = [...images];
       tick().then(() => autoResize());
     }
 
-    // Native bang commands are dispatched before slash commands, steering, or
-    // ordinary prompts. They are independent of model streaming and own their
-    // caller-generated correlation ID so live output can be reduced correctly.
     const parsedBash = parseBangBashCommand(text);
     if (parsedBash) {
-      const session = sessionRegistry.viewed;
-      if (!session || !originatingRootSessionId) return;
-      const sessionId = session.sessionId;
       const id = crypto.randomUUID();
-      if (originatingChild && originatingChildPath) {
-        sessionRegistry.startSubagentBash(originatingRootSessionId, originatingChildPath, {
-          id,
-          command: parsedBash.command,
-          excludeFromContext: parsedBash.excludeFromContext,
-        });
-      } else {
-        sessionRegistry.startBash(sessionId, {
-          id,
-          command: parsedBash.command,
-          excludeFromContext: parsedBash.excludeFromContext,
-        });
-      }
-
-      // Clear the submitted draft immediately. Staged images intentionally stay
-      // attached to the next prompt; bang commands never consume prompt images.
-      inputText = '';
-      autocompleteVisible = false;
-      selectedCommand = null;
-      fileRefPrefix = null;
-      if (sessionRegistry.viewed?.sessionId === sessionId) setSurfaceDraft('');
-      if (textareaEl) {
-        textareaEl.style.height = 'auto';
-      }
-      restoreTextareaFocus(focusSnapshot);
-
+      sessionRegistry.startBash(sessionId, { id, command: parsedBash.command, excludeFromContext: parsedBash.excludeFromContext });
+      clearSubmittedComposer(true);
       try {
-        const response = await sendSurface({
-          type: 'bash',
-          id,
-          command: parsedBash.command,
-          excludeFromContext: parsedBash.excludeFromContext,
-        });
+        const response = await send({ type: 'bash', id, command: parsedBash.command, excludeFromContext: parsedBash.excludeFromContext });
         const data = response.data as BashResponseData | undefined;
-        if (response.success && data?.result) {
-          if (originatingChild && originatingChildPath) sessionRegistry.completeSubagentBash(originatingRootSessionId, originatingChildPath, id, data.result);
-          else sessionRegistry.completeBash(sessionId, id, data.result);
-        } else {
-          if (originatingChild && originatingChildPath)
-            sessionRegistry.failSubagentBash(originatingRootSessionId, originatingChildPath, id, response.error ?? 'Bash command failed');
-          else sessionRegistry.failBash(sessionId, id, response.error ?? 'Bash command failed');
-        }
+        if (response.success && data?.result) sessionRegistry.completeBash(sessionId, id, data.result);
+        else sessionRegistry.failBash(sessionId, id, response.error ?? 'Bash command failed');
       } catch (error) {
         if (isConnectionLossError(error)) {
-          // The server may have accepted and started the command before the
-          // socket dropped. Keep the transient execution running and
-          // cancellable; reconnect recovery will replace it from session data
-          // rather than dispatching the command again.
           console.warn('Bash command outcome unknown after connection loss; awaiting reconnect:', error);
         } else {
-          const message = error instanceof Error ? error.message : String(error);
-          if (originatingChild && originatingChildPath) sessionRegistry.failSubagentBash(originatingRootSessionId, originatingChildPath, id, message);
-          else sessionRegistry.failBash(sessionId, id, message);
+          sessionRegistry.failBash(sessionId, id, error instanceof Error ? error.message : String(error));
           console.error('Failed to send bash command:', error);
         }
       }
       return;
     }
 
-    // Own `/new` locally — it names this client flow, not a pi prompt: start
-    // a fresh session in this folder and drop the old one from the user's
-    // open-session list on every device.
-    if (!activeChild && /^\/new(?:\s|$)/.test(text)) {
-      const sessionId = sessionRegistry.viewed?.sessionId;
-      inputText = '';
-      autocompleteVisible = false;
-      selectedCommand = null;
-      setSurfaceDraft('');
-      if (textareaEl) {
-        textareaEl.style.height = 'auto';
-      }
-      restoreTextareaFocus(focusSnapshot);
-      if (sessionId) void replaceSessionWithFresh(sessionId);
+    if (!originatingChild && /^\/new(?:\s|$)/.test(text)) {
+      clearSubmittedComposer();
+      void replaceSessionWithFresh(sessionId);
       return;
     }
 
-    // Intercept the bare `/login` and `/logout` commands client-side: open the
-    // providers dialog instead of sending a prompt to the agent. Both open the
-    // same picker — tap a provider to log in, tap "Log out" to sign out.
-    if (!activeChild && (text === '/login' || text === '/logout')) {
+    if (!originatingChild && (text === '/login' || text === '/logout')) {
       void loginStore.open();
-      inputText = '';
-      autocompleteVisible = false;
-      selectedCommand = null;
-      setSurfaceDraft('');
-      if (textareaEl) {
-        textareaEl.style.height = 'auto';
-      }
-      restoreTextareaFocus(focusSnapshot);
+      clearSubmittedComposer();
       return;
     }
 
-    // Intercept `/compact` — triggers manual context compaction with optional
-    // custom instructions (e.g. `/compact focus on file diffs and decisions`).
     if (/^\/compact(?:\s|$)/.test(text)) {
-      const originatingSessionId = originatingRootSessionId;
-      if (!originatingSessionId) return;
       const submittedDraft = inputText;
       const customInstructions = text.slice('/compact'.length).trim() || undefined;
       try {
-        const response = await sendSurface({ type: 'compact', customInstructions });
+        const response = await send({ type: 'compact', customInstructions });
         if (!response.success) {
           console.error('Compact rejected:', response.error);
           return;
         }
-
-        const originatingSession = sessionRegistry.sessions[originatingSessionId];
-        if (originatingChild) {
-          if (originatingChild.draftText === submittedDraft) originatingChild.draftText = '';
-        } else if (originatingSession?.draftText === submittedDraft) {
-          originatingSession.draftText = '';
-        }
-        if ((!originatingChild && !originatingSession) || sessionRegistry.viewedSessionId !== originatingSessionId || inputText !== submittedDraft) return;
-
+        const session = sessionRegistry.getSessionState(sessionId);
+        if (session?.draftText === submittedDraft) session.draftText = '';
+        if (!session || !isCurrent() || inputText !== submittedDraft) return;
         inputText = '';
         autocompleteVisible = false;
         selectedCommand = null;
         if (textareaEl) textareaEl.style.height = 'auto';
         restoreTextareaFocus(focusSnapshot);
-      } catch (e) {
-        console.error('Failed to compact:', e);
+      } catch (error) {
+        console.error('Failed to compact:', error);
       }
       return;
     }
 
-    if (surfaceStreaming()) {
-      // Steer the current generation with text and staged images. Image-only
-      // steering stays disabled because this branch requires text.
-      if (!text || !originatingRootSessionId) return;
-      const sessionId = originatingRootSessionId;
+    if (origin.isStreaming) {
+      if (!text) return;
       const submittedDraft = inputText;
       const submittedImages = [...stagedImages];
       const isSlashCommand = text.startsWith('/');
-      // Show the pending pill and clear the submitted draft before the
-      // round-trip. Slash input waits for pi's command handling or
-      // queue_update: a command may run instead of queueing.
       const showPill = !isSlashCommand;
-      const pending = originatingChild?.pendingSteeringMessages ?? sessionRegistry.sessions[sessionId]?.pendingSteeringMessages;
-      if (showPill && pending) pending.push(text);
-      clearSubmittedComposer(sessionId, isSlashCommand);
-      // Remove the pill when pi will not queue the text. A queued text needs
-      // no cleanup: pi's queue_update snapshot already replaced the list.
+      if (showPill) origin.pendingSteeringMessages.push(text);
+      clearSubmittedComposer(isSlashCommand);
       const dropPill = () => {
-        const currentPending = originatingChild?.pendingSteeringMessages ?? sessionRegistry.sessions[sessionId]?.pendingSteeringMessages;
-        const idx = showPill && currentPending ? currentPending.lastIndexOf(text) : -1;
-        if (idx !== -1) currentPending!.splice(idx, 1);
+        const pending = sessionRegistry.getSessionState(sessionId)?.pendingSteeringMessages;
+        const index = showPill && pending ? pending.lastIndexOf(text) : -1;
+        if (index !== -1) pending!.splice(index, 1);
       };
       try {
         const imageRefs = isSlashCommand || submittedImages.length === 0 ? [] : await uploadImages(submittedImages);
-        const dispatchResponse = isSlashCommand
-          ? await sendSurface({ type: 'prompt', message: text })
-          : await sendSurface({ type: 'steer', message: text, ...(imageRefs.length > 0 ? { images: imageRefs } : {}) });
-        if (!dispatchResponse.success) {
+        const response = isSlashCommand
+          ? await send({ type: 'prompt', message: text })
+          : await send({ type: 'steer', message: text, ...(imageRefs.length > 0 ? { images: imageRefs } : {}) });
+        if (!response.success) {
           dropPill();
-          restoreSubmittedComposer(sessionId, submittedDraft, submittedImages, undefined, isSlashCommand);
-          console.error(`${isSlashCommand ? 'Prompt' : 'Steer'} rejected:`, dispatchResponse.error);
+          restoreSubmittedComposer(submittedDraft, submittedImages, undefined, isSlashCommand);
+          console.error(`${isSlashCommand ? 'Prompt' : 'Steer'} rejected:`, response.error);
         } else {
-          const promptData = dispatchResponse.data as Record<string, unknown> | undefined;
-          if (promptData?.tree) {
-            void branchTreeStore.open(
-              sessionId,
-              {
-                tree: promptData.tree as import('@pimote/shared').PimoteTreeNode[],
-                currentLeafId: (promptData.currentLeafId as string) ?? null,
-              },
-              originatingSurfaceRef,
-            );
-          } else if ((dispatchResponse.data as PromptResponseData | undefined)?.outcome !== 'queued') {
-            dropPill();
-          }
+          const data = response.data as Record<string, unknown> | undefined;
+          if (data?.tree) {
+            void branchTreeStore.open(sessionId, {
+              tree: data.tree as import('@pimote/shared').PimoteTreeNode[],
+              currentLeafId: (data.currentLeafId as string) ?? null,
+            });
+          } else if ((data as PromptResponseData | undefined)?.outcome !== 'queued') dropPill();
         }
-      } catch (e) {
+      } catch (error) {
         dropPill();
-        restoreSubmittedComposer(sessionId, submittedDraft, submittedImages, undefined, isSlashCommand);
-        console.error('Failed to send steer:', e);
+        restoreSubmittedComposer(submittedDraft, submittedImages, undefined, isSlashCommand);
+        console.error('Failed to send steer:', error);
       }
-    } else {
-      // Send a new prompt (text and/or images)
-      if (!text && stagedImages.length === 0) return;
-      if (!originatingRootSessionId) return;
-      const sessionId = originatingRootSessionId;
-      const submittedDraft = inputText;
-      const submittedImages = [...stagedImages];
-      // Show the user message and clear the submitted draft before the
-      // round-trip. Slash input renders on its echo only: extension commands
-      // never echo, and skill or template expansion echoes different text.
-      const clientMessageId = text.startsWith('/') ? undefined : crypto.randomUUID();
-      if (clientMessageId) {
-        if (originatingChild && originatingChildPath) sessionRegistry.addSubagentOptimisticUserMessage(sessionId, originatingChildPath, text, clientMessageId, submittedImages);
-        else sessionRegistry.addOptimisticUserMessage(sessionId, text, clientMessageId, submittedImages);
-      }
-      clearSubmittedComposer(sessionId);
-      const dropOptimistic = () => {
-        if (!clientMessageId) return;
-        if (originatingChild) sessionRegistry.dropSubagentOptimisticUserMessage(originatingChild, clientMessageId);
-        else sessionRegistry.dropOptimisticUserMessage(sessionId, clientMessageId);
-      };
-      try {
-        const imageRefs = submittedImages.length > 0 ? await uploadImages(submittedImages) : [];
-        const promptResponse = await sendSurface({
-          type: 'prompt',
-          message: text,
-          ...(imageRefs.length > 0 ? { images: imageRefs } : {}),
-          ...(clientMessageId ? { clientMessageId } : {}),
-        });
-        if (!promptResponse.success) {
-          dropOptimistic();
-          restoreSubmittedComposer(sessionId, submittedDraft, submittedImages, clientMessageId);
-          console.error('Prompt rejected:', promptResponse.error);
-        } else {
-          // Handle /tree response — open the branch explorer instead of adding a message
-          const promptData = promptResponse.data as Record<string, unknown> | undefined;
-          if (promptData?.tree) {
-            void branchTreeStore.open(
-              sessionId,
-              {
-                tree: promptData.tree as import('@pimote/shared').PimoteTreeNode[],
-                currentLeafId: (promptData.currentLeafId as string) ?? null,
-              },
-              originatingSurfaceRef,
-            );
-          } else if (clientMessageId && (promptData as PromptResponseData | undefined)?.outcome !== 'started') {
-            // Only a started prompt echoes a stamped user message. A queued
-            // prompt shows in the steering queue and echoes unstamped later.
-            dropOptimistic();
-          }
-        }
-      } catch (e) {
+      return;
+    }
+
+    if (!text && stagedImages.length === 0) return;
+    const submittedDraft = inputText;
+    const submittedImages = [...stagedImages];
+    const clientMessageId = text.startsWith('/') ? undefined : crypto.randomUUID();
+    if (clientMessageId) sessionRegistry.addOptimisticUserMessage(sessionId, text, clientMessageId, submittedImages);
+    clearSubmittedComposer();
+    const dropOptimistic = () => {
+      if (clientMessageId) sessionRegistry.dropOptimisticUserMessage(sessionId, clientMessageId);
+    };
+    try {
+      const imageRefs = submittedImages.length > 0 ? await uploadImages(submittedImages) : [];
+      const response = await send({
+        type: 'prompt',
+        message: text,
+        ...(imageRefs.length > 0 ? { images: imageRefs } : {}),
+        ...(clientMessageId ? { clientMessageId } : {}),
+      });
+      if (!response.success) {
         dropOptimistic();
-        restoreSubmittedComposer(sessionId, submittedDraft, submittedImages, clientMessageId);
-        console.error('Failed to send prompt:', e);
+        restoreSubmittedComposer(submittedDraft, submittedImages, clientMessageId);
+        console.error('Prompt rejected:', response.error);
+      } else {
+        const data = response.data as Record<string, unknown> | undefined;
+        if (data?.tree) {
+          void branchTreeStore.open(sessionId, {
+            tree: data.tree as import('@pimote/shared').PimoteTreeNode[],
+            currentLeafId: (data.currentLeafId as string) ?? null,
+          });
+        } else if (clientMessageId && (data as PromptResponseData | undefined)?.outcome !== 'started') dropOptimistic();
       }
+    } catch (error) {
+      dropOptimistic();
+      restoreSubmittedComposer(submittedDraft, submittedImages, clientMessageId);
+      console.error('Failed to send prompt:', error);
     }
   }
 
   function handleAbort() {
-    const sessionId = rootSessionId;
-    if (!sessionId) return;
-    if (activeChild && activeChildPath) {
-      void sessionRegistry.sendSubagentCommand(sessionId, activeChildPath, {
-        type: 'abort',
-        expectedSessionId: activeChild.childSessionId,
-      });
-    } else {
-      void abortSession(sessionId);
-    }
+    if (conversation) void abortSession(conversation.sessionId);
   }
 
   function handleAutocompleteSelect(item: { name: string; value?: string; label?: string; description?: string }) {
@@ -709,18 +570,6 @@
     }
     setSurfaceDraft(inputText);
     autoResize();
-  }
-
-  async function completeSurfaceArgs(commandName: string, prefix: string): Promise<import('@pimote/shared').AutocompleteResponseItem[]> {
-    const response = await sendSurface({ type: 'complete_args', commandName, prefix });
-    if (!response.success || !response.data) return [];
-    return (response.data as { items?: import('@pimote/shared').AutocompleteResponseItem[] }).items ?? [];
-  }
-
-  async function completeSurfaceFileRefs(prefix: string): Promise<import('@pimote/shared').AutocompleteResponseItem[]> {
-    const response = await sendSurface({ type: 'complete_file_refs', prefix });
-    if (!response.success || !response.data) return [];
-    return (response.data as { items?: import('@pimote/shared').AutocompleteResponseItem[] }).items ?? [];
   }
 
   function handleAutocompleteDismiss() {
@@ -830,10 +679,8 @@
         query={autocompleteQuery}
         visible={autocompleteVisible}
         mode={autocompleteMode}
-        sessionId={sessionRegistry.viewedSessionId ?? ''}
+        sessionId={conversation?.sessionId ?? ''}
         commandName={selectedCommand?.name ?? ''}
-        completeArgs={activeChild ? completeSurfaceArgs : undefined}
-        completeFileRefs={activeChild ? completeSurfaceFileRefs : undefined}
         onselect={handleAutocompleteSelect}
         ondismiss={handleAutocompleteDismiss}
       />

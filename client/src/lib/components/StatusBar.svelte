@@ -24,14 +24,14 @@
   import X from '@lucide/svelte/icons/x';
   import { createDelayedIndicator } from '$lib/navigation-indicator.svelte.js';
 
-  const navigationIndicator = createDelayedIndicator(() => sessionRegistry.viewed?.isNavigatingTree ?? false);
+  const navigationIndicator = createDelayedIndicator(() => sessionRegistry.viewedConversation?.isNavigatingTree ?? false);
 
   $effect(() => {
     navigationIndicator.update();
     return () => navigationIndicator.stop();
   });
 
-  let restoreLabel = $derived(sessionRegistry.viewed?.isRestoring ? getRestoreModeLabel(sessionRegistry.viewed.restoreMode) : null);
+  let restoreLabel = $derived(sessionRegistry.viewedConversation?.isRestoring ? getRestoreModeLabel(sessionRegistry.viewedConversation.restoreMode) : null);
   let connectionLabel = $derived(restoreLabel ?? connection.phaseLabel);
 
   let connectionColor = $derived(
@@ -51,17 +51,15 @@
     return rootId && path ? sessionRegistry.getSubagentNode?.(rootId, path) : null;
   });
   let isChildSurface = $derived(Boolean(activeChild));
-  let contextPercent = $derived(activeChild?.contextUsage?.percent ?? activeNode?.contextFill ?? sessionRegistry.viewed?.contextUsage?.percent);
+  let contextPercent = $derived(sessionRegistry.viewedConversation?.contextUsage?.percent);
 
-  let contextDisplay = $derived(
-    activeChild ? (contextPercent === null || contextPercent === undefined ? null : `${Math.round(contextPercent)}%`) : getContextDisplay(sessionRegistry.viewed),
-  );
+  let contextDisplay = $derived(getContextDisplay(sessionRegistry.viewedConversation));
 
   let contextColor = $derived(
     getContextTone(contextPercent) === 'critical' ? 'text-red-400' : getContextTone(contextPercent) === 'warning' ? 'text-amber-400' : 'text-muted-foreground',
   );
 
-  let sessionDisplayName = $derived(activeNode ? activeNode.path.join('/') : getSessionDisplayName(sessionRegistry.viewed));
+  let sessionDisplayName = $derived(activeNode ? activeNode.path.join('/') : getSessionDisplayName(sessionRegistry.viewedConversation));
   let hasHierarchy = $derived(Boolean(sessionRegistry.viewedSessionId && (sessionRegistry.subagentRoots?.[sessionRegistry.viewedSessionId]?.nodes.length ?? 0) > 0));
 
   async function closeChildSurface(): Promise<void> {
@@ -115,9 +113,9 @@
       <Separator orientation="vertical" class="mx-0.5 h-4" />
       <div class="flex min-w-0 flex-1">
         <SessionRenameDialog
-          sessionId={sessionRegistry.viewed?.sessionId}
-          folderPath={sessionRegistry.viewed?.folderPath}
-          sessionName={sessionRegistry.viewed?.sessionName}
+          sessionId={sessionRegistry.viewedConversation?.sessionId}
+          folderPath={sessionRegistry.viewedConversation?.folderPath}
+          sessionName={sessionRegistry.viewedConversation?.sessionName}
           displayName={sessionDisplayName}
         >
           {#snippet children({ openRenameDialog })}
@@ -144,50 +142,54 @@
     <!-- Session cost -->
     {#if isChildSurface}
       {#if activeNode?.usage}<span class="text-muted-foreground" title="Child cost">${activeNode.usage.cost.toFixed(2)}</span>{/if}
-    {:else if sessionRegistry.viewed}
-      <CostBreakdownPopover totalCostUsd={sessionRegistry.viewed.lifetimeCostUsd} breakdown={sessionRegistry.viewed.usageBreakdown} contextLabel="Session" />
+    {:else if sessionRegistry.viewedConversation}
+      <CostBreakdownPopover
+        totalCostUsd={sessionRegistry.viewedConversation.lifetimeCostUsd}
+        breakdown={sessionRegistry.viewedConversation.usageBreakdown}
+        contextLabel="Session"
+      />
     {/if}
 
-    <!-- Git branch (root only) -->
-    {#if !isChildSurface && sessionRegistry.viewed?.gitBranch}
+    <!-- Git branch -->
+    {#if sessionRegistry.viewedConversation?.gitBranch}
       <span class="text-muted-foreground flex items-center gap-1" title="Git branch">
         <GitBranch class="size-3" />
-        <span class="max-w-[8rem] truncate">{sessionRegistry.viewed.gitBranch}</span>
+        <span class="max-w-[8rem] truncate">{sessionRegistry.viewedConversation.gitBranch}</span>
       </span>
 
       <Separator orientation="vertical" class="mx-0.5 h-4" />
     {/if}
 
-    {#if !isChildSurface && sessionRegistry.viewed?.downloads.length}
+    {#if !isChildSurface && sessionRegistry.viewedConversation?.downloads.length}
       <Separator orientation="vertical" class="mx-0.5 h-4" />
       <DownloadInbox />
     {/if}
 
-    {#if !isChildSurface}
-      <Button
-        variant="ghost"
-        size="xs"
-        class="text-muted-foreground hover:text-foreground gap-1"
-        title="Edit folder AGENTS.md"
-        aria-label="Edit folder AGENTS.md"
-        disabled={connection.status !== 'connected' ||
-          !sessionRegistry.viewed?.folderPath ||
-          sessionRegistry.viewed.isRestoring ||
-          sessionRegistry.viewed.sessionId.startsWith('pending-')}
-        onclick={() => void fileEditorStore.openFolderInstructions(sessionRegistry.viewed!.folderPath)}
-      >
-        <FilePen class="size-3" />
-        AGENTS.md
-      </Button>
+    <Button
+      variant="ghost"
+      size="xs"
+      class="text-muted-foreground hover:text-foreground gap-1"
+      title="Edit folder AGENTS.md"
+      aria-label="Edit folder AGENTS.md"
+      disabled={connection.status !== 'connected' ||
+        !sessionRegistry.viewedConversation?.folderPath ||
+        sessionRegistry.viewedConversation.isRestoring ||
+        sessionRegistry.viewedConversation.sessionId.startsWith('pending-')}
+      onclick={() => void fileEditorStore.openFolderInstructions(sessionRegistry.viewedConversation!.folderPath)}
+    >
+      <FilePen class="size-3" />
+      AGENTS.md
+    </Button>
 
+    {#if !isChildSurface}
       <!-- Voice call button (hidden when the server has voice disabled) -->
       {#if serverCapabilities.voice}
-        <CallButton sessionId={sessionRegistry.viewed?.sessionId} />
+        <CallButton sessionId={sessionRegistry.viewedConversation?.sessionId} />
       {/if}
     {/if}
 
     <!-- Streaming indicator -->
-    {#if activeChild?.state.isStreaming || (!activeChild && sessionRegistry.viewed?.isStreaming)}
+    {#if sessionRegistry.viewedConversation?.isStreaming}
       <Badge variant="secondary" class="gap-1.5 text-xs">
         <span class="relative flex size-2">
           <span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
@@ -198,7 +200,7 @@
     {/if}
 
     <!-- Compacting indicator -->
-    {#if activeChild?.state.isCompacting || (!activeChild && sessionRegistry.viewed?.isCompacting)}
+    {#if sessionRegistry.viewedConversation?.isCompacting}
       <Badge variant="secondary" class="gap-1 text-xs">
         <span class="relative flex size-2">
           <span class="absolute inline-flex size-full animate-ping rounded-full bg-amber-400 opacity-75"></span>
@@ -215,7 +217,7 @@
           <span class="absolute inline-flex size-full animate-ping rounded-full bg-violet-400 opacity-75"></span>
           <span class="relative inline-flex size-2 rounded-full bg-violet-500"></span>
         </span>
-        {sessionRegistry.viewed?.treeNavigationSummarizing ? 'Summarizing…' : 'Navigating…'}
+        {sessionRegistry.viewedConversation?.treeNavigationSummarizing ? 'Summarizing…' : 'Navigating…'}
       </Badge>
     {/if}
 

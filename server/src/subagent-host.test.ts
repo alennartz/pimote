@@ -2,35 +2,25 @@ import { describe, expect, it } from 'vitest';
 import type {
   AgentPath,
   BorrowedAgentSession,
-  SubagentCapabilities,
   SubagentEvent,
   SubagentLease,
   SubagentLeaseEvent,
   SubagentNodeSnapshot,
-  SubagentProvider,
+  SubagentPresentationProvider,
   SubagentProviderEvent,
   SubagentStopRequest,
 } from '@pimote/sdk/subagents';
-import type { PimoteSessionEvent, SessionState } from '../../shared/dist/index.js';
+import type { AgentMessage } from '@earendil-works/pi-agent-core';
+import type { IncomingSdkEvent } from './event-buffer.js';
+import type { PimoteSessionEvent } from '../../shared/dist/index.js';
 import { createSubagentHost, type SubagentViewChange } from './subagent-host.js';
-import type { SessionSurface, SessionSurfaceOptions } from './session-surface.js';
+import { createSessionSurface } from './session-surface.js';
 
 const worker = ['worker'] as const;
 const scout = ['worker', 'scout'] as const;
 const reviewer = ['worker', 'reviewer'] as const;
 const other = ['other'] as const;
 const key = (path: AgentPath) => JSON.stringify(path);
-
-function session(id: string): BorrowedAgentSession {
-  return {
-    sessionId: id,
-    state: {
-      streamingMessage: undefined,
-      pendingToolCalls: new Set<string>(),
-      errorMessage: undefined,
-    },
-  } as unknown as BorrowedAgentSession;
-}
 
 function node(path: AgentPath, sessionId: string, state: SubagentNodeSnapshot['state'] = 'idle'): SubagentNodeSnapshot {
   return {
@@ -46,129 +36,177 @@ function node(path: AgentPath, sessionId: string, state: SubagentNodeSnapshot['s
   };
 }
 
-function state(id: string): SessionState {
-  return {
+function semanticEvent(sequence: number): SubagentEvent {
+  return { eventId: `event-${sequence}`, cursor: { epoch: 'epoch-1', sequence }, path: scout, kind: 'node_updated', relatedPiEvents: [], data: node(scout, 'scout-1', 'waiting') };
+}
+
+function nativeSession(id: string) {
+  const listeners = new Set<(event: IncomingSdkEvent) => void>();
+  const messages: AgentMessage[] = [];
+  let steering: string[] = [];
+  let followUp: string[] = [];
+  let streaming = false;
+  let leaf: string | null = null;
+  const entries = () =>
+    messages.map((message, index) => ({ type: 'message', id: `entry-${index}`, parentId: index ? `entry-${index - 1}` : null, timestamp: '2026-01-01T00:00:00.000Z', message }));
+  const emit = (event: IncomingSdkEvent) => {
+    if (event.type === 'agent_start') streaming = true;
+    if (event.type === 'agent_settled') streaming = false;
+    if (event.type === 'message_end') messages.push(event.message);
+    for (const listener of listeners) listener(event);
+  };
+  const session = {
     sessionId: id,
     sessionFile: undefined,
+    messages,
     model: null,
     thinkingLevel: 'off',
-    availableThinkingLevels: [],
-    isStreaming: false,
+    get isStreaming() {
+      return streaming;
+    },
+    get isIdle() {
+      return !streaming;
+    },
     isCompacting: false,
-    autoCompactionEnabled: true,
-    messageCount: 0,
-  };
+    isBashRunning: false,
+    state: { streamingMessage: undefined, pendingToolCalls: new Set<string>(), errorMessage: undefined },
+    sessionManager: { getEntries: entries, getBranch: entries, buildContextEntries: entries, getTree: () => [], getLeafId: () => leaf, getCwd: () => '/workspace' },
+    subscribe(listener: (event: IncomingSdkEvent) => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    async prompt(text: string, options: { streamingBehavior?: 'steer' | 'followUp'; preflightResult?: (outcome: 'started' | 'queued') => void }) {
+      if (streaming) {
+        (options.streamingBehavior === 'followUp' ? followUp : steering).push(text);
+        emit({ type: 'queue_update', steering: [...steering], followUp: [...followUp] });
+        options.preflightResult?.('queued');
+      } else {
+        streaming = true;
+        options.preflightResult?.('started');
+      }
+    },
+    getSteeringMessages: () => steering,
+    getFollowUpMessages: () => followUp,
+    clearQueue() {
+      const result = { steering, followUp };
+      steering = [];
+      followUp = [];
+      emit({ type: 'queue_update', steering, followUp });
+      return result;
+    },
+    async abort() {
+      streaming = false;
+      emit({ type: 'agent_settled', aborted: true });
+    },
+    async navigateTree(targetId: string) {
+      leaf = targetId;
+      return { cancelled: false };
+    },
+    getContextUsage: () => null,
+    getSessionStats: () => ({ cost: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }),
+  } as unknown as BorrowedAgentSession;
+  return { session, emit };
 }
 
-function semanticEvent(sequence: number): SubagentEvent {
-  return {
-    eventId: `event-${sequence}`,
-    cursor: { epoch: 'epoch-1', sequence },
-    path: scout,
-    kind: 'node_updated',
-    relatedPiEvents: [],
-    data: node(scout, 'scout-1', 'waiting'),
+function fixture(retainedEvents: readonly SubagentProviderEvent[] = []) {
+  const sessions = new Map<string, BorrowedAgentSession>();
+  const surfaces = new Map<string, { emit: (event: PimoteSessionEvent) => void }>();
+  const incarnations = new Map<string, string>();
+  const add = (path: AgentPath, id: string) => {
+    const native = nativeSession(id);
+    sessions.set(key(path), native.session);
+    surfaces.set(id, { emit: (event) => native.emit(event as IncomingSdkEvent) });
+    if (!incarnations.has(key(path))) incarnations.set(key(path), `${id}-incarnation`);
+    return native.session;
   };
-}
-
-function fixture(retainedEvents: readonly SubagentEvent[] = []) {
-  const providerCursor = { epoch: 'epoch-1', sequence: retainedEvents.at(-1)?.cursor.sequence ?? 0 };
-  const sessions = new Map<string, BorrowedAgentSession>([
-    [key(worker), session('worker-1')],
-    [key(scout), session('scout-1')],
-    [key(reviewer), session('reviewer-1')],
-    [key(other), session('other-1')],
-  ]);
-  const leases = new Set<{
-    path: AgentPath;
-    current: BorrowedAgentSession;
-    capabilities: SubagentCapabilities;
-    notify: (event: SubagentLeaseEvent) => void;
-  }>();
+  add(worker, 'worker-1');
+  add(scout, 'scout-1');
+  add(reviewer, 'reviewer-1');
+  add(other, 'other-1');
+  const leases = new Set<{ path: AgentPath; current: BorrowedAgentSession; notify: (event: SubagentLeaseEvent) => void }>();
   const listeners = new Set<(event: SubagentProviderEvent) => void>();
   type ViewNotification = { clientId: string; change: SubagentViewChange; path: readonly string[]; incarnation: string; viewCursor: number };
   const viewChanges: ViewNotification[] = [];
   const waiters = new Set<(notification: ViewNotification) => void>();
   const parentEvents: SubagentEvent[] = [];
   const stopRequests: SubagentStopRequest[] = [];
-  const projected = new Map<string, SubagentProviderEvent[]>();
-  const accept = (id: string, event: SubagentProviderEvent) => projected.set(id, [...(projected.get(id) ?? []), event]);
-  const surfaces = new Map<string, { emit: (event: PimoteSessionEvent) => void }>();
   const pending: {
     idleAnswer: string;
     delivered: string[];
-    snapshotEvent: SubagentEvent | undefined;
+    snapshotEvent?: SubagentEvent;
     parentCursor: number;
     acquireCalls: number;
     blockAcquire: boolean;
     releaseAcquire?: () => void;
+    sequence: number;
   } = {
     idleAnswer: 'latest answer',
-    delivered: [] as string[],
-    snapshotEvent: undefined as SubagentEvent | undefined,
+    delivered: [],
     parentCursor: 41,
     acquireCalls: 0,
     blockAcquire: false,
+    sequence: retainedEvents.at(-1)?.cursor.sequence ?? 0,
   };
   const publish = (event: SubagentProviderEvent) => {
+    pending.sequence = Math.max(pending.sequence, event.cursor.sequence);
     for (const listener of listeners) listener(event);
   };
-
-  const provider: SubagentProvider = {
+  const capabilities = {
+    operations: [
+      'prompt',
+      'steer',
+      'follow_up',
+      'stop',
+      'bash',
+      'abort_bash',
+      'set_model',
+      'cycle_model',
+      'set_thinking_level',
+      'cycle_thinking_level',
+      'set_auto_compaction',
+      'compact',
+      'tree',
+      'completion',
+      'state',
+      'meta',
+    ] as const,
+    renderer: { visible: true },
+    getSettings: () => ({ availableThinkingLevels: [], autoCompactionEnabled: false }),
+    getCommands: async () => [],
+    completeArgs: async () => [],
+    completeFileRefs: async () => [],
+  };
+  const provider: SubagentPresentationProvider = {
     subscribe(listener) {
       listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
+      return () => listeners.delete(listener);
     },
     snapshot() {
-      if (pending.snapshotEvent) publish(pending.snapshotEvent);
-      const nodes = [...sessions.entries()].map(([storedPath, current]) => node(JSON.parse(storedPath) as AgentPath, current.sessionId));
-      return { nodes, cursor: providerCursor };
+      if (pending.snapshotEvent) for (const listener of listeners) listener(pending.snapshotEvent);
+      return {
+        manifest: { hiddenToolNames: ['send'], hiddenCustomTypes: [] },
+        activeOperations: [],
+        cursor: { epoch: 'epoch-1', sequence: pending.sequence },
+        nodes: [...sessions].map(([path, session]) => ({ ...node(JSON.parse(path), session.sessionId), incarnation: incarnations.get(path)! })),
+      };
     },
     replay: (after) => ({
       kind: 'events',
-      cursor: providerCursor,
-      events: retainedEvents.filter((event) => after === undefined || event.cursor.sequence > after.sequence),
+      cursor: { epoch: 'epoch-1', sequence: pending.sequence },
+      events: retainedEvents.filter((event) => !after || event.cursor.sequence > after.sequence),
     }),
     async acquire(path) {
       pending.acquireCalls++;
-      if (pending.blockAcquire) await new Promise<void>((resolve) => (pending.releaseAcquire = resolve));
+      if (pending.blockAcquire)
+        await new Promise<void>((resolve) => {
+          pending.releaseAcquire = resolve;
+        });
       const current = sessions.get(key(path));
       if (!current) throw new Error('unavailable');
       const subscriptions = new Set<(event: SubagentLeaseEvent) => void>();
-      const capabilities: SubagentCapabilities = {
-        operations: [
-          'prompt',
-          'steer',
-          'follow_up',
-          'stop',
-          'bash',
-          'abort_bash',
-          'set_model',
-          'cycle_model',
-          'set_thinking_level',
-          'cycle_thinking_level',
-          'set_auto_compaction',
-          'compact',
-          'tree',
-          'completion',
-          'state',
-          'meta',
-        ],
-        renderer: { visible: true },
-        resolveModel: async () => undefined,
-        getSettings: () => ({ availableThinkingLevels: [], autoCompactionEnabled: true }),
-        nativeBash: { admitted: true, execute: async () => undefined, abort: async () => undefined },
-        executeBash: async () => undefined,
-        getCommands: async () => [],
-        completeArgs: async () => [],
-        completeFileRefs: async () => [],
-      };
       const record = {
         path,
         current,
-        capabilities,
         notify: (event: SubagentLeaseEvent) => {
           for (const listener of subscriptions) listener(event);
         },
@@ -176,198 +214,111 @@ function fixture(retainedEvents: readonly SubagentEvent[] = []) {
       leases.add(record);
       return {
         path,
-        capabilities: record.capabilities,
+        capabilities,
         get session() {
           if (!leases.has(record)) throw new Error('closed');
           return record.current;
         },
-        subscribe(listener: (event: SubagentLeaseEvent) => void) {
+        subscribe(listener) {
           subscriptions.add(listener);
-          return () => {
-            subscriptions.delete(listener);
-          };
+          return () => subscriptions.delete(listener);
         },
         async release() {
           if (!leases.delete(record)) return;
-          // The provider delivers the held idle answer when the last view of
-          // the child detaches.
-          if (key(path) === key(scout) && ![...leases].some((lease) => key(lease.path) === key(scout))) {
-            pending.delivered.push(pending.idleAnswer);
-          }
+          if (key(path) === key(scout) && ![...leases].some((lease) => key(lease.path) === key(scout))) pending.delivered.push(pending.idleAnswer);
         },
-      } as SubagentLease;
+      } satisfies SubagentLease;
     },
-    async teardown(path, _incarnation) {
-      const previous = sessions.get(key(path));
-      for (const [stored] of sessions) {
-        const parts = JSON.parse(stored) as string[];
-        if (path.every((part, index) => parts[index] === part)) sessions.delete(stored);
-      }
-      for (const lease of leases) {
+    async teardown(path) {
+      for (const [stored] of sessions) if (path.every((part, index) => JSON.parse(stored)[index] === part)) sessions.delete(stored);
+      for (const lease of [...leases])
         if (path.every((part, index) => lease.path[index] === part)) {
           leases.delete(lease);
           lease.notify({ kind: 'closed', reason: 'removed' });
         }
-      }
-      return {
-        path,
-        removed: true,
-        sessionId: previous?.sessionId ?? 'scout-1',
-        incarnation: `${previous?.sessionId ?? 'scout-1'}-incarnation`,
-        reason: 'removed',
-      };
+      return { path, removed: true };
     },
     async stop(request) {
       const current = sessions.get(key(request.path));
-      if (!current || current.sessionId !== request.expectedSessionId) throw new Error('stale child');
-      stopRequests.push({ ...request, path: [...request.path] });
+      if (!current || current.sessionId !== request.expectedSessionId || incarnations.get(key(request.path)) !== request.incarnation) throw new Error('stale child');
+      stopRequests.push(request);
+      await current.abort();
     },
     async resurrect(request) {
       const path = [...request.parentPath, request.localId];
       const sessionId = `resurrected-${request.sessionId}`;
-      sessions.set(key(path), session(sessionId));
-      return { path, sessionId, incarnation: `${sessionId}-incarnation`, node: node(path, sessionId) };
+      add(path, sessionId);
+      return { path, sessionId, incarnation: incarnations.get(key(path)), node: node(path, sessionId) };
     },
   };
-
-  /** Child surface double with the real cursor rules: a base above zero and a
-   *  replay floor that turns an old cursor into a snapshot. */
-  function makeSurface(options: SessionSurfaceOptions): SessionSurface {
-    const observers = new Map<string, (event: PimoteSessionEvent) => void>();
-    const events: PimoteSessionEvent[] = [];
-    const base = options.baseCursor ?? 0;
-    const id = options.session.sessionId;
-    const stop = (options as SessionSurfaceOptions & { stop?: (...args: readonly unknown[]) => Promise<void> | void }).stop;
-    const cursor = () => base + events.length;
-    const snapshot = () => ({ cursor: cursor(), state: state(id), messages: [] });
-    surfaces.set(id, {
-      emit: (event) => {
-        events.push(event);
-        for (const observer of observers.values()) observer(event);
-      },
-    });
-    return {
-      sessionId: id,
-      kind: 'child',
-      get currentCursor() {
-        return cursor();
-      },
-      acceptProviderEvent: (event) => {
-        accept(id, event);
-      },
-      initialize: async () => snapshot(),
-      refreshSnapshot: () => snapshot(),
-      subscribe: (listener) => {
-        observers.set(`anonymous-${observers.size}`, listener);
-        return () => {
-          for (const [observerId, candidate] of observers) if (candidate === listener) observers.delete(observerId);
-        };
-      },
-      close: () => {
-        observers.clear();
-      },
-      attachObserver: async (observerId, after) => {
-        observers.set(observerId, () => undefined);
-        const replayable = after !== undefined && after >= base && after <= cursor();
-        const replayed = replayable ? events.slice(after - base) : undefined;
-        return {
-          observerId,
-          cursor: cursor(),
-          ...(replayed ? { events: replayed } : { snapshot: snapshot() }),
-          release: () => {
-            observers.delete(observerId);
-          },
-        };
-      },
-      replay: (after = base) =>
-        after < base || after > cursor() ? { kind: 'snapshot_required', reason: 'history_unavailable' } : { kind: 'events', cursor: cursor(), events: events.slice(after - base) },
-      dispatch: async (command) => {
-        if (command.type === 'abort') await stop?.(command);
-        return `${id}:${command.type}`;
-      },
-      getState: async () => state(id),
-      getMeta: async () => ({ gitBranch: null, contextUsage: null, lifetimeCostUsd: 0 }),
-      getMessages: async () => [],
-      getCommands: async () => [],
-      completeArgs: async () => [],
-      completeFileRefs: async () => [],
-    };
-  }
-
+  const root = nativeSession('root-session');
+  const rootSurface = createSessionSurface({ sessionId: root.session.sessionId, session: root.session, kind: 'root', subagentProvider: provider });
+  void rootSurface.initialize();
   const host = createSubagentHost({
     rootSessionId: 'root-session',
     provider,
-    parentSurface: {
-      acceptProviderEvent: (event: SubagentProviderEvent) => {
-        accept('root-session', event);
-      },
-    } as SessionSurface,
+    parentSurface: rootSurface,
     parentCursor: () => pending.parentCursor,
     emitParentEvent: (event) => {
       parentEvents.push(event);
       pending.parentCursor++;
     },
     emitViewChange: (clientId, change, path, incarnation, viewCursor) => {
-      const notification = { clientId, change, path, incarnation, viewCursor };
+      const normalized = change.type === 'event' && change.event.type === 'full_resync' ? { type: 'snapshot' as const, snapshot: { ...change.event, cursor: viewCursor } } : change;
+      const notification = { clientId, change: normalized, path, incarnation, viewCursor };
       viewChanges.push(notification);
       for (const waiter of waiters) waiter(notification);
+      return true;
     },
-    childCapabilities: () => ({
-      resolveModel: async () => undefined,
-      getSettings: () => ({ availableThinkingLevels: [], autoCompactionEnabled: true }),
-      getCommands: async () => [],
-      completeArgs: async () => [],
-      completeFileRefs: async () => [],
-      executeBash: async () => undefined,
-      getGitBranch: () => null,
-    }),
-    createChildSurface: makeSurface,
   });
-
   return {
     host,
+    rootSurface,
+    rootSession: root.session,
+    sessions,
     pending,
     parentEvents,
-    projected,
     stopRequests,
     viewChanges,
     surfaces,
     publish,
-    nextViewChange(predicate: (notification: ViewNotification) => boolean): Promise<ViewNotification> {
-      return new Promise((resolve) => {
+    active: (path: AgentPath) => [...leases].filter((lease) => key(lease.path) === key(path)).length,
+    nextViewChange: (predicate: (notification: ViewNotification) => boolean) =>
+      new Promise<ViewNotification>((resolve) => {
         const waiter = (notification: ViewNotification) => {
-          if (!predicate(notification)) return;
-          waiters.delete(waiter);
-          resolve(notification);
+          if (predicate(notification)) {
+            waiters.delete(waiter);
+            resolve(notification);
+          }
         };
         waiters.add(waiter);
-      });
-    },
-    active: (path: AgentPath) => [...leases].filter((lease) => key(lease.path) === key(path)).length,
+      }),
     replace(path: AgentPath, id: string) {
-      const replacement = session(id);
-      sessions.set(key(path), replacement);
+      const previous = sessions.get(key(path))!;
+      const replacement = add(path, id);
+      publish({
+        kind: 'runtime_replaced',
+        eventId: `replace-${id}`,
+        path,
+        cursor: { epoch: 'epoch-1', sequence: pending.sequence + 1 },
+        relatedPiEvents: [],
+        data: { oldSessionId: previous.sessionId, newSessionId: id },
+      });
       for (const lease of leases)
         if (key(lease.path) === key(path)) {
           lease.current = replacement;
-          lease.capabilities = {
-            ...lease.capabilities,
-            renderer: { visible: true },
-          };
-          lease.notify({ kind: 'rebound', session: replacement, capabilities: lease.capabilities });
+          lease.notify({ kind: 'rebound', session: replacement, capabilities });
         }
     },
     unavailable(path: AgentPath) {
       sessions.delete(key(path));
-      for (const lease of leases)
+      for (const lease of [...leases])
         if (key(lease.path) === key(path)) {
           leases.delete(lease);
           lease.notify({ kind: 'closed', reason: 'unavailable' });
         }
     },
-    restore(path: AgentPath, id: string) {
-      sessions.set(key(path), session(id));
-    },
+    restore: add,
   };
 }
 
@@ -388,6 +339,10 @@ describe('SubagentHost', () => {
 
   it('routes presentation operations only to their root or child session surface', async () => {
     const f = fixture();
+    const toolMessage = (id: string) => ({ role: 'assistant', content: [{ type: 'toolCall', name: 'send', id, arguments: {} }], timestamp: 1 }) as AgentMessage;
+    (f.rootSession.messages as AgentMessage[]).push(toolMessage('root-call'));
+    (f.sessions.get(key(scout))!.messages as AgentMessage[]).push(toolMessage('child-call'));
+    f.rootSurface.refreshSnapshot();
     await f.host.start();
     await f.host.openView('client-1', scout);
     const base = {
@@ -408,8 +363,13 @@ describe('SubagentHost', () => {
     };
     f.publish(root);
     f.publish(child);
-    expect(f.projected.get('root-session')).toEqual([root]);
-    expect(f.projected.get('scout-1')).toEqual([child]);
+    const rootContent = f.rootSurface.snapshot().messages.flatMap((message) => message.content);
+    const childMessages = (await f.host.dispatch('client-1', { path: scout, incarnation: 'scout-1-incarnation' }, { type: 'get_messages' })) as {
+      messages: { content: { operationId?: string }[] }[];
+    };
+    expect(rootContent).toContainEqual(expect.objectContaining({ operationId: 'root-call' }));
+    expect(rootContent).not.toContainEqual(expect.objectContaining({ operationId: 'child-call' }));
+    expect(childMessages.messages.flatMap((message) => message.content)).toContainEqual(expect.objectContaining({ operationId: 'child-call' }));
   });
 
   it('does not lose provider events emitted at the snapshot boundary or afterwards', async () => {
@@ -439,24 +399,27 @@ describe('SubagentHost', () => {
     const delivered = f.nextViewChange(({ clientId, change }) => clientId === 'client-2' && change.type === 'event');
     f.surfaces.get('scout-1')!.emit(event);
     await delivered;
-    expect(f.viewChanges.filter(({ clientId }) => clientId === 'client-1').some(({ change }) => change.type === 'event')).toBe(false);
+    expect(f.viewChanges.filter(({ clientId }) => clientId === 'client-1').some(({ change }) => change.type === 'event' && change.event.type === 'agent_start')).toBe(false);
 
     await f.host.closeView('client-2', scout);
     expect(f.active(scout)).toBe(0);
     expect(f.pending.delivered).toEqual(['latest answer']);
   });
 
-  it('replays a delta to the attaching client only and reports the mode', async () => {
+  it('replays a delta only to the attaching client', async () => {
     const f = fixture();
     await f.host.start();
     const first = await f.host.openView('client-1', scout);
-    const event: PimoteSessionEvent = { type: 'agent_start', sessionId: 'scout-1', cursor: 1 };
+    const event: PimoteSessionEvent = { type: 'message_end', sessionId: 'scout-1', cursor: 1, message: { role: 'assistant', content: [{ type: 'text', text: 'One' }] } };
     f.surfaces.get('scout-1')!.emit(event);
-
     const second = await f.host.openView('client-2', scout, first.viewCursor);
     expect(second.mode).toBe('events');
-    expect(f.viewChanges.filter(({ clientId }) => clientId === 'client-2').map(({ change }) => change)).toEqual([{ type: 'event', event }]);
-    expect(f.viewChanges.filter(({ clientId }) => clientId === 'client-1').some(({ change }) => change.type === 'event' && change.event === event)).toBe(true);
+    const replay = f.viewChanges.find(({ clientId, change }) => clientId === 'client-2' && change.type === 'event' && change.event.type === 'buffered_events');
+    expect(replay?.change).toMatchObject({
+      type: 'event',
+      event: { events: [expect.objectContaining({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'One' }] } })] },
+    });
+    expect(f.viewChanges.some(({ clientId, change }) => clientId === 'client-1' && change.type === 'event' && change.event.type === 'message_end')).toBe(true);
   });
 
   it('answers with a snapshot when history cannot reach the supplied cursor', async () => {
@@ -492,7 +455,7 @@ describe('SubagentHost', () => {
     await f.host.openView('client-2', scout);
     const firstRefresh = f.nextViewChange(({ clientId, change }) => clientId === 'client-1' && change.type === 'snapshot');
     const secondRefresh = f.nextViewChange(({ clientId, change }) => clientId === 'client-2' && change.type === 'snapshot');
-    await f.host.dispatch('client-1', { path: scout }, { type: 'navigate_tree', targetId: 'entry-1' });
+    await f.host.dispatch('client-1', { path: scout, incarnation: 'scout-1-incarnation' }, { type: 'navigate_tree', targetId: 'entry-1' });
     await expect(Promise.all([firstRefresh, secondRefresh])).resolves.toEqual([
       expect.objectContaining({ clientId: 'client-1', change: expect.objectContaining({ type: 'snapshot' }) }),
       expect.objectContaining({ clientId: 'client-2', change: expect.objectContaining({ type: 'snapshot' }) }),
@@ -511,11 +474,33 @@ describe('SubagentHost', () => {
     expect(f.active(scout)).toBe(1);
     expect(f.active(reviewer)).toBe(0);
     expect(f.pending.delivered).toEqual([]);
-    await expect(f.host.dispatch('client-1', { path: scout }, { type: 'get_state' })).rejects.toThrow('subagent view is not open');
-    await expect(f.host.dispatch('client-2', { path: scout }, { type: 'get_state' })).resolves.toBe('scout-1:get_state');
+    await expect(f.host.dispatch('client-1', { path: scout, incarnation: 'scout-1-incarnation' }, { type: 'get_state' })).rejects.toThrow('subagent view is not open');
+    await expect(f.host.dispatch('client-2', { path: scout, incarnation: 'scout-1-incarnation' }, { type: 'get_state' })).resolves.toMatchObject({
+      state: { sessionId: 'scout-1' },
+    });
 
     await f.host.detachClient('client-2');
     expect(f.pending.delivered).toEqual(['latest answer']);
+  });
+
+  it('retains an offline sender’s draft across the last view closing', async () => {
+    const f = fixture();
+    await f.host.start();
+    const first = await f.host.openView('client-1', scout);
+    await f.host.openView('client-2', scout);
+    f.surfaces.get('scout-1')!.emit({ type: 'agent_start', sessionId: 'scout-1', cursor: 1 });
+    await f.host.dispatch('client-1', { path: scout, incarnation: first.incarnation }, { type: 'steer', message: 'Recover this question.' }, { clientId: 'client-1' });
+    await f.host.closeView('client-1', scout);
+    await f.host.dispatch('client-2', { path: scout, incarnation: first.incarnation }, { type: 'abort', expectedSessionId: 'scout-1' }, { clientId: 'client-2' });
+    await f.host.closeView('client-2', scout);
+    f.viewChanges.length = 0;
+    await f.host.openView('client-1', scout);
+    expect(f.viewChanges).toContainEqual(
+      expect.objectContaining({
+        clientId: 'client-1',
+        change: { type: 'event', event: { type: 'queued_drafts_restored', sessionId: 'scout-1', steering: ['Recover this question.'], followUp: [] } },
+      }),
+    );
   });
 
   it('reports an unavailable path instead of opening an empty view', async () => {
@@ -545,25 +530,29 @@ describe('SubagentHost', () => {
     // A rebuilt surface starts above the cursor of the surface it replaced, so
     // the next delta cannot skip the events the old surface already issued.
     expect(refresh.viewCursor).toBeGreaterThan(view.viewCursor);
-    await expect(f.host.dispatch('client-1', { path: scout }, { type: 'get_state' })).resolves.toBe('scout-2:get_state');
+    await expect(f.host.dispatch('client-1', { path: scout, incarnation: 'scout-1-incarnation' }, { type: 'get_state' })).resolves.toMatchObject({
+      state: { sessionId: 'scout-2' },
+    });
     const oldEvent: PimoteSessionEvent = { type: 'agent_start', sessionId: 'scout-1', cursor: 1 };
     const newEvent: PimoteSessionEvent = { type: 'agent_start', sessionId: 'scout-2', cursor: 1 };
     const delivered = f.nextViewChange(({ change }) => change.type === 'event' && change.event.sessionId === 'scout-2');
     f.surfaces.get('scout-1')!.emit(oldEvent);
     f.surfaces.get('scout-2')!.emit(newEvent);
     await delivered;
-    expect(f.viewChanges.some(({ change }) => change.type === 'event' && change.event === oldEvent)).toBe(false);
-    expect(f.viewChanges).toContainEqual(expect.objectContaining({ clientId: 'client-1', change: { type: 'event', event: newEvent } }));
+    expect(f.viewChanges.some(({ change }) => change.type === 'event' && change.event.type === 'agent_start' && change.event.sessionId === 'scout-1')).toBe(false);
+    expect(f.viewChanges).toContainEqual(
+      expect.objectContaining({ clientId: 'client-1', change: { type: 'event', event: expect.objectContaining({ type: 'agent_start', sessionId: 'scout-2' }) } }),
+    );
   });
 
   it('rejects commands from a client that does not observe the view and from a stale incarnation', async () => {
     const f = fixture();
     await f.host.start();
     const view = await f.host.openView('client-1', scout);
-    await expect(f.host.dispatch('client-2', { path: scout }, { type: 'get_state' })).rejects.toThrow('subagent view is not open');
-    await expect(f.host.dispatch('client-1', { path: reviewer }, { type: 'get_state' })).rejects.toThrow('subagent view is not open');
+    await expect(f.host.dispatch('client-2', { path: scout, incarnation: 'scout-1-incarnation' }, { type: 'get_state' })).rejects.toThrow('subagent view is not open');
+    await expect(f.host.dispatch('client-1', { path: reviewer, incarnation: 'reviewer-1-incarnation' }, { type: 'get_state' })).rejects.toThrow('subagent view is not open');
     await expect(f.host.dispatch('client-1', { path: scout, incarnation: 'stale' }, { type: 'get_state' })).rejects.toThrow('stale child incarnation');
-    await expect(f.host.dispatch('client-1', { path: scout, incarnation: view.incarnation }, { type: 'get_state' })).resolves.toBe('scout-1:get_state');
+    await expect(f.host.dispatch('client-1', { path: scout, incarnation: view.incarnation }, { type: 'get_state' })).resolves.toMatchObject({ state: { sessionId: 'scout-1' } });
   });
 
   it('closes a view whose runtime disappears and notifies its observer', async () => {
@@ -573,7 +562,7 @@ describe('SubagentHost', () => {
     const closed = f.nextViewChange(({ clientId, change }) => clientId === 'client-1' && change.type === 'closed');
     f.unavailable(scout);
     expect(await closed).toEqual(expect.objectContaining({ clientId: 'client-1', change: { type: 'closed', reason: 'unavailable' } }));
-    await expect(f.host.dispatch('client-1', { path: scout }, { type: 'get_state' })).rejects.toThrow('subagent view is not open');
+    await expect(f.host.dispatch('client-1', { path: scout, incarnation: 'scout-1-incarnation' }, { type: 'get_state' })).rejects.toThrow('subagent view is not open');
   });
 
   it('stops a hierarchy node without requiring a view and guards its runtime identity', async () => {
@@ -602,9 +591,11 @@ describe('SubagentHost', () => {
       expect.objectContaining({ clientId: 'client-1', change: { type: 'closed', reason: 'teardown' } }),
       expect.objectContaining({ clientId: 'client-2', change: { type: 'closed', reason: 'teardown' } }),
     ]);
-    await expect(f.host.dispatch('client-1', { path: scout }, { type: 'get_state' })).rejects.toThrow();
-    await expect(f.host.dispatch('client-2', { path: reviewer }, { type: 'get_state' })).rejects.toThrow();
-    await expect(f.host.dispatch('client-1', { path: other }, { type: 'get_state' })).resolves.toBe('other-1:get_state');
+    await expect(f.host.dispatch('client-1', { path: scout, incarnation: 'scout-1-incarnation' }, { type: 'get_state' })).rejects.toThrow();
+    await expect(f.host.dispatch('client-2', { path: reviewer, incarnation: 'reviewer-1-incarnation' }, { type: 'get_state' })).rejects.toThrow();
+    await expect(f.host.dispatch('client-1', { path: other, incarnation: 'other-1-incarnation' }, { type: 'get_state' })).resolves.toMatchObject({
+      state: { sessionId: 'other-1' },
+    });
   });
 
   it('routes child events on their view cursor without advancing the parent cursor', async () => {
@@ -615,7 +606,9 @@ describe('SubagentHost', () => {
     const delivered = f.nextViewChange(({ change }) => change.type === 'event');
     f.surfaces.get('scout-1')!.emit(event);
     await delivered;
-    expect(f.viewChanges).toContainEqual(expect.objectContaining({ clientId: 'client-1', change: { type: 'event', event }, path: scout }));
+    expect(f.viewChanges).toContainEqual(
+      expect.objectContaining({ clientId: 'client-1', change: { type: 'event', event: expect.objectContaining({ type: 'agent_start', sessionId: 'scout-1' }) }, path: scout }),
+    );
     expect(started.parentCursor).toBe(41);
     expect(f.pending.parentCursor).toBe(41);
     f.publish(semanticEvent(1));

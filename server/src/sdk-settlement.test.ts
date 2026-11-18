@@ -11,7 +11,7 @@ import {
   SettingsManager,
 } from '@earendil-works/pi-coding-agent';
 import type { BorrowedAgentSession } from '@pimote/sdk/subagents';
-import { createSessionSurface } from './session-surface.js';
+import { createSessionSurface, createSessionCapabilities } from './session-surface.js';
 
 // Exercise the installed SDK, not a copy of its lifecycle implementation.
 // All model responses, resources, settings, and session storage are local/in-memory.
@@ -152,7 +152,12 @@ function runResult(session: AgentSession) {
 describe('installed SDK child steering', () => {
   it('starts a child that became idle before a steer arrived', async () => {
     const { session, started } = makeSession();
-    const surface = createSessionSurface({ sessionId: session.sessionId, session: session as unknown as BorrowedAgentSession, kind: 'child' });
+    const surface = createSessionSurface({
+      sessionId: session.sessionId,
+      session: session as unknown as BorrowedAgentSession,
+      kind: 'child',
+      capabilities: { ...createSessionCapabilities(session as unknown as BorrowedAgentSession), operations: ['steer'] },
+    });
     try {
       await surface.initialize();
       const response = surface.dispatch({ type: 'steer', message: 'Continue work' });
@@ -171,8 +176,13 @@ describe('installed SDK child steering', () => {
 
   it('queues a child surface steer and delivers it to the running child', async () => {
     const { session, started, streams } = makeSession();
-    const surface = createSessionSurface({ sessionId: session.sessionId, session: session as unknown as BorrowedAgentSession, kind: 'child' });
-    const events: import('../../shared/dist/index.js').PimoteSessionEvent[] = [];
+    const surface = createSessionSurface({
+      sessionId: session.sessionId,
+      session: session as unknown as BorrowedAgentSession,
+      kind: 'child',
+      capabilities: { ...createSessionCapabilities(session as unknown as BorrowedAgentSession), operations: ['steer'] },
+    });
+    const events: import('../../shared/dist/index.js').PimoteSurfaceEvent[] = [];
     surface.subscribe((event) => events.push(event));
     try {
       await surface.initialize();

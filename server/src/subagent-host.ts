@@ -13,9 +13,13 @@ import type {
   SubagentStopRequest,
   SubagentTeardownResult,
 } from '@pimote/sdk/subagents';
-import type { PimoteSessionEvent } from '../../shared/dist/index.js';
+import { SessionEventGate } from './session-resync.js';
+import type { PimoteSurfaceEvent, SubagentOpenViewResponseData } from '../../shared/dist/index.js';
 import {
   createSessionSurface,
+  createSessionCapabilities,
+  createSessionInteractionState,
+  type SessionInteractionState,
   type SessionSurface,
   type SessionSurfaceCapabilities,
   type SessionSurfaceCallerContext,
@@ -52,23 +56,17 @@ function providerEventIdentity(event: ProviderFeedEvent): string {
 /** What a view command names. The client id is the observer identity. */
 export interface SubagentViewReference {
   readonly path: AgentPath;
-  /** Optional runtime guard supplied by newer wire clients. */
-  readonly incarnation?: string;
+  readonly incarnation: string;
 }
 
 /** Result of one attach. Payload travels as view frames before the response. */
-export interface SubagentViewOpenResult {
-  readonly path: AgentPath;
-  readonly incarnation: string;
-  readonly viewCursor: number;
-  readonly mode: 'events' | 'snapshot';
-}
+export type SubagentViewOpenResult = SubagentOpenViewResponseData;
 
 export type SubagentViewClosedReason = 'replaced' | 'unavailable' | 'teardown';
 
 export type SubagentViewChange =
   | { type: 'snapshot'; snapshot: SessionSurfaceSnapshot }
-  | { type: 'event'; event: PimoteSessionEvent }
+  | { type: 'event'; event: PimoteSurfaceEvent }
   | { type: 'closed'; reason: SubagentViewClosedReason };
 
 export interface SubagentHostStartResult {
@@ -85,9 +83,9 @@ export interface SubagentHostOptions {
   parentCursor: () => number;
   emitParentEvent: ParentTopologyEventSink;
   /** One view change for one observing client. */
-  emitViewChange: (clientId: string, change: SubagentViewChange, path: AgentPath, incarnation: string, viewCursor: number) => void;
-  childCapabilities: (session: BorrowedAgentSession) => SessionSurfaceCapabilities;
-  createChildSurface?: (options: SessionSurfaceOptions) => SessionSurface;
+  emitViewChange: (clientId: string, change: SubagentViewChange, path: AgentPath, incarnation: string, viewCursor: number) => boolean;
+  childCapabilities?: (session: BorrowedAgentSession) => SessionSurfaceCapabilities;
+  bufferCapacity?: number;
 }
 
 /**
@@ -133,7 +131,7 @@ type ViewRecord = {
   leaseUnsubscribe?: () => void;
   /** Observing clients. Delivery is a broadcast to this set; each client's
    *  own cursor decides what it replays. */
-  readonly observers: Set<string>;
+  readonly observers: Map<string, SessionEventGate>;
   ready: boolean;
   closed: boolean;
   /** Serialize asynchronous replacement and refresh operations. */
@@ -189,11 +187,19 @@ function providerCapabilities(session: BorrowedAgentSession, leaseCapabilities: 
 
 /** Construct the provider host for one root session. */
 export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
+  const interactions = new WeakMap<BorrowedAgentSession, SessionInteractionState>();
+  const interactionFor = (session: BorrowedAgentSession): SessionInteractionState => {
+    const existing = interactions.get(session);
+    if (existing) return existing;
+    const state = createSessionInteractionState();
+    interactions.set(session, state);
+    return state;
+  };
+
   const views = new Map<string, ViewRecord>();
   const inFlightCreates = new Map<string, Promise<ViewRecord>>();
   const nodes = new Map<string, SubagentNodeSnapshot>();
   const seenEventIdentities = new Set<string>();
-  const createSurface = options.createChildSurface ?? createSessionSurface;
 
   let started = false;
   let closed = false;
@@ -232,12 +238,14 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     return record.surface?.currentCursor ?? 0;
   };
 
-  const emitTo = (clientId: string, record: ViewRecord, change: SubagentViewChange): void => {
+  const emitTo = (clientId: string, record: ViewRecord, change: SubagentViewChange): boolean =>
     options.emitViewChange(clientId, change, clonePath(record.path), record.incarnation, cursorForChange(record, change));
-  };
 
   const emitAll = (record: ViewRecord, change: SubagentViewChange): void => {
-    for (const clientId of [...record.observers]) emitTo(clientId, record, change);
+    for (const [clientId, gate] of record.observers) {
+      if (change.type === 'event') gate.send(change.event);
+      else emitTo(clientId, record, change);
+    }
   };
 
   const removeView = (record: ViewRecord): void => {
@@ -326,6 +334,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     // Forward only its semantic history, not removed or replaced incarnations.
     if (snapshotCoversEvent && (event.kind === 'node_added' || event.kind === 'node_updated' || event.kind === 'node_removed' || event.kind === 'runtime_replaced')) return;
     updateNodesForEvent(event);
+    surfaceForPath(event.path)?.refreshSettings();
     appendParentEvent(event);
   };
 
@@ -343,7 +352,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
   const assertReference = (view: SubagentViewReference): ViewRecord => {
     const record = liveRecord(pathKey(view.path));
     if (!record || pathKey(record.path) !== pathKey(view.path)) throw new Error('subagent view is not open');
-    if (view.incarnation !== undefined && record.incarnation !== view.incarnation) throw new Error('stale child incarnation');
+    if (record.incarnation !== view.incarnation) throw new Error('stale child incarnation');
     return record;
   };
 
@@ -360,7 +369,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     previousCursor: number,
     initialProjection?: import('./subagent-transcript-projector.js').SubagentProjectionSnapshot,
   ): SessionSurfaceOptions => {
-    const localCapabilities = options.childCapabilities(session);
+    const localCapabilities = options.childCapabilities?.(session) ?? createSessionCapabilities(session);
     const capabilities = providerCapabilities(session, leaseCapabilities, localCapabilities);
     return {
       sessionId: session.sessionId,
@@ -368,11 +377,12 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
       kind: 'child',
       capabilities,
       baseCursor: surfaceBaseCursor(previousCursor),
-      parentCursor: options.parentCursor(),
+      bufferCapacity: options.bufferCapacity,
+      interaction: interactionFor(session),
+      sendToClient: (clientId, event) => record.observers.get(clientId)?.send(event) ?? false,
       path: record.path,
       incarnation: record.incarnation,
       subagentProvider: options.provider as unknown as SessionSurfaceOptions['subagentProvider'],
-      subagentPath: record.path,
       ...(initialProjection ? { initialProjection } : {}),
       stop: async (request) => {
         const expectedSessionId = request.expectedSessionId;
@@ -410,8 +420,8 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
       previousProjection = undefined;
     }
     const previousCursor = record.surface?.currentCursor ?? 0;
-    const nextSurface = createSurface(surfaceOptions(record, session, record.lease.capabilities, previousCursor, previousProjection));
-    const staged: PimoteSessionEvent[] = [];
+    const nextSurface = createSessionSurface(surfaceOptions(record, session, record.lease.capabilities, previousCursor, previousProjection));
+    const staged: PimoteSurfaceEvent[] = [];
     record.ready = false;
     const previousSurface = record.surface;
     record.surfaceUnsubscribe?.();
@@ -444,7 +454,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
   const refreshCurrentSnapshot = (record: ViewRecord): void => {
     if (record.closed || !record.surface) return;
     const surface = record.surface;
-    const staged: PimoteSessionEvent[] = [];
+    const staged: PimoteSurfaceEvent[] = [];
     record.ready = false;
     try {
       const snapshot = surface.refreshSnapshot();
@@ -503,7 +513,7 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
         incarnation: node.incarnation,
         lease,
         surface: undefined,
-        observers: new Set(),
+        observers: new Map(),
         ready: false,
         closed: false,
         transition: Promise.resolve(),
@@ -539,27 +549,28 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     const surface = record.surface;
     if (!surface) throw new Error('subagent view is unavailable');
     if (record.closed) throw new Error('subagent view is unavailable');
-    // A client cursor can only be trusted against a surface that client has
-    // already seen. A fresh record and a caller without a cursor both ask for
-    // state, not history: -1 falls below the base cursor and yields a
-    // snapshot.
-    const attachment = await surface.attachObserver(clientId, existing ? (after ?? -1) : -1);
-    // The surface computes the payload for one observer; delivery is a
-    // broadcast to the observer set, so its own bookkeeping is released.
-    attachment.release();
-    if (record.closed || record.surface !== surface) throw new Error('subagent view is unavailable');
-    record.observers.add(clientId);
-    if (attachment.events) {
-      for (const event of attachment.events) emitTo(clientId, record, { type: 'event', event });
-    } else if (attachment.snapshot) {
-      emitTo(clientId, record, { type: 'snapshot', snapshot: attachment.snapshot });
+    const previousGate = record.observers.get(clientId);
+    const gate = new SessionEventGate((event) => emitTo(clientId, record, { type: 'event', event: event as PimoteSurfaceEvent }));
+    record.observers.set(clientId, gate);
+    try {
+      const result = gate.synchronize(surface, clientId, existing ? after : undefined);
+      return {
+        path: clonePath(record.path),
+        incarnation: record.incarnation,
+        viewCursor: result.cursor,
+        mode: result.mode === 'incremental_replay' ? 'events' : 'snapshot',
+        meta: await surface.getMeta(),
+        commands: [...(await surface.getCommands())],
+      };
+    } catch (error) {
+      if (previousGate) {
+        record.observers.set(clientId, previousGate);
+        gate.flush();
+      } else {
+        await closeView(clientId, path);
+      }
+      throw error;
     }
-    return {
-      path: clonePath(record.path),
-      incarnation: record.incarnation,
-      viewCursor: attachment.cursor,
-      mode: attachment.events ? 'events' : 'snapshot',
-    };
   };
 
   const closeView = async (clientId: string, path: AgentPath): Promise<void> => {
@@ -583,17 +594,8 @@ export function createSubagentHost(options: SubagentHostOptions): SubagentHost {
     assertCurrentIncarnation(record);
     if (!record.observers.has(clientId)) throw new Error('subagent view is not open');
     const expectedSessionId = (command as SessionSurfaceCommand & { expectedSessionId?: unknown }).expectedSessionId;
-    if (command.type === 'abort' && expectedSessionId !== undefined) {
-      if (typeof expectedSessionId !== 'string' || expectedSessionId !== record.lease.session.sessionId) throw new Error('stale child runtime');
-      // Keep the expected identity in the owner-control request. Calling the
-      // borrowed session's abort directly would allow a replacement runtime to
-      // win a race between validation and dispatch.
-      await options.provider.stop({
-        path: record.path,
-        incarnation: record.incarnation,
-        expectedSessionId,
-      });
-      return { steering: [], followUp: [] };
+    if (command.type === 'abort' && (typeof expectedSessionId !== 'string' || expectedSessionId !== record.lease.session.sessionId)) {
+      throw new Error('stale child runtime');
     }
     if (!record.surface) throw new Error('child surface is closed');
     const result = await record.surface.dispatch(command, caller);

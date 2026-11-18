@@ -5,20 +5,12 @@ import type {
   PimoteCommand,
   PimoteResponse,
   PimoteEvent,
-  SessionState,
-  BufferedEventsEvent,
-  ConnectionRestoredEvent,
   FullResyncEvent,
-  FullResyncStartEvent,
   RestoreMode,
-  SessionRestoreEvent,
   SessionClosedEvent,
   SessionStateChangedEvent,
   SessionCommandsChangedEvent,
-  CommandInfo,
   FolderInfo,
-  PromptOutcome,
-  PromptResponseData,
   GetGlobalSettingsResponseData,
   GetTreeResponseData,
   ServerCapabilitiesEvent,
@@ -31,18 +23,17 @@ import type {
   ReorderSessionsResponseData,
 } from '../../shared/dist/index.js';
 import type { PimoteSessionManager, ManagedSlot, SessionResetOutcome, SessionObserver, EventSocket, SubagentViewListener } from './session-manager.js';
-import type { SessionSurfaceSnapshot } from './session-surface.js';
+import { SessionAbortError, getSessionCommands, makeSessionSettingsEvent, type SessionSurfaceSnapshot } from './session-surface.js';
+import { sendFullResync, SessionEventGate } from './session-resync.js';
 import {
   createCommandContextActions,
   makeDownloadSnapshot,
-  makeSessionSettingsEvent,
   replaySlotPendingUiRequests,
   requestSlotPanelResync,
   resolveAllSlotPendingUi,
   resolveSlotPendingUi,
   sendBatchedEvent,
   runSlotLifecycle,
-  isNestedSlotLifecycle,
   sendSlotEvent,
 } from './session-manager.js';
 import { LoginBusyError, type LoginTransport } from './login-orchestrator.js';
@@ -58,20 +49,14 @@ import { classifyFolder, nodeFolderFs } from './folder-model/index.js';
 import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
 import type { PushNotificationService } from './push-notification.js';
 import type { FileSessionMetadataStore } from './session-metadata.js';
-import { mapAgentMessage, mapAgentMessageUsage, mapContextEntries, rendererRegisteredVisibility } from './message-mapper.js';
-import { resolveImageInputs } from './image-registry.js';
-import type { TreeNavigationStartEvent, TreeNavigationEndEvent } from './event-buffer.js';
 import { makeSessionMeta } from './session-usage.js';
-import { completeFileRefs } from './file-references.js';
 import { readEditableFile, writeEditableFile } from './file-edit.js';
-import { attributeDrained, type Intent } from './queue-ownership.js';
-import type { AgentSession } from '@earendil-works/pi-coding-agent';
 import type { VoiceOrchestrator } from './voice-orchestrator.js';
 import { CallBindError } from './voice-orchestrator.js';
 import type { ConfigRuntime } from './config-runtime.js';
 import type { SubagentSurfaceCommand, SubagentViewChange } from './subagent-host.js';
 import type { SessionSurfaceCallerContext, SessionSurfaceCommand } from './session-surface.js';
-import { mapTreeNodes, serializeTreeResponse, type SessionTreeNode } from './session-tree.js';
+import { serializeTreeResponse } from './session-tree.js';
 export { mapTreeNodes, serializeTreeResponse } from './session-tree.js';
 
 export interface WsGlobalSettingsDependencies {
@@ -81,95 +66,10 @@ export interface WsGlobalSettingsDependencies {
   capabilities?: () => ServerCapabilitiesEvent;
 }
 
-/**
- * Hand user input to pi and resolve with pi's dispatch outcome. Input that
- * meets an active run joins the `streamingBehavior` queue; input that meets an
- * idle session starts a run. Extension commands run either way. `onStarted`
- * runs inside pi's `started` preflight, before pi emits the run's messages.
- * Rejects when pi refuses the prompt before dispatch.
- */
 /** True when the forwarded input's first token is the retired `/new`
  *  command: such input never dispatches to pi. */
 function isForwardedNew(message: string): boolean {
   return message.trim().split(/\s+/)[0] === '/new';
-}
-
-function dispatchPrompt(
-  session: Pick<AgentSession, 'prompt'>,
-  text: string,
-  images: Awaited<ReturnType<typeof resolveImageInputs>>,
-  streamingBehavior: 'steer' | 'followUp',
-  onStarted: () => void,
-): Promise<PromptOutcome> {
-  return new Promise((resolve, reject) => {
-    let dispatched = false;
-    session
-      .prompt(text, {
-        images,
-        streamingBehavior,
-        preflightResult: (disposition) => {
-          dispatched = true;
-          if (disposition === 'started') onStarted();
-          resolve(disposition);
-        },
-      })
-      .then(
-        // pi defers a prompt submitted while it emits agent_settled and returns
-        // without a preflight. The deferred run echoes unstamped, like a queued one.
-        () => {
-          if (!dispatched) resolve('queued');
-        },
-        (err: unknown) => {
-          if (dispatched) console.error(`[WsHandler] prompt error:`, err);
-          else reject(err);
-        },
-      );
-  });
-}
-
-function getSessionCommands(session: AgentSession): CommandInfo[] {
-  const commands: CommandInfo[] = [];
-
-  // Skills
-  const { skills } = session.resourceLoader.getSkills();
-  for (const skill of skills) {
-    commands.push({
-      name: `skill:${skill.name}`,
-      description: skill.description,
-      hasArgCompletions: false,
-    });
-  }
-
-  // Prompt templates
-  for (const template of session.promptTemplates) {
-    commands.push({
-      name: template.name,
-      description: template.description,
-      hasArgCompletions: false,
-    });
-  }
-
-  // Extension commands
-  const extensionCommands = session.extensionRunner?.getRegisteredCommands() ?? [];
-  for (const cmd of extensionCommands) {
-    commands.push({
-      name: cmd.name,
-      description: cmd.description ?? '',
-      hasArgCompletions: !!cmd.getArgumentCompletions,
-    });
-  }
-
-  // Pimote built-in commands
-  commands.push(
-    { name: 'new', description: 'Start a new session', hasArgCompletions: false },
-    { name: 'reload', description: 'Reload extensions and skills', hasArgCompletions: false },
-    { name: 'tree', description: 'Navigate session history tree', hasArgCompletions: false },
-    { name: 'login', description: 'Log in to a model provider', hasArgCompletions: false },
-    { name: 'logout', description: 'Log out from a model provider', hasArgCompletions: false },
-    { name: 'compact', description: 'Manually compact the session context', hasArgCompletions: false },
-  );
-
-  return commands;
 }
 
 /** The synthetic folder row for a session cwd the registry does not list:
@@ -1112,6 +1012,7 @@ export class WsHandler {
         case 'subagent_prompt':
         case 'subagent_steer':
         case 'subagent_follow_up':
+        case 'subagent_dequeue_steering':
         case 'subagent_abort':
         case 'subagent_stop':
         case 'subagent_bash':
@@ -1238,7 +1139,7 @@ export class WsHandler {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[WsHandler] Error handling command ${command.type}:`, message);
-      this.sendResponse(id, false, undefined, message);
+      this.sendResponse(id, false, err instanceof SessionAbortError ? err.drafts : undefined, message);
     }
   }
 
@@ -1261,31 +1162,35 @@ export class WsHandler {
   }
 
   private makeSubagentViewSnapshot(rootSessionId: string, path: readonly string[], incarnation: string, snapshot: SessionSurfaceSnapshot): SubagentViewSnapshot {
+    const { cursor, ...state } = snapshot;
     return {
+      ...state,
       type: 'subagent_view_snapshot',
       sessionId: rootSessionId,
       childSessionId: snapshot.state.sessionId,
       path,
       incarnation,
-      viewCursor: snapshot.cursor,
-      state: snapshot.state,
-      messages: snapshot.messages,
-      ...(snapshot.pendingSteeringMessages !== undefined ? { pendingSteeringMessages: [...snapshot.pendingSteeringMessages] } : {}),
-      ...(snapshot.activeSubagentContent !== undefined ? { activeSubagentContent: snapshot.activeSubagentContent } : {}),
-      ...(snapshot.branchEntryIds !== undefined ? { branchEntryIds: [...snapshot.branchEntryIds] } : {}),
-      ...(snapshot.streamingMessage ? { streamingMessage: snapshot.streamingMessage } : {}),
-      ...(snapshot.runningToolCallIds ? { runningToolCallIds: snapshot.runningToolCallIds } : {}),
+      viewCursor: cursor,
     };
   }
 
-  private sendSubagentViewChange(slot: ManagedSlot, change: SubagentViewChange, path: readonly string[], incarnation: string, viewCursor: number): void {
+  private sendSubagentViewChange(slot: ManagedSlot, change: SubagentViewChange, path: readonly string[], incarnation: string, viewCursor: number): boolean {
     const rootSessionId = slot.sessionState.id;
     if (change.type === 'snapshot') {
-      this.sendEvent(this.makeSubagentViewSnapshot(rootSessionId, path, incarnation, change.snapshot));
-      return;
+      return sendFullResync({ ...change.snapshot, type: 'full_resync', sessionId: change.snapshot.state.sessionId }, (event) =>
+        this.sendSubagentViewChange(slot, { type: 'event', event }, path, incarnation, viewCursor),
+      );
     }
     if (change.type === 'event') {
-      const event: SubagentViewEvent = {
+      if (change.event.type === 'full_resync') {
+        return this.sendEvent(
+          this.makeSubagentViewSnapshot(rootSessionId, path, incarnation, {
+            ...change.event,
+            cursor: viewCursor,
+          }),
+        );
+      }
+      return this.sendEvent({
         type: 'subagent_view_event',
         sessionId: rootSessionId,
         childSessionId: change.event.sessionId,
@@ -1293,17 +1198,9 @@ export class WsHandler {
         incarnation,
         viewCursor,
         event: change.event,
-      };
-      this.sendEvent(event);
-      return;
+      } satisfies SubagentViewEvent);
     }
-    this.sendEvent({
-      type: 'subagent_view_closed',
-      sessionId: rootSessionId,
-      path,
-      incarnation,
-      reason: change.reason,
-    } satisfies SubagentViewClosedEvent);
+    return this.sendEvent({ type: 'subagent_view_closed', sessionId: rootSessionId, path, incarnation, reason: change.reason } satisfies SubagentViewClosedEvent);
   }
 
   private makeSubagentSurfaceCommand(command: SubagentCommand): SubagentSurfaceCommand {
@@ -1312,20 +1209,17 @@ export class WsHandler {
       sessionId: _sessionId,
       path: _path,
       incarnation: _incarnation,
-      attachmentGeneration: _attachmentGeneration,
       ...rest
     } = command as unknown as {
       type: string;
       sessionId?: unknown;
       path?: unknown;
       incarnation?: unknown;
-      attachmentGeneration?: unknown;
       [key: string]: unknown;
     };
     void _sessionId;
     void _path;
     void _incarnation;
-    void _attachmentGeneration;
     return {
       ...(rest as Omit<SubagentSurfaceCommand, 'type'>),
       type: type.slice('subagent_'.length),
@@ -1358,12 +1252,7 @@ export class WsHandler {
       }
       // The payload travelled as view frames ahead of this response.
       await this.linkViewForUser(slot.sessionState.id, opened.path, this.subagentChildSessionId(slot, opened.path));
-      this.sendResponse(id, true, {
-        path: opened.path,
-        incarnation: opened.incarnation,
-        viewCursor: opened.viewCursor,
-        mode: opened.mode,
-      } satisfies SubagentOpenViewResponseData);
+      this.sendResponse(id, true, opened satisfies SubagentOpenViewResponseData);
       return;
     }
 
@@ -1405,11 +1294,7 @@ export class WsHandler {
     // ledger, because child queue updates do not reconcile against it.
     const caller: SessionSurfaceCallerContext = { clientId: this.clientId };
     const result = await host.dispatch(this.clientId, view, this.makeSubagentSurfaceCommand(command), caller);
-    if (command.type === 'subagent_get_tree' || (command.type === 'subagent_prompt' && command.message.trim().split(/\s+/, 1)[0].toLowerCase() === '/tree')) {
-      this.sendTreeResponse(id, result as GetTreeResponseData);
-    } else {
-      this.sendResponse(id, true, result);
-    }
+    this.sendSurfaceResponse(id, result);
   }
 
   /** Child session id behind one open path, used to key the user's view entry. */
@@ -1421,524 +1306,67 @@ export class WsHandler {
     }
   }
 
-  private rootSurfaceCommand(command: PimoteCommand): SessionSurfaceCommand | undefined {
-    const shared = new Set([
-      'prompt',
-      'steer',
-      'follow_up',
-      'abort',
-      'bash',
-      'abort_bash',
-      'set_model',
-      'cycle_model',
-      'get_available_models',
-      'set_thinking_level',
-      'cycle_thinking_level',
-      'compact',
-      'set_auto_compaction',
-      'get_state',
-      'get_messages',
-      'get_session_stats',
-      'get_session_meta',
-      'get_commands',
-      'complete_args',
-      'complete_file_refs',
-      'get_tree',
-      'navigate_tree',
-      'set_tree_label',
-    ]);
-    if (!shared.has(command.type)) return undefined;
-    const { sessionId: _sessionId, ...surfaceCommand } = command as PimoteCommand & { sessionId?: string };
-    void _sessionId;
-    return surfaceCommand as unknown as SessionSurfaceCommand;
+  private sendSurfaceResponse(id: string, data: unknown): void {
+    if (data && typeof data === 'object' && 'tree' in data) this.sendTreeResponse(id, data as GetTreeResponseData);
+    else this.sendResponse(id, true, data);
   }
 
-  private async dispatchRootSurfaceCommand(slot: ManagedSlot, command: PimoteCommand): Promise<{ handled: boolean; data?: unknown }> {
+  private async dispatchRootSurfaceCommand(slot: ManagedSlot, command: PimoteCommand): Promise<unknown> {
     const surface = slot.sessionSurface;
-    const surfaceCommand = this.rootSurfaceCommand(command);
-    if (!surface || !surfaceCommand) return { handled: false };
-    const caller: SessionSurfaceCallerContext = { clientId: this.clientId, queueOwnership: slot.sessionState.queueOwnership };
-
+    if (!surface) throw new Error('Session surface is not available');
+    const { sessionId: _sessionId, ...fields } = command;
+    const surfaceCommand = fields as SessionSurfaceCommand;
+    const caller: SessionSurfaceCallerContext = { clientId: this.clientId };
     if (surfaceCommand.type === 'navigate_tree') {
-      if (slot.sessionState.treeNavigationInProgress && !isNestedSlotLifecycle(slot)) throw new Error('Tree navigation already in progress');
-      slot.sessionState.treeNavigationInProgress = true;
-      slot.sessionState.treeNavigationSummarizing = (surfaceCommand as { summarize?: boolean }).summarize === true;
-      try {
-        const result = await runSlotLifecycle(slot, 'reset', async () => {
-          const navigation = await surface.dispatch(surfaceCommand, caller);
-          // Navigation is over: drop the flag before the reset notification so
-          // the reset's full_resync does not report a navigation still in
-          // progress and re-show the client indicator after tree_navigation_end.
+      return runSlotLifecycle(slot, 'reset', async () => {
+        slot.sessionState.treeNavigationInProgress = true;
+        slot.sessionState.treeNavigationSummarizing = surfaceCommand.summarize === true;
+        try {
+          const result = await surface.dispatch(surfaceCommand, caller);
           slot.sessionState.treeNavigationInProgress = false;
           slot.sessionState.treeNavigationSummarizing = false;
-          if (!navigation || typeof navigation !== 'object' || (navigation as { cancelled?: unknown }).cancelled !== true) await this.sessionManager.applySessionReset(slot);
-          return navigation;
-        });
-        return { handled: true, data: result };
-      } finally {
-        slot.sessionState.treeNavigationInProgress = false;
-        slot.sessionState.treeNavigationSummarizing = false;
-      }
+          if (!result || typeof result !== 'object' || (result as { cancelled?: unknown }).cancelled !== true) await this.sessionManager.applySessionReset(slot);
+          return result;
+        } finally {
+          slot.sessionState.treeNavigationInProgress = false;
+          slot.sessionState.treeNavigationSummarizing = false;
+        }
+      });
     }
-
     const result = await surface.dispatch(surfaceCommand, caller);
     if (['set_model', 'cycle_model', 'set_thinking_level', 'cycle_thinking_level', 'set_auto_compaction'].includes(surfaceCommand.type)) {
       this.sendSessionSettingsToObservers(slot.sessionState.id, slot);
     }
-    return { handled: true, data: result };
+    return result;
   }
 
   private async handleSessionCommand(command: PimoteCommand, id: string): Promise<void> {
     const sessionId = command.sessionId;
-    if (!sessionId) {
-      this.sendResponse(id, false, undefined, 'sessionId is required');
-      return;
-    }
-
+    if (!sessionId) throw new Error('sessionId is required');
     const slot = this.sessionManager.getSession(sessionId);
-    if (!slot) {
-      this.sendResponse(id, false, undefined, `Session not found: ${sessionId}`);
+    if (!slot) throw new Error(`Session not found: ${sessionId}`);
+    if ((command.type === 'prompt' || command.type === 'steer' || command.type === 'follow_up') && (await this.dispatchPimoteSlashCommand(id, sessionId, slot, command.message)))
       return;
-    }
-
-    const session = slot.session;
-
-    // Pimote handles its own slash commands before pi sees the input. Keep this
-    // boundary shared by prompt, steer, and follow-up so a streaming composer
-    // cannot turn a built-in command into a queued user message.
-    if ((command.type === 'prompt' || command.type === 'steer' || command.type === 'follow_up') && (await this.dispatchPimoteSlashCommand(id, sessionId, slot, command.message))) {
-      return;
-    }
-
-    const sharedRoot = await this.dispatchRootSurfaceCommand(slot, command);
-    if (sharedRoot.handled) {
-      if (command.type === 'get_tree') this.sendTreeResponse(id, sharedRoot.data as GetTreeResponseData);
-      else this.sendResponse(id, true, sharedRoot.data);
-      return;
-    }
 
     switch (command.type) {
-      case 'prompt': {
-        // A prompt that races a run start joins the steering queue.
-        await this.dispatchInput(id, slot, {
-          text: command.message,
-          images: command.images,
-          behavior: 'steer',
-          intent: session.isStreaming ? slot.sessionState.queueOwnership.intend('steering', this.clientId, command.message) : undefined,
-          clientMessageId: command.clientMessageId,
-        });
-        break;
-      }
-
-      case 'steer': {
-        await this.dispatchInput(id, slot, {
-          text: command.message,
-          images: command.images,
-          behavior: 'steer',
-          intent: slot.sessionState.queueOwnership.intend('steering', this.clientId, command.message),
-        });
-        break;
-      }
-
-      case 'dequeue_steering': {
-        const result = session.clearQueue();
-        this.sendResponse(id, true, { steering: result.steering, followUp: result.followUp });
-        break;
-      }
-
-      case 'follow_up': {
-        await this.dispatchInput(id, slot, {
-          text: command.message,
-          behavior: 'followUp',
-          intent: slot.sessionState.queueOwnership.intend('followUp', this.clientId, command.message),
-        });
-        break;
-      }
-
-      case 'abort': {
-        // Capture only lifecycle/state metadata, never prompt or tool content.
-        const startedAt = Date.now();
-        const trace = (phase: string) =>
-          console.info(
-            '[abort_trace]',
-            JSON.stringify({
-              requestId: id,
-              sessionId,
-              phase,
-              elapsedMs: Date.now() - startedAt,
-              sdkStreaming: session.isStreaming,
-              sdkIdle: session.isIdle,
-              coreStreaming: session.state?.isStreaming,
-              compacting: session.isCompacting,
-              serverStatus: slot.sessionState.status,
-              pendingUi: slot.sessionState.pendingUiResponses.size,
-              pendingMessages: session.pendingMessageCount,
-              cursor: slot.sessionState.eventBuffer.currentCursor,
-            }),
-          );
-        const unsubscribe = session.subscribe((event) => {
-          if (['agent_start', 'agent_end', 'agent_settled', 'auto_retry_start', 'auto_retry_end', 'auto_compaction_start', 'auto_compaction_end'].includes(event.type)) {
-            trace(event.type);
-          }
-        });
-        let abortWatchdog: ReturnType<typeof setTimeout> | undefined;
-        // Read ownership before clearing. Clearing emits queue_update, which empties the ledger.
-        const owners = slot.sessionState.queueOwnership.snapshot();
-        // Remove queued input synchronously before cancellation can emit agent_end.
-        // The client restores it as a draft only after receiving this response.
-        slot.eventBusRef.current?.emit('pimote:voice:cancel-pending', undefined);
-        const drained = session.clearQueue();
-        const drafts = attributeDrained(owners, drained, this.clientId);
-        // Each other sender restores its own messages now. This client restores its own from the response.
-        for (const [clientId, group] of drafts) {
-          if (clientId === this.clientId) continue;
-          const sender = this.clientRegistry.get(clientId);
-          if (sender) {
-            sender.sendToClient({ type: 'queued_drafts_restored', sessionId, ...group });
-          } else {
-            // Hold an offline sender's drafts until its next claim of this session.
-            const held = (slot.sessionState.undeliveredDrafts ??= new Map());
-            const prior = held.get(clientId) ?? { steering: [], followUp: [] };
-            held.set(clientId, { steering: [...prior.steering, ...group.steering], followUp: [...prior.followUp, ...group.followUp] });
-          }
-        }
-        const queued = drafts.get(this.clientId) ?? { steering: [], followUp: [] };
-        try {
-          trace('requested');
-          // Resolve pending UI responses first so stuck dialogs unblock.
-          resolveAllSlotPendingUi(slot);
-          const abortResult = await Promise.race([
-            session.abort().then(() => 'ok' as const),
-            new Promise<'timeout'>((resolve) => {
-              abortWatchdog = setTimeout(() => resolve('timeout'), 30_000);
-            }),
-          ]);
-          trace(abortResult === 'ok' ? 'resolved' : 'timeout');
-          if (abortResult === 'timeout') {
-            console.error(`[WsHandler] session.abort() did not resolve within 30s (sessionId=${sessionId})`);
-          }
-          this.sendResponse(id, abortResult === 'ok', queued, abortResult === 'timeout' ? 'abort_timeout' : undefined);
-        } catch (err) {
-          trace('rejected');
-          console.error('[WsHandler] abort failed:', err);
-          this.sendResponse(id, false, queued, err instanceof Error ? err.message : String(err));
-        } finally {
-          if (abortWatchdog !== undefined) clearTimeout(abortWatchdog);
-          unsubscribe();
-        }
-        break;
-      }
-
-      case 'bash': {
-        // Pi's native bash executor permits only one concurrent execution. The
-        // admission marker is set synchronously before the extension hook is
-        // awaited, so a second request cannot slip through while an extension
-        // is deciding whether to handle the command.
-        if (session.isBashRunning || slot.sessionState.bashDispatchInProgress === true) {
-          this.sendResponse(id, false, undefined, 'bash_already_running');
-          break;
-        }
-
-        slot.sessionState.bashDispatchInProgress = true;
-        slot.sessionState.bashAbortRequested = false;
-        try {
-          const excludeFromContext = command.excludeFromContext === true;
-          let extensionResult: Awaited<ReturnType<typeof session.extensionRunner.emitUserBash>>;
-          try {
-            extensionResult = await session.extensionRunner.emitUserBash({
-              type: 'user_bash',
-              command: command.command,
-              excludeFromContext,
-              cwd: session.sessionManager.getCwd(),
-            });
-          } catch (err) {
-            // pi 0.87 user_bash fails closed: a throwing extension handler or an
-            // invalid defined result aborts the command instead of falling through
-            // to local execution. Surface a distinct code rather than leaking the
-            // raw extension error through the generic command-error path.
-            console.error('[WsHandler] user_bash extension handler failed:', err);
-            this.sendResponse(id, false, undefined, 'bash_extension_error');
-            break;
-          }
-
-          if (extensionResult?.result) {
-            // Extensions that fully handle the command bypass executeBash, so
-            // they must explicitly record exactly one native result.
-            session.recordBashResult(command.command, extensionResult.result, { excludeFromContext });
-            this.sendResponse(id, true, { result: extensionResult.result });
-            break;
-          }
-
-          // executeBash emits live SDK chunks and records its own result. Pass
-          // through the caller ID, exclusion flag, and any custom operations
-          // supplied by an extension without duplicating the history entry.
-          const execution = session.executeBash(command.command, undefined, {
-            id,
-            excludeFromContext,
-            operations: extensionResult?.operations,
-          });
-          // abort_bash can arrive during extension interception, before the
-          // native executor has installed its AbortController. Re-issue the
-          // cancellation immediately after admission so that request is not
-          // lost in that window.
-          if ((slot.sessionState.bashAbortRequested as boolean | undefined) === true) {
-            session.abortBash();
-          }
-          const result = await execution;
-          this.sendResponse(id, true, { result });
-        } finally {
-          slot.sessionState.bashDispatchInProgress = false;
-          slot.sessionState.bashAbortRequested = false;
-        }
-        break;
-      }
-
-      case 'abort_bash': {
-        // Bash cancellation is independent from the model abort path: the
-        // session may continue streaming while this request is issued. Keep a
-        // marker for the admission window so the bash branch can cancel again
-        // once native execution has installed its AbortController.
-        if (slot.sessionState.bashDispatchInProgress === true) {
-          slot.sessionState.bashAbortRequested = true;
-        }
-        session.abortBash();
-        this.sendResponse(id, true);
-        break;
-      }
-
-      case 'set_model': {
-        const models = await session.modelRuntime.getAvailable();
-        const model = models.find((m) => m.provider === command.provider && m.id === command.modelId);
-        if (!model) {
-          this.sendResponse(id, false, undefined, `Model not found: ${command.provider}/${command.modelId}`);
-          break;
-        }
-        await session.setModel(model);
-        this.sendSessionSettingsToObservers(sessionId, slot);
-        const currentModel = session.model;
-        this.sendResponse(id, true, {
-          model: currentModel ? { provider: currentModel.provider, id: currentModel.id, name: currentModel.name } : null,
-          thinkingLevel: session.thinkingLevel,
-          availableThinkingLevels: session.getAvailableThinkingLevels(),
-        });
-        break;
-      }
-
-      case 'cycle_model': {
-        const result = await session.cycleModel();
-        this.sendSessionSettingsToObservers(sessionId, slot);
-        if (result) {
-          this.sendResponse(id, true, {
-            model: { provider: result.model.provider, id: result.model.id, name: result.model.name },
-            thinkingLevel: result.thinkingLevel,
-            isScoped: result.isScoped,
-          });
-        } else {
-          this.sendResponse(id, true, null);
-        }
-        break;
-      }
-
-      case 'get_available_models': {
-        const models = await session.modelRuntime.getAvailable();
-        const mapped = models.map((m) => ({
-          provider: m.provider,
-          id: m.id,
-          name: m.name,
-        }));
-        this.sendResponse(id, true, { models: mapped });
-        break;
-      }
-
-      case 'set_thinking_level': {
-        session.setThinkingLevel(command.level as AgentSession['thinkingLevel']);
-        this.sendSessionSettingsToObservers(sessionId, slot);
-        this.sendResponse(id, true);
-        break;
-      }
-
-      case 'cycle_thinking_level': {
-        const level = session.cycleThinkingLevel();
-        this.sendSessionSettingsToObservers(sessionId, slot);
-        this.sendResponse(id, true, { level });
-        break;
-      }
-
-      case 'compact': {
-        const result = await session.compact(command.customInstructions);
-        this.sendResponse(id, true, { result });
-        break;
-      }
-
-      case 'set_auto_compaction': {
-        session.setAutoCompactionEnabled(command.enabled);
-        this.sendSessionSettingsToObservers(sessionId, slot);
-        this.sendResponse(id, true);
-        break;
-      }
-
-      case 'get_state': {
-        const model = session.model;
-        const state: SessionState = {
-          model: model ? { provider: model.provider, id: model.id, name: model.name } : null,
-          thinkingLevel: session.thinkingLevel,
-          availableThinkingLevels: session.getAvailableThinkingLevels(),
-          isStreaming: session.isStreaming,
-          isCompacting: session.isCompacting,
-          sessionFile: session.sessionFile,
-          sessionId: session.sessionId,
-          sessionName: session.sessionName,
-          autoCompactionEnabled: session.autoCompactionEnabled,
-          messageCount: session.messages.length,
-        };
-        this.sendResponse(id, true, { state });
-        break;
-      }
-
-      case 'get_messages': {
-        const messages = mapContextEntries(session.sessionManager.buildContextEntries(), rendererRegisteredVisibility(session));
-        this.sendResponse(id, true, { messages });
-        break;
-      }
-
       case 'new_session': {
         const result = await runSlotLifecycle(slot, 'reset', () => slot.runtime.newSession());
         this.sendResponse(id, true, { success: !result.cancelled });
-        break;
+        return;
       }
-
-      case 'get_tree': {
-        const treeResponse = this.getTreeResponse(session);
-        this.sendTreeResponse(id, treeResponse);
-        break;
-      }
-
-      case 'get_session_stats': {
-        const stats = session.getSessionStats();
-        this.sendResponse(id, true, { stats });
-        break;
-      }
-
-      case 'get_session_meta': {
-        this.sendResponse(id, true, { meta: makeSessionMeta(session, this.sessionManager.getLastKnownGitBranch(sessionId)) });
-        break;
-      }
-
-      case 'get_commands': {
-        this.sendResponse(id, true, { commands: getSessionCommands(session) });
-        break;
-      }
-
-      case 'complete_args': {
-        const runner = session.extensionRunner;
-        if (!runner) {
-          this.sendResponse(id, true, { items: null });
-          break;
-        }
-        const cmd = runner.getCommand(command.commandName);
-        if (!cmd || !cmd.getArgumentCompletions) {
-          this.sendResponse(id, true, { items: null });
-          break;
-        }
-        const items = await cmd.getArgumentCompletions(command.prefix);
-        this.sendResponse(id, true, { items: items ?? null });
-        break;
-      }
-
-      case 'complete_file_refs': {
-        const result = await completeFileRefs({ prefix: command.prefix, cwd: slot.folderPath });
-        if (!result.fdAvailable) {
-          this.emitFdMissingWarning(sessionId);
-        }
-        this.sendResponse(id, true, { items: result.items });
-        break;
-      }
-
-      case 'set_session_name': {
-        session.setSessionName(command.name);
+      case 'set_session_name':
+        slot.session.setSessionName(command.name);
         this.sendResponse(id, true);
-        break;
-      }
-
+        return;
       case 'fork': {
-        if (!command.entryId) {
-          this.sendResponse(id, false, undefined, 'entryId is required');
-          break;
-        }
-        const forkResult = await runSlotLifecycle(slot, 'reset', () => slot.runtime.fork(command.entryId));
-        const forkData: { cancelled: boolean; selectedText?: string } = { cancelled: forkResult.cancelled };
-        if (forkResult.selectedText !== undefined) {
-          forkData.selectedText = forkResult.selectedText;
-        }
-        this.sendResponse(id, true, forkData);
-        break;
+        if (!command.entryId) throw new Error('entryId is required');
+        const result = await runSlotLifecycle(slot, 'reset', () => slot.runtime.fork(command.entryId));
+        this.sendResponse(id, true, result);
+        return;
       }
-
-      case 'navigate_tree': {
-        const data = await runSlotLifecycle(slot, 'reset', async () => {
-          if (slot.sessionState.treeNavigationInProgress && !isNestedSlotLifecycle(slot)) {
-            throw new Error('Tree navigation already in progress');
-          }
-
-          const options: {
-            summarize?: boolean;
-            customInstructions?: string;
-            replaceInstructions?: boolean;
-            label?: string;
-          } = {};
-
-          if (command.summarize !== undefined) options.summarize = command.summarize;
-          if (command.customInstructions !== undefined) options.customInstructions = command.customInstructions;
-          if (command.replaceInstructions !== undefined) options.replaceInstructions = command.replaceInstructions;
-          if (command.label !== undefined) options.label = command.label;
-
-          slot.sessionState.treeNavigationInProgress = true;
-          slot.sessionState.treeNavigationSummarizing = !!command.summarize;
-          this.emitBufferedSessionEvent(slot, sessionId, {
-            type: 'tree_navigation_start',
-            targetId: command.targetId,
-            summarizing: !!command.summarize,
-          });
-
-          let result: { cancelled: boolean; editorText?: string };
-          try {
-            result = (await session.navigateTree(command.targetId, options)) as { cancelled: boolean; editorText?: string };
-          } finally {
-            slot.sessionState.treeNavigationInProgress = false;
-            slot.sessionState.treeNavigationSummarizing = false;
-            this.emitBufferedSessionEvent(slot, sessionId, {
-              type: 'tree_navigation_end',
-            });
-          }
-
-          if (!result.cancelled) {
-            await this.sessionManager.applySessionReset(slot);
-          }
-
-          return {
-            cancelled: result.cancelled,
-            ...(result.editorText !== undefined ? { editorText: result.editorText } : {}),
-          };
-        });
-
-        this.sendResponse(id, true, data);
-        break;
-      }
-
-      case 'set_tree_label': {
-        const normalizedLabel = command.label === '' ? undefined : command.label;
-        session.sessionManager.appendLabelChange(command.entryId, normalizedLabel);
-        this.sendResponse(id, true, { success: true });
-        break;
-      }
+      default:
+        this.sendSurfaceResponse(id, await this.dispatchRootSurfaceCommand(slot, command));
     }
-  }
-
-  private getTreeResponse(session: AgentSession): GetTreeResponseData {
-    return {
-      tree: mapTreeNodes(session.sessionManager.getTree() as SessionTreeNode[]),
-      currentLeafId: session.sessionManager.getLeafId(),
-    };
   }
 
   /** Dispatch slash commands owned by Pimote before pi can queue them as text. */
@@ -1975,71 +1403,12 @@ export class WsHandler {
       return true;
     }
 
-    if (trimmed === '/tree') {
-      const treeResponse = this.getTreeResponse(session);
-      this.sendTreeResponse(id, treeResponse);
-      return true;
-    }
-
     return false;
   }
 
-  /**
-   * Dispatch prompt, steer, or follow-up input through pi's prompt path and
-   * answer with pi's outcome, so the sender can settle its optimistic entry
-   * or pending-queue pill. Only a `started` prompt stamps its echo with
-   * `clientMessageId`. Slash input is answered at once without an outcome:
-   * pi reports an extension command only after its handler finishes, and a
-   * handler can wait on a dialog.
-   */
-  private async dispatchInput(
-    id: string,
-    slot: ManagedSlot,
-    input: { text: string; images?: string[]; behavior: 'steer' | 'followUp'; intent?: Intent; clientMessageId?: string },
-  ): Promise<void> {
-    const ownership = slot.sessionState.queueOwnership;
-    // A queued input already consumed its intent in pi's queue_update; any
-    // other outcome leaves one behind that would mis-tag a later entry.
-    const releaseIntent = () => {
-      if (input.intent) ownership.cancel(input.intent);
-    };
-    const fail = (err: unknown) => {
-      releaseIntent();
-      this.sendResponse(id, false, undefined, err instanceof Error ? err.message : String(err));
-    };
-    let dispatch: Promise<PromptOutcome>;
-    try {
-      const images = await resolveImageInputs(input.images);
-      dispatch = dispatchPrompt(slot.session, input.text, images, input.behavior, () => {
-        if (input.clientMessageId !== undefined) slot.sessionState.eventBuffer.expectPromptEcho(input.clientMessageId);
-      });
-    } catch (err) {
-      fail(err);
-      return;
-    }
-    if (input.text.trimStart().startsWith('/')) {
-      dispatch.then(releaseIntent, (err) => {
-        releaseIntent();
-        console.error(`[WsHandler] input dispatch error:`, err);
-      });
-      this.sendResponse(id, true);
-      return;
-    }
-    let outcome: PromptOutcome;
-    try {
-      outcome = await dispatch;
-    } catch (err) {
-      fail(err);
-      return;
-    }
-    releaseIntent();
-    this.sendResponse(id, true, { outcome } satisfies PromptResponseData);
-  }
-
-  /** Attach this client as an observer. Session startup is manager-owned. */
-  async claimSession(sessionId: string, slot: ManagedSlot): Promise<void> {
+  async claimSession(sessionId: string, slot: ManagedSlot, restoreUi = true, socket: EventSocket = this.ws as unknown as EventSocket): Promise<void> {
     const observer: SessionObserver = {
-      ws: this.ws as unknown as EventSocket,
+      ws: socket,
       clientId: this.clientId,
       cursor: slot.sessionState.eventBuffer.currentCursor,
       onSessionReset: (s, outcome, isFirstObserver) => this.handleSessionReset(s, outcome, isFirstObserver),
@@ -2063,14 +1432,14 @@ export class WsHandler {
       throw new Error('WebSocket is no longer connected');
     }
 
-    // Re-deliver pending UI requests only to this observer. Other observers
-    // already have their dialogs; broadcasting here would duplicate them.
-    replaySlotPendingUiRequests(slot, (event) => this.sendEvent(event));
-    const heldDrafts = slot.sessionState.undeliveredDrafts?.get(this.clientId);
-    if (heldDrafts) {
-      slot.sessionState.undeliveredDrafts!.delete(this.clientId);
-      this.sendEvent({ type: 'queued_drafts_restored', sessionId, ...heldDrafts });
+    if (restoreUi) {
+      this.replayRootUi(slot);
+      slot.sessionSurface?.restoreQueuedDrafts(this.clientId);
     }
+  }
+
+  private replayRootUi(slot: ManagedSlot): void {
+    replaySlotPendingUiRequests(slot, (event) => this.sendEvent(event));
     this.sendSilentDownloadSnapshot(slot);
     requestSlotPanelResync(slot, 'claim');
   }
@@ -2311,79 +1680,42 @@ export class WsHandler {
   }
 
   private async syncSessionToClient(sessionId: string, slot: ManagedSlot, lastCursor?: number, noCursorRestoreMode: RestoreMode = 'full_resync_no_cursor'): Promise<RestoreMode> {
-    let replayResult: ReturnType<import('./event-buffer.js').EventBuffer['replay']> | null = null;
-    let cursorBeforeClaim: number | null = null;
-
-    let restoreMode: RestoreMode;
-
-    if (lastCursor !== undefined) {
-      replayResult = slot.sessionState.eventBuffer.replay(lastCursor);
-      const reconnectActiveOperations = (() => {
-        try {
-          return (slot.sessionSurface?.snapshot?.().activeSubagentContent?.length ?? 0) > 0;
-        } catch {
-          return false;
-        }
-      })();
-      if (replayResult !== null) {
-        restoreMode = 'incremental_replay';
-        this.sendEvent({ type: 'session_restore', sessionId, mode: restoreMode, status: 'started' } as SessionRestoreEvent);
-        this.sendEvent({
-          type: 'buffered_events',
-          sessionId,
-          events: replayResult,
-        } as BufferedEventsEvent);
-        this.sendEvent({
-          type: 'connection_restored',
-          sessionId,
-        } as ConnectionRestoredEvent);
-        if (reconnectActiveOperations) {
-          // Delta events are live-only. Replay the durable boundaries first,
-          // then replace the card with the accumulated projected snapshot so
-          // a missed response delta cannot leave an active card incomplete.
-          this.sendFullResyncForSession(sessionId, slot);
-        }
-        cursorBeforeClaim = slot.sessionState.eventBuffer.currentCursor;
-      } else {
-        restoreMode = 'full_resync_cursor_stale';
-        this.sendEvent({ type: 'session_restore', sessionId, mode: restoreMode, status: 'started' } as SessionRestoreEvent);
-        this.sendFullResyncForSession(sessionId, slot);
-      }
-    } else {
-      restoreMode = noCursorRestoreMode;
-      this.sendEvent({ type: 'session_restore', sessionId, mode: restoreMode, status: 'started' } as SessionRestoreEvent);
-      this.sendFullResyncForSession(sessionId, slot);
-    }
-
-    await this.claimSession(sessionId, slot);
-
-    if (replayResult !== null && cursorBeforeClaim !== null) {
-      // claimSession attaches the observer synchronously at cursorBeforeClaim,
-      // so every event buffered since then was already fanned out live by
-      // sendSlotEvent, which also advanced the observer's cursor. Replay from
-      // the observer's cursor — never from cursorBeforeClaim — or the catch-up
-      // re-delivers those events and the client appends each message_end twice.
-      // The observer cursor still trails when a live send was skipped (socket
-      // not open), which is the gap the catch-up legitimately retries.
+    const surface = slot.sessionSurface;
+    if (!surface) throw new Error('Session surface is not available');
+    await surface.initialize();
+    const previousObserver = slot.observers.get(this.clientId);
+    const gate = new SessionEventGate((event) => this.sendEvent(event));
+    const socket: EventSocket = {
+      get readyState() {
+        return gateSocket.readyState;
+      },
+      send: (raw) => {
+        if (!gate.send(JSON.parse(raw) as PimoteEvent)) throw new Error('WebSocket delivery failed');
+      },
+    };
+    const gateSocket = this.ws;
+    try {
+      await this.claimSession(sessionId, slot, false, socket);
+      const result = gate.synchronize(surface, this.clientId, lastCursor, noCursorRestoreMode);
+      const attached = slot.observers.get(this.clientId);
+      if (attached?.ws === socket) attached.ws = this.ws as unknown as EventSocket;
       const observer = slot.observers.get(this.clientId);
-      const catchUp = slot.sessionState.eventBuffer.replay(observer ? observer.cursor : cursorBeforeClaim);
-      if (catchUp && catchUp.length > 0) {
-        this.sendEvent({
-          type: 'buffered_events',
-          sessionId,
-          events: catchUp,
-        } as BufferedEventsEvent);
-      }
-    }
-
-    if (replayResult !== null) {
-      // Always send panel state after reconnect so the client clears stale cards.
+      if (observer) observer.cursor = result.cursor;
+      this.sendSubagentSnapshot(slot);
       this.sendEvent({ type: 'panel_update', sessionId, cards: getMergedPanelCards(slot.sessionState.panelState) });
+      this.replayRootUi(slot);
+      return result.mode;
+    } catch (error) {
+      if (previousObserver?.ws === this.ws) {
+        slot.observers.set(this.clientId, previousObserver);
+        gate.flush();
+      } else {
+        const observer = slot.observers.get(this.clientId);
+        if (observer?.ws === socket || observer?.ws === this.ws) this.sessionManager.detachObserver(sessionId, this.clientId, observer.ws);
+        this.subscribedSessions.delete(sessionId);
+      }
+      throw error;
     }
-
-    this.sendEvent({ type: 'session_restore', sessionId, mode: restoreMode, status: 'completed' } as SessionRestoreEvent);
-
-    return restoreMode;
   }
 
   /** Close one live session for every observer and resolve its pending UI. */
@@ -2453,16 +1785,8 @@ export class WsHandler {
     }
   }
 
-  private sendEvent(event: PimoteEvent): void {
-    sendBatchedEvent(this.ws as unknown as EventSocket, event);
-  }
-
-  private sendSerializedEvent(serialized: string): void {
-    try {
-      this.ws.send(serialized);
-    } catch (err) {
-      console.error('[WsHandler] Failed to send event:', err);
-    }
+  private sendEvent(event: PimoteEvent): boolean {
+    return sendBatchedEvent(this.ws as unknown as EventSocket, event);
   }
 
   /** Reject + clear any outstanding login prompt/select inputs for this
@@ -2500,79 +1824,14 @@ export class WsHandler {
     };
   }
 
-  private emitBufferedSessionEvent(slot: ManagedSlot, sessionId: string, sdkEvent: TreeNavigationStartEvent | TreeNavigationEndEvent): void {
-    slot.sessionState.eventBuffer.onEvent(
-      sdkEvent,
-      sessionId,
-      (event) => {
-        this.sendEvent(event);
-        // Tree-navigation events are sent directly to the issuer so the
-        // unopen command path can receive them. Keep an attached issuer's
-        // replay position in sync with the direct delivery as well.
-        const issuer = slot.observers.get(this.clientId);
-        if (issuer && 'cursor' in event && typeof event.cursor === 'number') issuer.cursor = event.cursor;
-        sendSlotEvent(slot, event, { exceptClientId: this.clientId });
-      },
-      () => slot.session.messages[slot.session.messages.length - 1],
-    );
-  }
-
   /** Send the current download state without treating any item as newly offered. */
   private sendSilentDownloadSnapshot(slot: ManagedSlot): void {
     this.sendEvent(makeDownloadSnapshot(slot.sessionState.id, slot.sessionState.downloads));
   }
 
   private makeFullResyncEvent(pimoteSessionId: string, slot: ManagedSlot): FullResyncEvent {
-    const session = slot.session;
-    const model = session.model;
-    const state: SessionState = {
-      model: model ? { provider: model.provider, id: model.id, name: model.name } : null,
-      thinkingLevel: session.thinkingLevel,
-      availableThinkingLevels: session.getAvailableThinkingLevels(),
-      isStreaming: session.isStreaming,
-      isCompacting: session.isCompacting,
-      isNavigatingTree: slot.sessionState.treeNavigationInProgress,
-      treeNavigationSummarizing: slot.sessionState.treeNavigationSummarizing ?? false,
-      sessionFile: session.sessionFile,
-      sessionId: session.sessionId,
-      sessionName: session.sessionName,
-      autoCompactionEnabled: session.autoCompactionEnabled,
-      messageCount: session.messages.length,
-    };
-    let projectedSnapshot: ReturnType<NonNullable<ManagedSlot['sessionSurface']>['refreshSnapshot']> | undefined;
-    try {
-      projectedSnapshot = slot.sessionSurface?.snapshot?.() ?? slot.sessionSurface?.refreshSnapshot();
-    } catch {
-      projectedSnapshot = undefined;
-    }
-    const messages = projectedSnapshot?.messages ?? mapContextEntries(session.sessionManager.buildContextEntries(), rendererRegisteredVisibility(session));
-    const branch = typeof session.sessionManager.getBranch === 'function' ? session.sessionManager.getBranch() : undefined;
-    const branchEntryIds = branch?.flatMap((entry) => (typeof entry.id === 'string' ? [entry.id] : []));
-    // A mid-run snapshot carries the in-flight message and running tool calls.
-    // The observer missed their start events, so without them it drops the
-    // deltas and tool output that follow.
-    const partial = session.isStreaming ? session.state.streamingMessage : undefined;
-    const streamingMessage = projectedSnapshot
-      ? projectedSnapshot.streamingMessage
-      : (() => {
-          if (partial === undefined) return undefined;
-          if ('content' in partial && Array.isArray(partial.content) && partial.content.length === 0) {
-            const usage = mapAgentMessageUsage(partial);
-            return { role: partial.role, content: [], ...(usage ? { usage } : {}) };
-          }
-          return mapAgentMessage(partial);
-        })();
-    const runningToolCallIds = [...session.state.pendingToolCalls];
-    return {
-      type: 'full_resync',
-      sessionId: pimoteSessionId,
-      state,
-      messages,
-      ...(projectedSnapshot?.activeSubagentContent ? { activeSubagentContent: projectedSnapshot.activeSubagentContent } : {}),
-      ...(branchEntryIds !== undefined ? { branchEntryIds } : {}),
-      ...(streamingMessage ? { streamingMessage } : {}),
-      ...(runningToolCallIds.length > 0 ? { runningToolCallIds } : {}),
-    };
+    if (!slot.sessionSurface) throw new Error('Session surface is not available');
+    return { ...slot.sessionSurface.snapshot(), type: 'full_resync', sessionId: pimoteSessionId };
   }
 
   /** Send the current provider hierarchy without advancing the root replay cursor. */
@@ -2595,135 +1854,18 @@ export class WsHandler {
   /** Send a full_resync event to the client for the given managed session.
    *  Used when the underlying pi session is reset (newSession, switchSession, fork, navigateTree). */
   private sendFullResyncForSession(pimoteSessionId: string, slot: ManagedSlot): void {
-    const snapshot = this.makeFullResyncEvent(pimoteSessionId, slot);
-    const maxChunkBytes = 256 * 1024;
-    let estimatedBytes = Buffer.byteLength(JSON.stringify({ ...snapshot, messages: [], branchEntryIds: [] }));
-    for (const message of snapshot.messages) {
-      estimatedBytes += Buffer.byteLength(JSON.stringify(message)) + 1;
-      if (estimatedBytes > maxChunkBytes) break;
-    }
-    if (estimatedBytes <= maxChunkBytes) {
-      for (const entryId of snapshot.branchEntryIds ?? []) {
-        estimatedBytes += Buffer.byteLength(JSON.stringify(entryId)) + 1;
-        if (estimatedBytes > maxChunkBytes) break;
-      }
-    }
-
-    // Small snapshots retain the compact legacy shape. Large transcripts are
-    // split before crossing the socket so the browser parses bounded frames.
-    if (estimatedBytes <= maxChunkBytes) {
-      this.sendEvent(snapshot);
-    } else {
-      const { type: _type, sessionId: _sessionId, messages, branchEntryIds, streamingMessage, activeSubagentContent, runningToolCallIds, ...snapshotFields } = snapshot;
-      const snapshotId = randomUUID();
-      const start: FullResyncStartEvent = {
-        type: 'full_resync_start',
-        sessionId: pimoteSessionId,
-        snapshotId,
-        totalMessages: messages.length,
-        ...(branchEntryIds !== undefined ? { totalBranchEntryIds: branchEntryIds.length } : {}),
-        ...(streamingMessage !== undefined ? { hasStreamingMessage: true } : {}),
-        ...(activeSubagentContent !== undefined ? { hasActiveSubagentContent: true } : {}),
-        ...(runningToolCallIds !== undefined ? { hasRunningToolCallIds: true } : {}),
-        ...snapshotFields,
-      };
-      this.sendEvent(start);
-
-      // Parse message objects incrementally on the client. Keep raw JSON
-      // fragments small even when one message contains a very large text block.
-      const jsonChunkTargetBytes = 32 * 1024;
-      let data = '';
-      let dataBytes = 0;
-      let dataOffset = 0;
-      const flushJsonChunk = (final: boolean) => {
-        if (data.length === 0 && !final) return;
-        this.sendEvent({ type: 'full_resync_json_chunk', sessionId: pimoteSessionId, snapshotId, offset: dataOffset, data, final });
-        dataOffset += data.length;
-        data = '';
-        dataBytes = 0;
-      };
-      const appendJson = (value: string) => {
-        for (let offset = 0; offset < value.length; ) {
-          let end = Math.min(offset + 8192, value.length);
-          const last = value.charCodeAt(end - 1);
-          if (end < value.length && last >= 0xd800 && last <= 0xdbff) end -= 1;
-          const piece = value.slice(offset, end);
-          const pieceBytes = Buffer.byteLength(piece);
-          if (dataBytes > 0 && dataBytes + pieceBytes > jsonChunkTargetBytes) flushJsonChunk(false);
-          data += piece;
-          dataBytes += pieceBytes;
-          offset = end;
-          if (dataBytes >= jsonChunkTargetBytes) flushJsonChunk(false);
-        }
-      };
-      appendJson('[');
-      for (let index = 0; index < messages.length; index += 1) {
-        if (index > 0) appendJson(',');
-        appendJson(JSON.stringify(messages[index]));
-      }
-      appendJson(']');
-      flushJsonChunk(true);
-
-      if (branchEntryIds !== undefined) {
-        let ids: string[] = [];
-        let idBytes = 2;
-        let idOffset = 0;
-        const flushIds = () => {
-          if (ids.length === 0) return;
-          const shell = JSON.stringify({ type: 'full_resync_branch_chunk', sessionId: pimoteSessionId, snapshotId, offset: idOffset });
-          this.sendSerializedEvent(`${shell.slice(0, -1)},"ids":[${ids.join(',')}]}`);
-          idOffset += ids.length;
-          ids = [];
-          idBytes = 2;
-        };
-        for (const entryId of branchEntryIds) {
-          const encoded = JSON.stringify(entryId);
-          const entryBytes = Buffer.byteLength(encoded) + (ids.length === 0 ? 0 : 1);
-          if (ids.length > 0 && idBytes + entryBytes > maxChunkBytes) flushIds();
-          ids.push(encoded);
-          idBytes += entryBytes;
-        }
-        flushIds();
-      }
-
-      const sendJsonFieldChunks = (field: 'streamingMessage' | 'activeSubagentContent' | 'runningToolCallIds', serialized: string) => {
-        let offset = 0;
-        while (offset < serialized.length) {
-          let end = Math.min(offset + 8192, serialized.length);
-          const lastCodeUnit = serialized.charCodeAt(end - 1);
-          if (end < serialized.length && lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff) end -= 1;
-          this.sendEvent({
-            type: 'full_resync_data_chunk',
-            sessionId: pimoteSessionId,
-            snapshotId,
-            field,
-            offset,
-            data: serialized.slice(offset, end),
-            final: end === serialized.length,
-          });
-          offset = end;
-        }
-      };
-      if (streamingMessage !== undefined) sendJsonFieldChunks('streamingMessage', JSON.stringify(streamingMessage));
-      if (activeSubagentContent !== undefined) sendJsonFieldChunks('activeSubagentContent', JSON.stringify(activeSubagentContent));
-      if (runningToolCallIds !== undefined) sendJsonFieldChunks('runningToolCallIds', JSON.stringify(runningToolCallIds));
-    }
-
+    sendFullResync(this.makeFullResyncEvent(pimoteSessionId, slot), (event) => this.sendEvent(event));
     this.sendSubagentSnapshot(slot);
-    // Always send panel snapshot so the client clears stale cards after reconnect
     this.sendEvent({ type: 'panel_update', sessionId: pimoteSessionId, cards: getMergedPanelCards(slot.sessionState.panelState) });
   }
 
   /** Fan out settings and panel state without replacing each observer's
    * transcript or client-local transient state. */
   private sendSessionSettingsToObservers(pimoteSessionId: string, slot: ManagedSlot): void {
-    const settings = makeSessionSettingsEvent(pimoteSessionId, slot.session);
+    slot.sessionSurface?.refreshSettings();
+    if (!slot.observers.has(this.clientId)) this.sendEvent(makeSessionSettingsEvent(pimoteSessionId, slot.session));
     const panelUpdate = { type: 'panel_update' as const, sessionId: pimoteSessionId, cards: getMergedPanelCards(slot.sessionState.panelState) };
-    // Keep the direct send for a caller that has not opened the session yet,
-    // then fan out to every other attached observer without duplicating it.
-    this.sendEvent(settings);
     this.sendEvent(panelUpdate);
-    sendSlotEvent(slot, settings, { exceptClientId: this.clientId });
     sendSlotEvent(slot, panelUpdate, { exceptClientId: this.clientId });
   }
 

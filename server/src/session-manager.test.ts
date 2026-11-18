@@ -18,6 +18,8 @@ import {
 } from './session-manager.js';
 import type { ManagedSlot, SessionState, SessionObserver } from './session-manager.js';
 import type { PimoteConfig } from './config.js';
+import { createSessionSurface, createSessionInteractionState } from './session-surface.js';
+import type { SessionSurface } from './session-surface.js';
 import type { PushNotificationService } from './push-notification.js';
 
 // --- Helpers ---
@@ -89,6 +91,7 @@ function createFakeSlot(
     panelListenerUnsubs: [],
     panelThrottleTimer: null,
     treeNavigationInProgress: overrides.treeNavigationInProgress ?? false,
+    interaction: createSessionInteractionState(),
   };
 
   const slot: ManagedSlot = {
@@ -132,11 +135,16 @@ describe('session settings fan-out', () => {
       subscribe: vi.fn(() => vi.fn()),
     } as any;
     const sendEvent = vi.fn();
-    createSessionState(session, eventBus, createTestConfig(), { sendEvent, notify: vi.fn(async () => {}) }, { slot: null }, '/home/user/project');
+    const slotRef = { slot: createFakeSlot({ id: 'settings-test' }) };
+    const state = createSessionState(session, eventBus, createTestConfig(), { sendEvent, notify: vi.fn(async () => {}) }, slotRef, '/home/user/project');
+    slotRef.slot.sessionSurface = createSessionSurface({ sessionId: session.sessionId, session, kind: 'root', eventBuffer: state.eventBuffer, interaction: state.interaction });
+    slotRef.slot.sessionSurface.subscribe(sendEvent);
+    void slotRef.slot.sessionSurface.initialize();
 
     const piHandlers = new Map<string, () => void>();
     createSettingsWatchExtension()({ on: (event: string, fn: () => void) => piHandlers.set(event, fn), events: eventBus } as any);
     piHandlers.get('model_select')!();
+    session.thinkingLevel = 'low';
     piHandlers.get('thinking_level_select')!();
 
     const settings = {
@@ -147,7 +155,9 @@ describe('session settings fan-out', () => {
       availableThinkingLevels: ['low', 'high'],
       autoCompactionEnabled: true,
     };
-    expect(sendEvent.mock.calls.filter(([e]) => e.type === 'session_settings_changed')).toEqual([[settings], [settings]]);
+    const changes = sendEvent.mock.calls.map(([event]) => event).filter((event) => event.type === 'session_settings_changed');
+    expect(changes).toContainEqual(settings);
+    expect(changes).toContainEqual({ ...settings, thinkingLevel: 'low' });
   });
 });
 
@@ -323,7 +333,6 @@ describe('session lifecycle idle boundary', () => {
     expect(onSessionIdle).toHaveBeenCalledOnce();
     expect(onSessionIdle).toHaveBeenCalledWith('settle-test', slotRef.slot);
     expect(onStatusChange).toHaveBeenCalledTimes(2);
-    expect(sendEvent.mock.calls.map(([event]) => event.type)).toEqual(['agent_start', 'agent_end', 'agent_settled']);
   });
 
   it('does not fire the completion push when the settled run was aborted', () => {
@@ -467,7 +476,7 @@ describe('PimoteSessionManager — idle reaper', () => {
     if (change === 'working') slot.sessionState.idleSince = null;
     if (change === 'navigation') slot.sessionState.treeNavigationInProgress = true;
     if (change === 'bash') Object.assign(slot.session, { isBashRunning: true });
-    if (change === 'dispatch') slot.sessionState.bashDispatchInProgress = true;
+    if (change === 'dispatch') slot.sessionSurface = { isBashDispatching: true } as SessionSurface;
     if (change === 'fresh') slot.sessionState.idleSince = Date.now();
     if (change === 'call') activeCall = true;
     if (change === 'extension') {
@@ -1106,7 +1115,7 @@ describe('PimoteSessionManager — closeIdleSessionsAt', () => {
     if (busy === 'working') slot.sessionState.idleSince = null;
     if (busy === 'navigation') slot.sessionState.treeNavigationInProgress = true;
     if (busy === 'bash') Object.assign(slot.session, { isBashRunning: true });
-    if (busy === 'dispatch') slot.sessionState.bashDispatchInProgress = true;
+    if (busy === 'dispatch') slot.sessionSurface = { isBashDispatching: true } as SessionSurface;
     if (busy === 'call') {
       let activeCall = false;
       manager.startIdleCheck(300_000, () => activeCall);

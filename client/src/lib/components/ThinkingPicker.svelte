@@ -12,24 +12,12 @@
   import BrainCog from '@lucide/svelte/icons/brain-cog';
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
 
-  let child = $derived(sessionRegistry.viewedSubagentAttachment);
-  let rootSessionId = $derived(sessionRegistry.viewedSessionId);
-  let levels = $derived(child?.state.availableThinkingLevels ?? sessionRegistry.viewed?.availableThinkingLevels ?? []);
-  let selectedLevel = $derived(child?.state.thinkingLevel ?? sessionRegistry.viewed?.thinkingLevel ?? 'off');
-
-  function activePath(): import('@pimote/shared').AgentPath | null {
-    return rootSessionId ? (sessionRegistry.getSelectedSubagentPath?.(rootSessionId) ?? null) : null;
-  }
+  let conversation = $derived(sessionRegistry.viewedConversation);
+  let levels = $derived(conversation?.availableThinkingLevels ?? []);
+  let selectedLevel = $derived(conversation?.thinkingLevel ?? 'off');
 
   function chooseLevel(level: string): void {
-    const rootId = rootSessionId;
-    const path = activePath();
-    if (!rootId || (child && !path)) return;
-    void sessionRegistry.sendSurfaceCommand(rootId, child ? path : null, { type: 'set_thinking_level', level }).then((res) => {
-      if (!res.success) return;
-      if (child) child.state = { ...child.state, thinkingLevel: level };
-      else if (sessionRegistry.sessions[rootId]) sessionRegistry.sessions[rootId].thinkingLevel = level;
-    });
+    if (conversation) void sessionRegistry.sendSurfaceCommand(conversation.sessionId, { type: 'set_thinking_level', level });
   }
 
   function labelFor(level: string): string {

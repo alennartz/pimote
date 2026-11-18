@@ -2275,10 +2275,10 @@ describe('subagent child surface state', () => {
     registry.addSession('root', '/workspace', 'workspace');
     registry.handleEvent(childSnapshot([], { viewCursor: 4, state: { ...childState(), isStreaming: true } }));
     registry.handleEvent(childSnapshot([], { viewCursor: 9, state: { ...childState(), isStreaming: false } }));
-    expect(registry.getSubagentAttachment('root', ['worker'])?.state.isStreaming).toBe(false);
+    expect(registry.getSubagentAttachment('root', ['worker'])?.isStreaming).toBe(false);
   });
 
-  it('rehydrates child tool executions and gives streaming content a render key', () => {
+  it('rehydrates child live messages and tool executions', () => {
     const registry = new SessionRegistry();
     registry.addSession('root', '/workspace', 'workspace');
     const messages: PimoteAgentMessage[] = [
@@ -2294,7 +2294,7 @@ describe('subagent child surface state', () => {
     );
 
     const attachment = registry.getSubagentAttachment('root', ['worker']);
-    expect(attachment?.streamingKey).toBe('child-stream-root-["worker"]-child-session');
+    expect(attachment?.streamingMessage?.content[0].text).toBe('partial');
     expect(attachment?.toolExecutions['call-1']).toMatchObject({ status: 'completed', result: 'contents', data: { lines: 2 } });
     expect(attachment?.toolExecutions['call-2']).toMatchObject({ status: 'running', name: 'bash', args: { command: 'pwd' } });
   });

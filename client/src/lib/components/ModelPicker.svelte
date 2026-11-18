@@ -18,7 +18,6 @@
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { fuzzyFilter } from '$lib/fuzzy.js';
   import { Input } from '$lib/components/ui/input/index.js';
-  import type { SessionMeta } from '@pimote/shared';
 
   interface AvailableModel {
     provider: string;
@@ -34,20 +33,8 @@
   let contentElement: HTMLDivElement | null = $state(null);
 
   let filteredModels = $derived(fuzzyFilter(models, filterQuery, (model) => `${model.provider}/${model.name} ${model.id}`));
-  let child = $derived(sessionRegistry.viewedSubagentAttachment);
-  let rootSessionId = $derived(sessionRegistry.viewedSessionId);
-  let activeModel = $derived(child?.state.model ?? sessionRegistry.viewed?.model);
-
-  function activePath(): import('@pimote/shared').AgentPath | null {
-    return rootSessionId ? (sessionRegistry.getSelectedSubagentPath?.(rootSessionId) ?? null) : null;
-  }
-
-  function sendSurface(command: Record<string, unknown>): Promise<import('@pimote/shared').PimoteResponse> {
-    const rootId = rootSessionId;
-    const path = activePath();
-    if (!rootId || (child && !path)) return Promise.reject(new Error('No session surface is open'));
-    return sessionRegistry.sendSurfaceCommand(rootId, child ? path : null, command);
-  }
+  let conversation = $derived(sessionRegistry.viewedConversation);
+  let activeModel = $derived(conversation?.model);
 
   // Group filtered models by provider.
   let grouped = $derived.by(() => {
@@ -90,11 +77,10 @@
     if (loading) return;
     loading = true;
     try {
-      if (!rootSessionId || (child && !activePath())) {
-        loading = false;
-        return;
-      }
-      const res = await sendSurface({ type: 'get_available_models' });
+      const sessionId = conversation?.sessionId;
+      if (!sessionId) return;
+      const res = await sessionRegistry.sendSurfaceCommand(sessionId, { type: 'get_available_models' });
+      if (conversation?.sessionId !== sessionId) return;
       if (res.success && res.data) {
         const arr = (res.data as { models?: unknown }).models;
         if (Array.isArray(arr)) {
@@ -109,36 +95,14 @@
   }
 
   async function selectModel(model: AvailableModel) {
-    if (!rootSessionId || (child && !activePath())) return;
-    const res = await sendSurface({
+    const sessionId = conversation?.sessionId;
+    if (!sessionId) return;
+    const response = await sessionRegistry.sendSurfaceCommand(sessionId, {
       type: 'set_model',
       provider: model.provider,
       modelId: model.id,
     });
-    if (res.success && res.data) {
-      const state = res.data as {
-        model: { provider: string; id: string; name: string } | null;
-        thinkingLevel: string;
-        availableThinkingLevels: string[];
-      };
-      if (!child) {
-        const session = sessionRegistry.sessions[rootSessionId];
-        if (session) {
-          session.model = state.model ?? { provider: model.provider, id: model.id, name: model.name };
-          session.thinkingLevel = state.thinkingLevel;
-          session.availableThinkingLevels = state.availableThinkingLevels;
-        }
-      } else {
-        child.state = {
-          ...child.state,
-          model: state.model ?? { provider: model.provider, id: model.id, name: model.name },
-          thinkingLevel: state.thinkingLevel,
-          availableThinkingLevels: state.availableThinkingLevels,
-        };
-      }
-      const metaRes = await sendSurface({ type: 'get_session_meta' });
-      if (!child && metaRes.success && metaRes.data) sessionRegistry.updateMeta(rootSessionId, (metaRes.data as { meta: SessionMeta }).meta);
-    }
+    if (response.success) await sessionRegistry.sendSurfaceCommand(sessionId, { type: 'get_session_meta' });
     open = false;
   }
 

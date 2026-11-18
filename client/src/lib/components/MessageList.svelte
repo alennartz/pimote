@@ -7,7 +7,7 @@
   import type { BashExecutionState, PerSessionState, SubagentAttachmentState } from '$lib/stores/session-registry.svelte.js';
   import { abortSession, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
-  import { branchTreeStore, type BranchTreeSurface } from '$lib/stores/branch-tree-store.svelte.js';
+  import { branchTreeStore } from '$lib/stores/branch-tree-store.svelte.js';
   import { abandonedBranchCounts } from '$lib/branch-tree.js';
   import { findInConversation, type FindMatch } from '$lib/conversation-find.js';
   import { previousUserAbove, type UserMessagePosition } from '$lib/transcript-navigation.js';
@@ -15,7 +15,7 @@
   import { needsDraftPrompt, applyDraftChoice, type DraftChoice } from '$lib/draft-policy.js';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
-  import Message, { type MessageToolExecution } from './Message.svelte';
+  import Message from './Message.svelte';
   import StickyUserPreview from './StickyUserPreview.svelte';
   import ConversationFindBar from './ConversationFindBar.svelte';
   import BashExecution from './BashExecution.svelte';
@@ -39,15 +39,7 @@
   let { readOnly = false, source = null, child = null }: Props = $props();
 
   let childSurface = $derived(child ?? sessionRegistry.viewedSubagentAttachment);
-  // The rendered transcript: an explicit source, selected child, or viewed root.
-  // Child attachments intentionally use the shared render shape at this seam;
-  // command dispatch below still carries the child identity separately.
-  let session = $derived((source ?? childSurface ?? sessionRegistry.viewed) as PerSessionState | null);
-  let childSurfaceRef: BranchTreeSurface | null = $derived.by(() => {
-    const rootSessionId = childSurface?.rootSessionId ?? sessionRegistry.viewedSessionId;
-    const path = childSurface?.path ?? (rootSessionId ? sessionRegistry.getSelectedSubagentPath?.(rootSessionId) : null);
-    return childSurface && rootSessionId && path ? { rootSessionId, path: [...path] } : null;
-  });
+  let session = $derived(source ?? childSurface ?? sessionRegistry.viewedConversation);
   // Manager sessions use the regular session route, so identify them from the
   // server-owned manager root as well as explicit manager sources.
   let managerTranscript = $derived(
@@ -57,10 +49,7 @@
     ),
   );
 
-  let surfaceToolExecutions = $derived.by((): Readonly<Record<string, MessageToolExecution>> => {
-    if (childSurface) return childSurface.toolExecutions;
-    return session?.toolExecutions ?? {};
-  });
+  let surfaceToolExecutions = $derived(session?.toolExecutions ?? {});
 
   // ---- Transcript redo and draft flow ----
 
@@ -84,25 +73,22 @@
     // Child surfaces retain identity-preserving redo and tree navigation. Root
     // lifecycle actions remain unavailable to a child transcript.
     if (readOnly || source || managerTranscript) return;
-    const root = sessionRegistry.viewed;
-    const sessionId = childSurface ? childSurface.rootSessionId : root?.sessionId;
+    const sessionId = session?.sessionId;
     if (!sessionId) return;
 
-    const result = await branchTreeStore.navigateInSession(sessionId, entryId, opts, childSurfaceRef);
+    const result = await branchTreeStore.navigateInSession(sessionId, entryId, opts);
     if (!result || result.cancelled || typeof result.editorText !== 'string') return;
 
-    const currentDraft = childSurface ? childSurface.draftText : (sessionRegistry.sessions[sessionId]?.draftText ?? '');
+    const currentDraft = sessionRegistry.getSessionState(sessionId)?.draftText ?? '';
     const editorText = result.editorText;
     if (needsDraftPrompt(currentDraft, editorText)) {
       const choice = await promptDraftChoice();
       const nextText = applyDraftChoice(currentDraft, editorText, choice);
       if (nextText !== null) {
-        if (childSurface) sessionRegistry.setSubagentDraftText(childSurface.rootSessionId, childSurface.path, nextText);
-        else sessionRegistry.setDraftText(sessionId, nextText);
+        if (session) sessionRegistry.setDraftText(sessionId, nextText);
       }
     } else {
-      if (childSurface) sessionRegistry.setSubagentDraftText(childSurface.rootSessionId, childSurface.path, editorText);
-      else sessionRegistry.setDraftText(sessionId, editorText);
+      if (session) sessionRegistry.setDraftText(sessionId, editorText);
     }
   }
 
@@ -144,17 +130,7 @@
   }
 
   function handleAbort() {
-    if (source) return;
-    const rootSessionId = sessionRegistry.viewedSessionId;
-    if (!rootSessionId) return;
-    if (childSurface) {
-      void sessionRegistry.sendSubagentCommand(rootSessionId, childSurface.path, {
-        type: 'abort',
-        expectedSessionId: childSurface.childSessionId,
-      });
-    } else {
-      void abortSession(rootSessionId);
-    }
+    if (session) void abortSession(session.sessionId);
   }
 
   let scrollContainer: HTMLDivElement | undefined = $state();
@@ -335,10 +311,10 @@
   }
 
   $effect(() => {
-    const sessionId = childSurface ? childSurface.rootSessionId : session?.sessionId;
+    const sessionId = session?.sessionId;
     // Message replacement, ordinary turns, and full resync invalidate the tree cache.
     session?.messageCount;
-    if (sessionId) branchTreeStore.cacheVersion(sessionId, childSurfaceRef);
+    if (sessionId) branchTreeStore.cacheVersion(sessionId);
     session?.messages.length;
     if (!sessionId || !session || source || readOnly || managerTranscript || !session.messages.some((message) => 'entryId' in message && typeof message.entryId === 'string')) {
       treeSnapshot = null;
@@ -346,8 +322,8 @@
     }
     // Session message count changes after navigation and full resync. `load`
     // returns the cached snapshot until branch-tree lifecycle invalidates it.
-    void branchTreeStore.load(sessionId, childSurfaceRef).then((snapshot) => {
-      if (sessionRegistry.viewedSessionId === sessionId) treeSnapshot = snapshot;
+    void branchTreeStore.load(sessionId).then((snapshot) => {
+      if (sessionRegistry.viewedConversation?.sessionId === sessionId) treeSnapshot = snapshot;
     });
   });
 
@@ -459,7 +435,7 @@
 
   let windowAnchor = $state<{ view: string; key: string } | null>(null);
 
-  const windowViewKey = $derived(childSurface ? `child:${childSurface.childSessionId}` : `root:${session?.sessionId ?? ''}`);
+  const windowViewKey = $derived(session?.sessionId ?? '');
   const tailWindowStart = $derived(Math.max(0, displayEntries.length - TRANSCRIPT_WINDOW_ROWS));
   const windowStart = $derived.by(() => {
     const anchor = windowAnchor;
@@ -562,15 +538,14 @@
     if (entry.message.role !== 'assistant' || !session) return null;
     if (entry.streaming) return summarizeAssistantRowUsage(entry.message, session.messages, toolResultUsageIndex);
     if (entry.messageIndex === null) return null;
-    // Explicit sources and child surfaces are not owned by the root registry.
-    if (source || childSurface) return summarizeAssistantRowUsage(entry.message, session.messages, toolResultUsageIndex);
+    if (source) return summarizeAssistantRowUsage(entry.message, session.messages, toolResultUsageIndex);
     return sessionRegistry.getAssistantRowUsage(session.sessionId, entry.messageIndex, toolResultUsageIndex);
   }
 
   // Show streaming indicator when streaming but nothing visible has arrived yet.
   let showStreamingIndicator = $derived.by(() => {
-    if (!(childSurface?.state.isStreaming ?? session?.isStreaming)) return false;
-    const streamingMessage = childSurface?.streamingMessage ?? session?.streamingMessage;
+    if (!session?.isStreaming) return false;
+    const streamingMessage = session.streamingMessage;
     // A hidden in-flight message renders no row, so the turn must still show as running.
     if (streamingMessage?.display === false) return true;
     return !streamingMessage || streamingMessage.content.length === 0;
@@ -594,14 +569,9 @@
   });
 
   async function handleBashCancel(_executionId: string): Promise<void> {
-    const viewed = sessionRegistry.viewed;
-    if (!viewed?.sessionId) return;
+    if (!session) return;
     try {
-      if (childSurface) {
-        await sessionRegistry.sendSubagentCommand(viewed.sessionId, childSurface.path, { type: 'abort_bash' });
-      } else {
-        await connection.send({ type: 'abort_bash', sessionId: viewed.sessionId });
-      }
+      await sessionRegistry.sendSurfaceCommand(session.sessionId, { type: 'abort_bash' });
     } catch (error) {
       console.error('Failed to send bash abort:', error);
     }
@@ -624,10 +594,10 @@
   let lastActivityText = $derived.by(() => {
     // Touch `now` to re-evaluate on timer ticks
     void now;
-    const lastActivity = childSurface?.lastBotActivityTimestamp ?? session?.lastBotActivityTimestamp;
+    const lastActivity = session?.lastBotActivityTimestamp;
     if (!lastActivity) return null;
     // Don't show during active streaming — the streaming indicator is enough
-    if (childSurface?.state.isStreaming ?? session?.isStreaming) return null;
+    if (session?.isStreaming) return null;
     return formatRelativeTime(lastActivity);
   });
 </script>
@@ -652,7 +622,7 @@
               streaming={entry.streaming}
               messageKey={entry.key}
               {assistantRowUsage}
-              sessionId={childSurface?.childSessionId ?? session?.sessionId ?? ''}
+              sessionId={session?.sessionId ?? ''}
               subagentRootSessionId={childSurface?.rootSessionId ?? session?.sessionId ?? ''}
               agentPath={childSurface?.path}
               abandonedBranchCount={alternateCount(entry)}
@@ -688,7 +658,7 @@
         <div class="sticky-host" style={listClientWidth ? `--band-w: ${listClientWidth}px` : undefined}>
           <StickyUserPreview
             message={stickyEntry.message}
-            sessionId={childSurface?.childSessionId ?? session.sessionId}
+            sessionId={session.sessionId}
             abandonedBranchCount={alternateCount(stickyEntry)}
             manager={Boolean(source || managerTranscript)}
             {readOnly}
@@ -712,7 +682,7 @@
   {/if}
 
   <!-- Floating abort button (mobile only) -->
-  {#if !source && (childSurface?.state.isStreaming || session?.isStreaming) && !readOnly}
+  {#if !source && session?.isStreaming && !readOnly}
     <button
       class="bg-destructive text-primary-foreground hover:bg-destructive/80 active:bg-destructive/70 absolute right-3 bottom-3 z-10 flex items-center justify-center rounded-full p-3 shadow-lg transition-colors md:hidden"
       onpointerdown={(e) => e.preventDefault()}

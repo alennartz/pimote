@@ -39,6 +39,7 @@ export class QueueOwnership {
   private owners: QueueOwners = { steering: [], followUp: [] };
   /** Submissions the server made that pi has not yet reported as queued. */
   private intents: Intent[] = [];
+  private undeliveredDrafts = new Map<string, QueueTexts>();
 
   /** Record a client submission before pi queues it. Cancel the returned
    *  intent when pi reports any outcome other than `queued`. */
@@ -82,6 +83,16 @@ export class QueueOwnership {
   /** Drop submissions that pi never queued, such as input a handler consumed. */
   clearIntents(): void {
     this.intents = [];
+  }
+
+  holdDrafts(clientId: string, texts: QueueTexts): void {
+    const previous = this.undeliveredDrafts.get(clientId) ?? { steering: [], followUp: [] };
+    this.undeliveredDrafts.set(clientId, { steering: [...previous.steering, ...texts.steering], followUp: [...previous.followUp, ...texts.followUp] });
+  }
+
+  deliverDrafts(clientId: string, deliver: (texts: QueueTexts) => boolean): void {
+    const texts = this.undeliveredDrafts.get(clientId);
+    if (texts && deliver(texts)) this.undeliveredDrafts.delete(clientId);
   }
 
   /** Copy of the current owners. Read it before pi clears its queue. */

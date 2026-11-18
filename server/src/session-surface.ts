@@ -1,3 +1,4 @@
+import type { AgentSession } from '@earendil-works/pi-coding-agent';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import { createHash } from 'node:crypto';
 import type {
@@ -5,18 +6,20 @@ import type {
   CommandInfo,
   PimoteAgentMessage,
   PimoteSessionEvent,
+  PimoteSurfaceEvent,
+  SessionSettingsChangedEvent,
   PimoteTreeNode,
   SessionMeta,
   SessionState,
   StreamingMessage,
 } from '../../shared/dist/index.js';
-import type { AgentPath, BorrowedAgentSession, SubagentPresentationProvider, SubagentProviderEvent } from '@pimote/sdk/subagents';
+import type { BorrowedAgentSession, SubagentPresentationProvider, SubagentProviderEvent } from '@pimote/sdk/subagents';
 import { EventBuffer, type IncomingSdkEvent } from './event-buffer.js';
 import { mapAgentMessage, mapContextEntries, type SdkSessionEntry } from './message-mapper.js';
 import { resolveImageInputs } from './image-registry.js';
 import { completeFileRefs } from './file-references.js';
-import { projectSessionUsage } from './session-usage.js';
-import { attributeDrained, type QueueOwnership } from './queue-ownership.js';
+import { makeSessionMeta } from './session-usage.js';
+import { attributeDrained, QUEUE_KINDS, QueueOwnership, type QueueTexts } from './queue-ownership.js';
 import { mapTreeNodes, type SessionTreeNode } from './session-tree.js';
 import { createSubagentTranscriptProjector, type SubagentProjectionSnapshot, type SubagentTranscriptProjector } from './subagent-transcript-projector.js';
 
@@ -26,6 +29,7 @@ export type SessionSurfaceCommand =
   | { type: 'steer'; id?: string; message: string; images?: string[] }
   | { type: 'follow_up'; id?: string; message: string }
   | { type: 'abort'; id?: string }
+  | { type: 'dequeue_steering'; id?: string }
   | { type: 'bash'; id?: string; command: string; excludeFromContext?: boolean }
   | { type: 'abort_bash'; id?: string }
   | { type: 'set_model'; id?: string; provider: string; modelId: string }
@@ -71,13 +75,11 @@ export type SessionSurfaceReplay =
   | { kind: 'events'; cursor: number; events: readonly PimoteSessionEvent[] }
   | { kind: 'snapshot_required'; reason: 'cursor_invalid' | 'history_unavailable' };
 
-/** Result returned when an observer attaches to a surface. */
-export interface SessionSurfaceAttachment {
-  observerId: string;
+export interface SessionSurfaceSync {
   cursor: number;
+  state: SessionState;
   snapshot?: SessionSurfaceSnapshot;
   events?: readonly PimoteSessionEvent[];
-  release(): void;
 }
 
 export type SessionSurfaceKind = 'root' | 'child';
@@ -85,7 +87,24 @@ export type SessionSurfaceKind = 'root' | 'child';
 /** Caller identity used for queue attribution and prompt ownership. */
 export interface SessionSurfaceCallerContext {
   clientId?: string;
-  queueOwnership?: QueueOwnership;
+}
+
+export interface SessionInteractionState {
+  readonly queueOwnership: QueueOwnership;
+  bashAdmission?: AbortController;
+}
+
+export function createSessionInteractionState(): SessionInteractionState {
+  return { queueOwnership: new QueueOwnership() };
+}
+
+export class SessionAbortError extends Error {
+  constructor(
+    error: unknown,
+    readonly drafts: QueueTexts,
+  ) {
+    super(error instanceof Error ? error.message : String(error), { cause: error });
+  }
 }
 
 /** Session-local capabilities that do not belong on the borrowed native session. */
@@ -97,10 +116,10 @@ export interface SessionSurfaceCapabilities {
   completeFileRefs(prefix: string): Promise<readonly AutocompleteResponseItem[]>;
   nativeBash?: {
     admitted?: boolean;
-    execute?: (command: string, options: { id?: string; excludeFromContext?: boolean }) => Promise<unknown>;
+    execute?: (command: string, options: { id?: string; excludeFromContext?: boolean; signal?: AbortSignal }) => Promise<unknown>;
     abort?: () => Promise<void> | void;
   };
-  executeBash(command: string, options: { id?: string; excludeFromContext?: boolean }): Promise<unknown>;
+  executeBash(command: string, options: { id?: string; excludeFromContext?: boolean; signal?: AbortSignal }): Promise<unknown>;
   getGitBranch(): string | null;
   /** Provider-owned child operation projection. Omitted means legacy/full access. */
   operations?: readonly string[];
@@ -127,11 +146,13 @@ type NativeSessionExtras = {
   getAvailableThinkingLevels?: () => readonly string[];
   autoCompactionEnabled?: boolean;
   sessionName?: string;
-  clearQueue?: () => { steering: string[]; followUp: string[] };
+  recordBashResult?: AgentSession['recordBashResult'];
+  getFollowUpMessages?: AgentSession['getFollowUpMessages'];
   extensionRunner?: {
     getEntryRenderer?: (customType: string) => unknown;
     getRegisteredCommands?: () => readonly NativeCommand[];
     getCommand?: (name: string) => NativeCommand | undefined;
+    emitUserBash?: AgentSession['extensionRunner']['emitUserBash'];
   };
   resourceLoader?: { getSkills?: () => { skills?: readonly { name: string; description?: string }[] } };
   promptTemplates?: readonly { name: string; description?: string }[];
@@ -152,16 +173,11 @@ export interface SessionSurfaceOptions {
   session: BorrowedAgentSession;
   kind: SessionSurfaceKind;
   capabilities?: SessionSurfaceCapabilities;
-  /** Root-only lifecycle adapters that preserve slot-level queue and bash semantics. */
-  rootAbort?: (caller?: SessionSurfaceCallerContext) => Promise<unknown>;
-  rootBash?: (command: Extract<SessionSurfaceCommand, { type: 'bash' }>, caller?: SessionSurfaceCallerContext) => Promise<unknown>;
-  rootAbortBash?: (caller?: SessionSurfaceCallerContext) => Promise<void>;
-  /** Parent replay cursor, when this surface is a child view. It is diagnostic only. */
-  parentCursor?: number;
+  interaction?: SessionInteractionState;
+  beforeAbort?: () => void;
+  sendToClient?: (clientId: string, event: PimoteSurfaceEvent) => boolean;
   /** Share an existing event buffer with a root session slot. */
   eventBuffer?: EventBuffer;
-  /** Root surfaces receive native events from the slot state mapper. */
-  subscribeNative?: boolean;
   /** Provider owner-control stop seam for child views. */
   stop?: (request: SessionSurfaceStopRequest) => Promise<void>;
   /** Public child path and incarnation used by guarded Stop. */
@@ -177,8 +193,6 @@ export interface SessionSurfaceOptions {
   baseCursor?: number;
   /** Optional semantic provider hydrated before the first client snapshot. */
   subagentProvider?: Pick<SubagentPresentationProvider, 'rehydrate' | 'snapshot' | 'subscribe' | 'replay'>;
-  /** Logical path supplied to provider hydration. */
-  subagentPath?: AgentPath;
   /** Prior projected state retained when a child view is rebuilt. */
   initialProjection?: SubagentProjectionSnapshot;
 }
@@ -188,10 +202,9 @@ export interface SessionSurface {
   readonly sessionId: string;
   readonly kind: SessionSurfaceKind;
   readonly currentCursor: number;
+  readonly isBashDispatching: boolean;
   /** Subscribe to native Pi events before taking the first transcript snapshot. */
   initialize(): Promise<SessionSurfaceSnapshot>;
-  /** Accept one native Pi event when the owning slot supplies the subscription. */
-  acceptNativeEvent(event: IncomingSdkEvent): void;
   /** Accept a provider operation routed to this session surface. */
   acceptProviderEvent?(event: SubagentProviderEvent): void;
   /** Read the current projected state without invalidating replay. */
@@ -200,10 +213,12 @@ export interface SessionSurface {
   setSubagentProvider?(provider: Pick<SubagentPresentationProvider, 'rehydrate' | 'snapshot' | 'subscribe' | 'replay'>): Promise<void>;
   /** Rebuild the transcript/state snapshot and invalidate prior replay positions. */
   refreshSnapshot(): SessionSurfaceSnapshot;
-  subscribe(listener: (event: PimoteSessionEvent) => void): () => void;
+  subscribe(listener: (event: PimoteSurfaceEvent) => void): () => void;
+  refreshSettings(): void;
+  restoreQueuedDrafts(clientId: string): void;
   /** Stop observing the native session without disposing it. */
   close(): void;
-  attachObserver(observerId: string, after?: number): Promise<SessionSurfaceAttachment>;
+  sync(after?: number): SessionSurfaceSync;
   replay(after?: number): SessionSurfaceReplay;
   dispatch(command: SessionSurfaceCommand, caller?: SessionSurfaceCallerContext): Promise<unknown>;
   /** Full state/meta reads remain surface-local and do not move parent cursors. */
@@ -322,7 +337,7 @@ function indexSnapshotMessages(snapshot: SessionSurfaceSnapshot): SnapshotMessag
 
 /** A persisted final message already present in a snapshot needs no second
  * delivery from the listener that observed it at the snapshot boundary. */
-function messageIsInSnapshot(event: PimoteSessionEvent, snapshot: SessionSurfaceSnapshot): boolean {
+function messageIsInSnapshot(event: PimoteSurfaceEvent, snapshot: SessionSurfaceSnapshot): boolean {
   if (event.type === 'subagent_content_start' || event.type === 'subagent_content_delta' || event.type === 'subagent_content_end') {
     return (
       snapshot.messages.some((message) => message.content.some((content) => content.type === 'subagent' && content.operationId === event.operationId)) ||
@@ -336,32 +351,30 @@ function messageIsInSnapshot(event: PimoteSessionEvent, snapshot: SessionSurface
 }
 
 /** Map a saved branch without applying compaction's context projection. */
-function mapSavedBranch(entries: readonly SdkSessionEntry[], customVisible: (customType: string) => boolean): PimoteAgentMessage[] {
-  let seenLeadingSystem = false;
-  const output: PimoteAgentMessage[] = [];
-  for (const entry of entries) {
-    const record = entry as unknown as Record<string, unknown>;
-    if (record.type === 'message' && isAgentMessage(record.message)) {
-      const message = record.message as AgentMessage;
-      if (message.role === 'system' && !seenLeadingSystem) {
-        seenLeadingSystem = true;
-        continue;
-      }
-      output.push({ ...mapAgentMessage(message), entryId: typeof record.id === 'string' ? record.id : undefined });
-      continue;
-    }
-    if (record.type === 'custom' && typeof record.customType === 'string' && !customVisible(record.customType)) continue;
-    // Mapping one entry at a time keeps compaction and branch summaries while
-    // avoiding mapContextEntries' deliberate omission of history before a compaction.
-    const mapped = mapContextEntries([entry], customVisible);
-    for (const message of mapped) {
-      output.push({ ...message, entryId: message.entryId ?? (typeof record.id === 'string' ? record.id : undefined) });
-    }
+export function getSessionCommands(session: BorrowedAgentSession): CommandInfo[] {
+  const native = session as BorrowedAgentSession & NativeSessionExtras;
+  const commands: CommandInfo[] = [];
+  for (const skill of native.resourceLoader?.getSkills?.()?.skills ?? []) {
+    commands.push({ name: `skill:${skill.name}`, description: skill.description ?? '', hasArgCompletions: false });
   }
-  return output;
+  for (const template of native.promptTemplates ?? []) {
+    commands.push({ name: template.name, description: template.description ?? '', hasArgCompletions: false });
+  }
+  for (const command of native.extensionRunner?.getRegisteredCommands?.() ?? []) {
+    commands.push({ name: command.name, description: command.description ?? '', hasArgCompletions: typeof command.getArgumentCompletions === 'function' });
+  }
+  commands.push(
+    { name: 'new', description: 'Start a new session', hasArgCompletions: false },
+    { name: 'reload', description: 'Reload extensions and skills', hasArgCompletions: false },
+    { name: 'tree', description: 'Navigate session history tree', hasArgCompletions: false },
+    { name: 'login', description: 'Log in to a model provider', hasArgCompletions: false },
+    { name: 'logout', description: 'Log out from a model provider', hasArgCompletions: false },
+    { name: 'compact', description: 'Manually compact the session context', hasArgCompletions: false },
+  );
+  return commands;
 }
 
-function defaultCapabilities(session: BorrowedAgentSession, getGitBranch?: () => string | null): SessionSurfaceCapabilities {
+export function createSessionCapabilities(session: BorrowedAgentSession, getGitBranch?: () => string | null): SessionSurfaceCapabilities {
   const native = session as BorrowedAgentSession & NativeSessionExtras;
   return {
     resolveModel: async (provider, modelId) => {
@@ -376,27 +389,7 @@ function defaultCapabilities(session: BorrowedAgentSession, getGitBranch?: () =>
       autoCompactionEnabled: Boolean(native.autoCompactionEnabled),
       ...(typeof native.sessionName === 'string' ? { sessionName: native.sessionName } : {}),
     }),
-    getCommands: async () => {
-      const commands: CommandInfo[] = [];
-      for (const skill of native.resourceLoader?.getSkills?.()?.skills ?? []) {
-        commands.push({ name: `skill:${skill.name}`, description: skill.description ?? '', hasArgCompletions: false });
-      }
-      for (const template of native.promptTemplates ?? []) {
-        commands.push({ name: template.name, description: template.description ?? '', hasArgCompletions: false });
-      }
-      for (const command of native.extensionRunner?.getRegisteredCommands?.() ?? []) {
-        commands.push({ name: command.name, description: command.description ?? '', hasArgCompletions: typeof command.getArgumentCompletions === 'function' });
-      }
-      commands.push(
-        { name: 'new', description: 'Start a new session', hasArgCompletions: false },
-        { name: 'reload', description: 'Reload extensions and skills', hasArgCompletions: false },
-        { name: 'tree', description: 'Navigate session history tree', hasArgCompletions: false },
-        { name: 'login', description: 'Log in to a model provider', hasArgCompletions: false },
-        { name: 'logout', description: 'Log out from a model provider', hasArgCompletions: false },
-        { name: 'compact', description: 'Manually compact the session context', hasArgCompletions: false },
-      );
-      return commands;
-    },
+    getCommands: async () => getSessionCommands(session),
     completeArgs: async (commandName, prefix) => {
       const items = await native.extensionRunner?.getCommand?.(commandName)?.getArgumentCompletions?.(prefix);
       return items ?? [];
@@ -406,21 +399,41 @@ function defaultCapabilities(session: BorrowedAgentSession, getGitBranch?: () =>
       const cwd = manager?.getCwd?.() ?? process.cwd();
       return (await completeFileRefs({ prefix, cwd })).items;
     },
-    executeBash: async (command, options) => native.executeBash(command, undefined, options),
+    executeBash: async (command, options) => {
+      const { signal, ...nativeOptions } = options;
+      let extensionResult: Awaited<ReturnType<AgentSession['extensionRunner']['emitUserBash']>>;
+      try {
+        extensionResult = await native.extensionRunner?.emitUserBash?.({
+          type: 'user_bash',
+          command,
+          excludeFromContext: options.excludeFromContext === true,
+          cwd: native.sessionManager.getCwd(),
+        });
+      } catch (error) {
+        console.error('[SessionSurface] user_bash extension handler failed:', error);
+        throw new Error('bash_extension_error', { cause: error });
+      }
+      if (extensionResult?.result) {
+        native.recordBashResult?.(command, extensionResult.result, { excludeFromContext: options.excludeFromContext === true });
+        return extensionResult.result;
+      }
+      const execution = native.executeBash(command, undefined, { ...nativeOptions, operations: extensionResult?.operations });
+      if (signal?.aborted) native.abortBash();
+      return await execution;
+    },
     getGitBranch: () => getGitBranch?.() ?? null,
   };
 }
 
 function getCapability(options: SessionSurfaceOptions): SessionSurfaceCapabilities {
-  return options.capabilities ?? defaultCapabilities(options.session, options.getGitBranch);
+  return options.capabilities ?? createSessionCapabilities(options.session, options.getGitBranch);
 }
 
 function allowedOperation(options: SessionSurfaceOptions, capabilities: SessionSurfaceCapabilities, operation: string): boolean {
-  if (options.kind === 'root' || capabilities.operations === undefined) return true;
-  return capabilities.operations.includes(operation);
+  return options.kind === 'root' || capabilities.operations?.includes(operation) === true;
 }
 
-function stateFor(session: BorrowedAgentSession, capabilities: SessionSurfaceCapabilities): SessionState {
+function stateFor(session: BorrowedAgentSession, capabilities: SessionSurfaceCapabilities, navigation?: { inProgress: boolean; summarizing: boolean }): SessionState {
   const native = session as BorrowedAgentSession & NativeSessionExtras;
   const settings = capabilities.getSettings();
   const model = mapModel(session.model);
@@ -432,6 +445,8 @@ function stateFor(session: BorrowedAgentSession, capabilities: SessionSurfaceCap
     availableThinkingLevels: [...(available ?? [])],
     isStreaming: Boolean(session.isStreaming),
     isCompacting: Boolean(session.isCompacting),
+    isNavigatingTree: navigation?.inProgress ?? false,
+    treeNavigationSummarizing: navigation?.summarizing ?? false,
     sessionFile: session.sessionFile,
     sessionId: session.sessionId,
     ...(typeof native.sessionName === 'string' ? { sessionName: native.sessionName } : settings.sessionName ? { sessionName: settings.sessionName } : {}),
@@ -448,10 +463,6 @@ function fullMessagesFor(options: SessionSurfaceOptions, capabilities: SessionSu
     visible ??
     ((customType: string) =>
       capabilities.renderer?.visible !== false && (native.extensionRunner?.getEntryRenderer ? Boolean(native.extensionRunner.getEntryRenderer(customType)) : false));
-  if (options.kind === 'child') {
-    const rawEntries = manager?.getBranch?.() ?? manager?.getEntries?.();
-    if (Array.isArray(rawEntries)) return mapSavedBranch(rawEntries as SdkSessionEntry[], customVisible);
-  }
   const rawContextEntries = manager?.buildContextEntries?.();
   if (Array.isArray(rawContextEntries)) return mapContextEntries(rawContextEntries as SdkSessionEntry[], customVisible);
   return Array.isArray(session.messages) ? session.messages.filter(isAgentMessage).map(mapAgentMessage) : [];
@@ -509,6 +520,7 @@ function snapshotFor(
   cursor: number,
   projector?: SubagentTranscriptProjector,
   visible?: (customType: string) => boolean,
+  navigation?: { inProgress: boolean; summarizing: boolean },
 ): SessionSurfaceSnapshot {
   const session = options.session;
   const branchEntryIds = nativeBranchEntryIds(session);
@@ -527,9 +539,9 @@ function snapshotFor(
     : projectedMessages;
   return {
     cursor,
-    state: stateFor(session, capabilities),
+    state: stateFor(session, capabilities, navigation),
     messages,
-    ...(options.kind === 'child' ? { pendingSteeringMessages: [...(session.getSteeringMessages?.() ?? [])] } : {}),
+    pendingSteeringMessages: [...(session.getSteeringMessages?.() ?? [])],
     ...(projected ? { activeSubagentContent: projected.activeOperations.map((operation) => activeContentForOperation(operation, projectedMessages, options.sessionId)) } : {}),
     ...(branchEntryIds !== undefined ? { branchEntryIds } : {}),
     ...(projectedPartial ? { streamingMessage: projectedPartial } : {}),
@@ -566,9 +578,25 @@ function dispatchPrompt(
   });
 }
 
+export function makeSessionSettingsEvent(sessionId: string, session: BorrowedAgentSession, capabilities = createSessionCapabilities(session)): SessionSettingsChangedEvent {
+  const state = stateFor(session, capabilities);
+  return {
+    type: 'session_settings_changed',
+    sessionId,
+    model: state.model,
+    thinkingLevel: state.thinkingLevel,
+    availableThinkingLevels: state.availableThinkingLevels,
+    autoCompactionEnabled: state.autoCompactionEnabled,
+  };
+}
+
 /** Construct a shared root or borrowed-child session surface. */
 export function createSessionSurface(options: SessionSurfaceOptions): SessionSurface {
   const capabilities = getCapability(options);
+  const interaction = options.interaction ?? createSessionInteractionState();
+  const ownership = interaction.queueOwnership;
+  const navigation = { inProgress: false, summarizing: false };
+  let lastSettings: string | undefined;
   let subagentProvider = options.subagentProvider;
   let providerSnapshot = subagentProvider?.snapshot?.();
   const customEntryVisible = (customType: string): boolean => {
@@ -577,7 +605,7 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     const runner = (options.session as unknown as { extensionRunner?: { getEntryRenderer?: (name: string) => unknown } }).extensionRunner;
     return runner?.getEntryRenderer ? Boolean(runner.getEntryRenderer(customType)) : false;
   };
-  const surfacePath = options.subagentPath ?? [];
+  const surfacePath = options.path ?? [];
   const samePath = (left: readonly string[], right: readonly string[]): boolean => left.length === right.length && left.every((part, index) => part === right[index]);
   const providerEventBelongsToSurface = (event: SubagentProviderEvent): boolean => {
     if (!('target' in event)) return false;
@@ -594,27 +622,26 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     : undefined;
   const eventBuffer =
     options.eventBuffer ??
-    new EventBuffer(options.bufferCapacity ?? SURFACE_BUFFER_CAPACITY, customEntryVisible, options.baseCursor ?? 0, () =>
-      fullMessagesFor(options, capabilities, customEntryVisible).flatMap((message) => (message.entryId ? [message.entryId] : [])),
+    new EventBuffer(
+      options.bufferCapacity ?? SURFACE_BUFFER_CAPACITY,
+      customEntryVisible,
+      options.baseCursor ?? 0,
+      () => fullMessagesFor(options, capabilities, customEntryVisible).flatMap((message) => (message.entryId ? [message.entryId] : [])),
+      () => makeSessionMeta(options.session, capabilities.getGitBranch()),
     );
-  const listensToNative = options.subscribeNative !== false;
-  const listeners = new Set<(event: PimoteSessionEvent) => void>();
-  const observers = new Map<string, { cursor: number; active: boolean }>();
+  const listeners = new Set<(event: PimoteSurfaceEvent) => void>();
   let nativeUnsubscribe: (() => void) | undefined;
   let providerUnsubscribe: (() => void) | undefined;
   let initialized = false;
   let initializing = false;
   let closed = false;
-  let staged: PimoteSessionEvent[] = [];
+  let staged: PimoteSurfaceEvent[] = [];
 
-  const emit = (event: PimoteSessionEvent): void => {
-    for (const observer of observers.values()) {
-      if (observer.active && 'cursor' in event && typeof event.cursor === 'number') observer.cursor = Math.max(observer.cursor, event.cursor);
-    }
+  const emit = (event: PimoteSurfaceEvent): void => {
     for (const listener of [...listeners]) listener(event);
   };
 
-  const receive = (event: PimoteSessionEvent): void => {
+  const receive = (event: PimoteSurfaceEvent): void => {
     if (initializing || !initialized) staged.push(event);
     else emit(event);
   };
@@ -626,6 +653,11 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
 
   const mapAndReceive = (sdkEvent: IncomingSdkEvent): void => {
     if (closed) return;
+    if (sdkEvent.type === 'queue_update') for (const kind of QUEUE_KINDS) ownership.syncFromPi(kind, sdkEvent[kind]);
+    if (sdkEvent.type === 'agent_settled') ownership.clearIntents();
+    if (sdkEvent.type === 'thinking_level_changed') refreshSettings();
+    if (sdkEvent.type === 'tree_navigation_start') Object.assign(navigation, { inProgress: true, summarizing: sdkEvent.summarizing });
+    if (sdkEvent.type === 'tree_navigation_end') Object.assign(navigation, { inProgress: false, summarizing: false });
     const projectionInput = projector ? messageEndForProjection(sdkEvent, options.session) : sdkEvent;
     const projected = projector?.acceptNativeEvent(projectionInput) ?? [];
     for (const event of projected) appendProjected(event);
@@ -656,11 +688,34 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
   };
 
   const ensureSubscription = (): void => {
-    if (!listensToNative || nativeUnsubscribe || closed) return;
+    if (nativeUnsubscribe || closed) return;
     nativeUnsubscribe = options.session.subscribe((event) => mapAndReceive(event));
   };
 
   const readMessages = (): readonly PimoteAgentMessage[] => projector?.snapshot().messages ?? fullMessagesFor(options, capabilities, customEntryVisible);
+
+  const sendDrafts = (clientId: string, drafts: QueueTexts): boolean =>
+    options.sendToClient?.(clientId, { type: 'queued_drafts_restored', sessionId: options.sessionId, ...drafts }) === true;
+
+  const restoreQueuedDrafts = (clientId: string): void => ownership.deliverDrafts(clientId, (drafts) => sendDrafts(clientId, drafts));
+
+  const drainQueues = (clientId: string, abort = false): QueueTexts => {
+    const owners = ownership.snapshot();
+    if (abort) options.beforeAbort?.();
+    const drafts = attributeDrained(owners, options.session.clearQueue(), clientId);
+    for (const [sender, texts] of drafts) {
+      if (sender !== clientId && !sendDrafts(sender, texts)) ownership.holdDrafts(sender, texts);
+    }
+    return drafts.get(clientId) ?? { steering: [], followUp: [] };
+  };
+
+  const refreshSettings = (): void => {
+    const event = makeSessionSettingsEvent(options.sessionId, options.session, capabilities);
+    const encoded = JSON.stringify(event);
+    if (encoded === lastSettings) return;
+    lastSettings = encoded;
+    receive(event);
+  };
 
   const dispatch = async (command: SessionSurfaceCommand, caller?: SessionSurfaceCallerContext): Promise<unknown> => {
     if (closed) throw new Error('session surface is closed');
@@ -673,112 +728,80 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
       if (!allowedOperation(options, capabilities, operation)) throw new Error(`${operation} is not available on this child surface`);
     };
 
+    if (command.type === 'prompt' || command.type === 'steer' || command.type === 'follow_up') {
+      ensure(command.type);
+      const slash = commandToken(command.message);
+      if (options.kind === 'child' && slash && !SAFE_CHILD_COMMANDS.has(slash)) throw new Error(`slash command /${slash} is not available on a child surface`);
+      if (slash === 'tree') {
+        ensure('tree');
+        return getTree();
+      }
+      if (slash === 'compact') {
+        ensure('compact');
+        return { result: await session.compact(command.message.trim().slice('/compact'.length).trim() || undefined) };
+      }
+      const behavior = command.type === 'follow_up' || (command.type === 'prompt' && command.streamingBehavior === 'blocking') ? 'followUp' : 'steer';
+      const images = 'images' in command ? await resolveImageInputs(command.images) : undefined;
+      if (slash) {
+        void session.prompt(command.message, { images, streamingBehavior: behavior }).catch((error) => console.error('[SessionSurface] command failed:', error));
+        return undefined;
+      }
+      const queueKind = behavior === 'steer' ? 'steering' : 'followUp';
+      const intent = caller?.clientId ? ownership.intend(queueKind, caller.clientId, command.message) : undefined;
+      try {
+        const outcome = await dispatchPrompt(session, command.message, images, behavior, () => {
+          if (command.type === 'prompt' && command.clientMessageId !== undefined) eventBuffer.expectPromptEcho(command.clientMessageId);
+        });
+        if (intent && outcome !== 'queued') ownership.cancel(intent);
+        return { outcome };
+      } catch (error) {
+        if (intent) ownership.cancel(intent);
+        throw error;
+      }
+    }
+
     switch (command.type) {
-      case 'prompt': {
-        ensure('prompt');
-        const slash = commandToken(command.message);
-        if (options.kind === 'child' && slash && !SAFE_CHILD_COMMANDS.has(slash)) throw new Error(`slash command /${slash} is not available on a child surface`);
-        if (options.kind === 'child' && slash === 'tree') {
-          ensure('tree');
-          return getTree();
-        }
-        if (options.kind === 'child' && slash === 'compact') {
-          ensure('compact');
-          return { result: await session.compact(command.message.trim().slice('/compact'.length).trim() || undefined) };
-        }
-        const promptIntent =
-          caller?.queueOwnership && caller.clientId && session.isStreaming ? caller.queueOwnership.intend('steering', caller.clientId, command.message) : undefined;
-        try {
-          const images = await resolveImageInputs(command.images);
-          const disposition = await dispatchPrompt(session, command.message, images, command.streamingBehavior === 'blocking' ? 'followUp' : 'steer', () => {
-            if (command.clientMessageId !== undefined) eventBuffer.expectPromptEcho(command.clientMessageId);
-          });
-          if (promptIntent && disposition !== 'queued') caller?.queueOwnership?.cancel(promptIntent);
-          return { outcome: disposition };
-        } catch (error) {
-          if (promptIntent) caller?.queueOwnership?.cancel(promptIntent);
-          throw error;
-        }
-      }
-      case 'steer': {
+      case 'dequeue_steering':
         ensure('steer');
-        const slash = commandToken(command.message);
-        if (options.kind === 'child' && slash) throw new Error(`slash command /${slash} is not available on a child surface`);
-        const intent = caller?.queueOwnership && caller.clientId ? caller.queueOwnership.intend('steering', caller.clientId, command.message) : undefined;
-        try {
-          const images = await resolveImageInputs(command.images);
-          const result = await dispatchPrompt(session, command.message, images, 'steer', () => undefined);
-          if (intent && result !== 'queued') caller?.queueOwnership?.cancel(intent);
-          return { outcome: result };
-        } catch (error) {
-          if (intent) caller?.queueOwnership?.cancel(intent);
-          throw error;
-        }
-      }
-      case 'follow_up': {
-        ensure('follow_up');
-        const slash = commandToken(command.message);
-        if (options.kind === 'child' && slash) throw new Error(`slash command /${slash} is not available on a child surface`);
-        if (options.kind === 'root') {
-          const intent = caller?.queueOwnership && caller.clientId ? caller.queueOwnership.intend('followUp', caller.clientId, command.message) : undefined;
-          try {
-            const result = await dispatchPrompt(session, command.message, undefined, 'followUp', () => undefined);
-            if (intent && result !== 'queued') caller?.queueOwnership?.cancel(intent);
-            return { outcome: result };
-          } catch (error) {
-            if (intent) caller?.queueOwnership?.cancel(intent);
-            throw error;
-          }
-        }
-        const intent = caller?.queueOwnership && caller.clientId ? caller.queueOwnership.intend('followUp', caller.clientId, command.message) : undefined;
-        try {
-          const result = await (session.followUp as unknown as (text: string) => Promise<'queued' | 'handled'>)(command.message);
-          if (intent && result !== 'queued') caller?.queueOwnership?.cancel(intent);
-          return { outcome: result };
-        } catch (error) {
-          if (intent) caller?.queueOwnership?.cancel(intent);
-          throw error;
-        }
-      }
+        return drainQueues(caller?.clientId ?? '');
       case 'abort': {
         ensure('stop');
-        if (options.kind === 'root' && options.rootAbort) return options.rootAbort(caller);
-        if (options.kind === 'child') {
-          if (!options.stop) throw new Error('child Stop is not available without owner control');
-          await options.stop({ path: options.path ?? [], incarnation: options.incarnation ?? '', expectedSessionId: session.sessionId });
-          // Older surface callers supplied a no-op stop hook while the owner
-          // control port was introduced. Keep that fixture-compatible path
-          // only when no guarded identity was supplied. Production child
-          // views always carry path + incarnation and never call abort here.
-          if (options.path === undefined && options.incarnation === undefined && session.isStreaming) await session.abort();
-          return { steering: [], followUp: [] };
+        if (options.kind === 'child' && !options.stop) throw new Error('child Stop is not available without owner control');
+        const drafts = drainQueues(caller?.clientId ?? '', true);
+        let watchdog: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            options.stop ? options.stop({ path: options.path ?? [], incarnation: options.incarnation ?? '', expectedSessionId: session.sessionId }) : session.abort(),
+            new Promise<never>((_, reject) => {
+              watchdog = setTimeout(() => reject(new Error('abort_timeout')), 30_000);
+            }),
+          ]);
+          return drafts;
+        } catch (error) {
+          throw new SessionAbortError(error, drafts);
+        } finally {
+          if (watchdog !== undefined) clearTimeout(watchdog);
         }
-        const owners = caller?.queueOwnership?.snapshot();
-        const drained = typeof native.clearQueue === 'function' ? native.clearQueue() : { steering: [], followUp: [] };
-        const drafts = owners && caller?.clientId ? attributeDrained(owners, drained, caller.clientId) : new Map();
-        await session.abort();
-        return drafts.get(caller?.clientId ?? '') ?? { steering: [], followUp: [] };
       }
       case 'bash': {
         ensure('bash');
-        if (options.kind === 'root' && options.rootBash) return { result: await options.rootBash(command, caller) };
-        if (options.kind === 'child' && capabilities.nativeBash?.admitted === false) throw new Error('native bash is not available on this child surface');
-        const bash = options.kind === 'child' && capabilities.nativeBash?.execute ? capabilities.nativeBash.execute : capabilities.executeBash;
-        if (!bash) throw new Error('native bash is not available');
-        const result = await bash(command.command, { id: command.id, excludeFromContext: command.excludeFromContext });
-        return { result };
-      }
-      case 'abort_bash': {
-        ensure('abort_bash');
-        if (options.kind === 'root' && options.rootAbortBash) {
-          await options.rootAbortBash(caller);
-          return undefined;
+        if (capabilities.nativeBash?.admitted === false) throw new Error('native bash is not available on this child surface');
+        if (session.isBashRunning || interaction.bashAdmission) throw new Error('bash_already_running');
+        const controller = new AbortController();
+        interaction.bashAdmission = controller;
+        try {
+          const execute = capabilities.nativeBash?.execute ?? capabilities.executeBash;
+          const result = await execute(command.command, { id: command.id, excludeFromContext: command.excludeFromContext, signal: controller.signal });
+          return { result };
+        } finally {
+          if (interaction.bashAdmission === controller) interaction.bashAdmission = undefined;
         }
-        const abortBash = options.kind === 'child' && capabilities.nativeBash?.abort ? capabilities.nativeBash.abort : session.abortBash;
-        if (!abortBash) throw new Error('native bash is not available');
-        await abortBash.call(options.kind === 'child' && capabilities.nativeBash?.abort ? capabilities.nativeBash : session);
-        return undefined;
       }
+      case 'abort_bash':
+        ensure('abort_bash');
+        interaction.bashAdmission?.abort();
+        await (capabilities.nativeBash?.abort ? capabilities.nativeBash.abort() : session.abortBash());
+        return undefined;
       case 'set_model': {
         ensure('set_model');
         const model = await capabilities.resolveModel(command.provider, command.modelId);
@@ -812,7 +835,7 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
       case 'set_auto_compaction':
         ensure('set_auto_compaction');
         session.setAutoCompactionEnabled(command.enabled);
-        return undefined;
+        return { enabled: native.autoCompactionEnabled ?? capabilities.getSettings().autoCompactionEnabled };
       case 'get_state':
         ensure('state');
         return { state: await getState() };
@@ -868,24 +891,9 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     return Array.isArray(levels) ? [...levels] : [];
   }
 
-  const getState = async (): Promise<SessionState> => stateFor(options.session, capabilities);
+  const getState = async (): Promise<SessionState> => stateFor(options.session, capabilities, navigation);
 
-  const getMeta = async (): Promise<SessionMeta> => {
-    const context = typeof options.session.getContextUsage === 'function' ? options.session.getContextUsage() : undefined;
-    const stats =
-      typeof options.session.getSessionStats === 'function'
-        ? options.session.getSessionStats()
-        : { cost: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
-    const manager = options.session.sessionManager as unknown as NativeSessionManagerExtras | undefined;
-    const rawEntries = manager?.getEntries?.();
-    const entries = Array.isArray(rawEntries) ? (rawEntries as SdkSessionEntry[]) : [];
-    return {
-      gitBranch: capabilities.getGitBranch(),
-      contextUsage: context ? { percent: context.percent, contextWindow: context.contextWindow } : null,
-      lifetimeCostUsd: typeof stats.cost === 'number' ? stats.cost : 0,
-      usageBreakdown: projectSessionUsage(entries, stats),
-    };
-  };
+  const getMeta = async (): Promise<SessionMeta> => makeSessionMeta(options.session, capabilities.getGitBranch());
 
   const getTree = (): { tree: PimoteTreeNode[]; currentLeafId: string | null } => {
     const manager = options.session.sessionManager as unknown as NativeSessionManagerExtras | undefined;
@@ -899,10 +907,6 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     let commands: readonly CommandInfo[] = [];
     if (capabilities.getCommands) commands = await capabilities.getCommands();
     if (options.kind === 'root') return commands;
-    // A missing operation projection is the pre-provider compatibility shape.
-    // Keep its descriptors for old callers; provider-backed child leases always
-    // carry the explicit narrow projection and take the filtered path below.
-    if (capabilities.operations === undefined) return commands;
     const filtered = commands.filter((command) => SAFE_CHILD_COMMANDS.has(command.name.replace(/^\//, '').toLowerCase()));
     const names = new Set(filtered.map((command) => command.name.replace(/^\//, '').toLowerCase()));
     const builtins: CommandInfo[] = [
@@ -917,8 +921,7 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
       if (!allowedOperation(options, capabilities, 'completion')) throw new Error('completion is not available on this child surface');
     }
     const normalized = commandName.replace(/^\//, '').toLowerCase();
-    if (options.kind === 'child' && capabilities.operations !== undefined && !SAFE_CHILD_COMMANDS.has(normalized))
-      throw new Error(`command ${commandName} is not available on a child surface`);
+    if (options.kind === 'child' && !SAFE_CHILD_COMMANDS.has(normalized)) throw new Error(`command ${commandName} is not available on a child surface`);
     return (await capabilities.completeArgs(commandName.replace(/^\//, ''), prefix)) ?? [];
   };
 
@@ -927,10 +930,6 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
       if (!allowedOperation(options, capabilities, 'completion')) throw new Error('completion is not available on this child surface');
     }
     return (await capabilities.completeFileRefs(prefix)) ?? [];
-  };
-
-  const acceptNativeEvent = (event: IncomingSdkEvent): void => {
-    mapAndReceive(event);
   };
 
   const refreshSnapshot = (): SessionSurfaceSnapshot => {
@@ -943,13 +942,16 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     providerSnapshot = subagentProvider?.snapshot?.() ?? providerSnapshot;
     const active = activeOperationsForSurface(providerSnapshot?.activeOperations);
     if (projector && active.length > 0) projector.hydrateActiveOperations?.(active);
-    return snapshotFor(options, capabilities, eventBuffer.currentCursor, projector, customEntryVisible);
+    return snapshotFor(options, capabilities, eventBuffer.currentCursor, projector, customEntryVisible, navigation);
   };
 
   const initialize = async (): Promise<SessionSurfaceSnapshot> => {
     if (closed) throw new Error('session surface is closed');
-    if (initialized) return snapshotFor(options, capabilities, eventBuffer.currentCursor, projector, customEntryVisible);
+    if (initialized) return snapshotFor(options, capabilities, eventBuffer.currentCursor, projector, customEntryVisible, navigation);
     ensureSubscription();
+    if (options.session.getSteeringMessages) ownership.syncFromPi('steering', options.session.getSteeringMessages());
+    const followUp = (options.session as BorrowedAgentSession & NativeSessionExtras).getFollowUpMessages;
+    if (followUp) ownership.syncFromPi('followUp', followUp.call(options.session));
     if (subagentProvider && !providerUnsubscribe) providerUnsubscribe = subagentProvider.subscribe(receiveProviderEvent as never);
     initializing = true;
     try {
@@ -978,7 +980,7 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
       providerSnapshot = provider?.snapshot?.() ?? providerState;
       const hydratedActive = activeOperationsForSurface(providerSnapshot?.activeOperations);
       if (projector && hydratedActive.length > 0) projector.hydrateActiveOperations?.(hydratedActive);
-      const snapshot = snapshotFor(options, capabilities, eventBuffer.currentCursor, projector, customEntryVisible);
+      const snapshot = snapshotFor(options, capabilities, eventBuffer.currentCursor, projector, customEntryVisible, navigation);
       initialized = true;
       const pending = staged;
       staged = [];
@@ -994,34 +996,30 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     }
   };
 
-  const attachObserver = async (observerId: string, after?: number): Promise<SessionSurfaceAttachment> => {
-    const observer = { cursor: after ?? eventBuffer.currentCursor, active: true };
-    observers.set(observerId, observer);
-    let snapshot: SessionSurfaceSnapshot | undefined;
-    let events: readonly PimoteSessionEvent[] | undefined;
-    if (after !== undefined) {
-      const replay = eventBuffer.replay(after);
-      if (replay === null) {
-        snapshot = snapshotFor(options, capabilities, eventBuffer.currentCursor, projector, customEntryVisible);
-        observer.cursor = eventBuffer.currentCursor;
-      } else {
-        events = replay;
-        observer.cursor = eventBuffer.currentCursor;
-      }
+  const initialization: { flight?: Promise<SessionSurfaceSnapshot> } = {};
+  const initializeOnce = (): Promise<SessionSurfaceSnapshot> => {
+    if (initialization.flight) return initialization.flight;
+    const flight = initialize();
+    initialization.flight = flight;
+    void flight
+      .finally(() => {
+        if (initialization.flight === flight) initialization.flight = undefined;
+      })
+      .catch(() => {});
+    return flight;
+  };
+
+  const sync = (after?: number): SessionSurfaceSync => {
+    if (closed || !initialized) throw new Error('session surface is not initialized');
+    const state = stateFor(options.session, capabilities, navigation);
+    const events = after === undefined || !Number.isSafeInteger(after) ? null : eventBuffer.replay(after);
+    const missedLiveState = after !== undefined && after < eventBuffer.currentCursor && (state.isStreaming || (projector?.snapshot().activeOperations.length ?? 0) > 0);
+    if (events === null || missedLiveState) {
+      const snapshot = snapshotFor(options, capabilities, eventBuffer.currentCursor, projector, customEntryVisible, navigation);
+      snapshot.cursor = eventBuffer.currentCursor;
+      return { cursor: snapshot.cursor, state: snapshot.state, snapshot };
     }
-    return {
-      observerId,
-      cursor: observer.cursor,
-      ...(snapshot ? { snapshot } : {}),
-      ...(events ? { events } : {}),
-      release: () => {
-        const current = observers.get(observerId);
-        if (current === observer) {
-          observer.active = false;
-          observers.delete(observerId);
-        }
-      },
-    };
+    return { cursor: eventBuffer.currentCursor, state, events };
   };
 
   const setSubagentProvider = async (provider: Pick<SubagentPresentationProvider, 'rehydrate' | 'snapshot' | 'subscribe' | 'replay'>): Promise<void> => {
@@ -1064,10 +1062,9 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
       return eventBuffer.currentCursor;
     },
     snapshot() {
-      return snapshotFor(options, capabilities, eventBuffer.currentCursor, projector, customEntryVisible);
+      return snapshotFor(options, capabilities, eventBuffer.currentCursor, projector, customEntryVisible, navigation);
     },
-    initialize,
-    acceptNativeEvent,
+    initialize: initializeOnce,
     acceptProviderEvent(event) {
       if (!providerEventBelongsToSurface(event)) return;
       const projected = projector?.acceptProviderEvent(event) ?? [];
@@ -1088,17 +1085,25 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
       providerUnsubscribe?.();
       providerUnsubscribe = undefined;
       listeners.clear();
-      observers.clear();
       staged = [];
     },
-    attachObserver,
+    sync,
     replay(after) {
       const cursor = after ?? eventBuffer.currentCursor;
       const events = eventBuffer.replay(cursor);
       if (events === null) return { kind: 'snapshot_required', reason: 'history_unavailable' };
       return { kind: 'events', cursor: eventBuffer.currentCursor, events };
     },
-    dispatch,
+    async dispatch(command, caller) {
+      const result = await dispatch(command, caller);
+      if (['set_model', 'cycle_model', 'set_thinking_level', 'cycle_thinking_level', 'set_auto_compaction'].includes(command.type)) refreshSettings();
+      return result;
+    },
+    refreshSettings,
+    restoreQueuedDrafts,
+    get isBashDispatching() {
+      return interaction.bashAdmission !== undefined;
+    },
     getState,
     getMeta,
     async getMessages() {

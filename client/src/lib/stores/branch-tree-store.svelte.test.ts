@@ -150,60 +150,34 @@ describe('BranchTreeStore', () => {
     expect((harness.commands[1] as { label?: string }).label).toBeUndefined();
   });
 
-  it('invalidates a child tree cache and closes it after a child snapshot resync', async () => {
-    const surface = { rootSessionId: 'root', path: ['worker'] };
-    await store.open('root', undefined, surface);
-    harness.emit({
-      type: 'subagent_view_event',
-      sessionId: 'root',
-      childSessionId: 'child',
-      path: ['worker'],
-      incarnation: 'inc',
-      viewCursor: 1,
-      event: { type: 'tree_navigation_start', sessionId: 'child', cursor: 1, targetId: 'u1', summarizing: false },
-    } as PimoteEvent);
-    harness.emit({
-      type: 'subagent_view_event',
-      sessionId: 'root',
-      childSessionId: 'child',
-      path: ['worker'],
-      incarnation: 'inc',
-      viewCursor: 2,
-      event: { type: 'tree_navigation_end', sessionId: 'child', cursor: 2 },
-    } as PimoteEvent);
-    expect(store.state.busy).toBe(false);
-    harness.emit({
-      type: 'subagent_view_snapshot',
-      sessionId: 'root',
-      childSessionId: 'child',
-      path: ['worker'],
-      incarnation: 'inc',
-      viewCursor: 3,
-      state: {} as never,
-      messages: [],
-    });
-    expect(store.state.open).toBe(false);
-    await store.open('root', undefined, surface);
-    expect(harness.commands.filter((command) => command.type === 'get_tree')).toHaveLength(2);
-  });
-
-  it('invalidates the session cache on full resync and tracks tree navigation lifecycle', async () => {
-    await store.open('session-1');
-    harness.emit({ type: 'tree_navigation_start', sessionId: 'session-1', cursor: 1, targetId: 'u1', summarizing: true });
+  it.each(['root', 'child'] as const)('%s resync refreshes the tree and closes a completed navigation', async (kind) => {
+    const sessionId = kind === 'root' ? 'root' : 'child';
+    await store.open(sessionId);
+    const emit = (event: PimoteEvent) =>
+      harness.emit(
+        kind === 'root'
+          ? event
+          : ({
+              type: 'subagent_view_event',
+              sessionId: 'root',
+              childSessionId: 'child',
+              path: ['worker'],
+              incarnation: 'inc',
+              viewCursor: 1,
+              event,
+            } as PimoteEvent),
+      );
+    emit({ type: 'tree_navigation_start', sessionId, cursor: 1, targetId: 'u1', summarizing: true });
     expect(store.state.busy).toBe(true);
-
-    harness.emit({ type: 'tree_navigation_end', sessionId: 'session-1', cursor: 2 });
+    emit({ type: 'tree_navigation_end', sessionId, cursor: 2 });
     expect(store.state.busy).toBe(false);
-
-    harness.emit({
-      type: 'full_resync',
-      sessionId: 'session-1',
-      state: {} as never,
-      messages: [],
-    });
+    emit({ type: 'full_resync', sessionId, state: {} as never, messages: [] });
     expect(store.state.open).toBe(false);
 
-    await store.open('session-1');
-    expect(harness.commands.filter((command) => command.type === 'get_tree')).toHaveLength(2);
+    const updated = { ...TREE[0], id: 'new-leaf', conversationText: 'New continuation.' };
+    vi.mocked(harness.transport.send).mockResolvedValue({ id: 'refreshed', success: true, data: { tree: [updated], currentLeafId: 'new-leaf' } });
+    await store.open(sessionId);
+    expect(store.state.currentLeafId).toBe('new-leaf');
+    expect(store.state.tree[0].conversationText).toBe('New continuation.');
   });
 });

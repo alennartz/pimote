@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 describe('PendingSteeringMessages draft restoration', () => {
-  it('shows the selected child queue from view events, not the root queue', async () => {
+  it('pulls the selected child queue back without changing the root queue', async () => {
     const session = setupSession();
     session.pendingSteeringMessages = ['root message'];
     sessionRegistry.handleEvent({
@@ -48,7 +48,7 @@ describe('PendingSteeringMessages draft restoration', () => {
     const component = mount(PendingSteeringMessages, { target });
     await tick();
     expect(target.textContent).toContain('queued before opening');
-    expect(target.querySelector('button')).toBeNull();
+    expect(target.querySelector('button')?.title).toBe('Pull back pending steering messages for editing');
     sessionRegistry.handleEvent({
       type: 'subagent_view_event',
       sessionId: 's1',
@@ -61,17 +61,13 @@ describe('PendingSteeringMessages draft restoration', () => {
     await tick();
     expect(target.textContent).toContain('child message');
     expect(target.textContent).not.toContain('root message');
-    sessionRegistry.handleEvent({
-      type: 'subagent_view_event',
-      sessionId: 's1',
-      childSessionId: 'child',
-      path: ['worker'],
-      incarnation: 'inc-1',
-      viewCursor: 3,
-      event: { type: 'queue_update', sessionId: 'child', cursor: 3, steering: [], followUp: [] },
-    });
+    sessionRegistry.getSubagentAttachment('s1', ['worker'])!.draftText = 'child draft';
+    vi.spyOn(connection, 'send').mockResolvedValue({ id: 'dequeue-child', success: true, data: { steering: ['child message'], followUp: [] } });
+    target.querySelector('button')!.click();
     await tick();
-    expect(target.textContent).not.toContain('child message');
+    expect(sessionRegistry.getSubagentAttachment('s1', ['worker'])?.draftText).toBe('child message\nchild draft');
+    expect(session.pendingSteeringMessages).toEqual(['root message']);
+    await vi.waitFor(() => expect(target.textContent).not.toContain('child message'));
     await unmount(component);
   });
 

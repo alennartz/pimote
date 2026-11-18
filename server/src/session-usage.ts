@@ -56,7 +56,10 @@ export function projectSessionUsage(entries: readonly SessionEntry[], stats: Pic
 
 /** Build the compact metadata snapshot piggybacked on lifecycle and open
  *  responses, using Pi's authoritative session totals. */
-export function makeSessionMeta(session: AgentSession, gitBranch: string | null): SessionMeta {
+export function makeSessionMeta(
+  session: Pick<AgentSession, 'getContextUsage' | 'getSessionStats'> & { sessionManager: Pick<AgentSession['sessionManager'], 'getEntries'> },
+  gitBranch: string | null,
+): SessionMeta {
   const contextUsage = session.getContextUsage?.() ?? null;
   const stats = session.getSessionStats?.() ?? ({ cost: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } as const);
   const usageBreakdown = projectSessionUsage(session.sessionManager.getEntries?.() ?? [], stats);

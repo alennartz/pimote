@@ -6,13 +6,8 @@ import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { connection } from './connection.svelte.js';
 import { sessionRegistry } from './session-registry.svelte.js';
 
-export interface BranchTreeSurface {
-  readonly rootSessionId: string;
-  readonly path: readonly string[];
-}
-
 export interface BranchTreeTransport {
-  send(command: PimoteCommand, surface?: BranchTreeSurface | null): Promise<PimoteResponse>;
+  send(command: PimoteCommand): Promise<PimoteResponse>;
   onEvent(listener: (event: PimoteEvent) => void): () => void;
 }
 
@@ -21,7 +16,6 @@ export type BranchSearchScope = 'anchors' | 'all';
 export interface BranchTreeState {
   open: boolean;
   sessionId: string | null;
-  surface: BranchTreeSurface | null;
   tree: PimoteTreeNode[];
   currentLeafId: string | null;
   busy: boolean;
@@ -67,10 +61,6 @@ function cloneTree(tree: readonly PimoteTreeNode[]): PimoteTreeNode[] {
 
 function cloneSnapshot(snapshot: GetTreeResponseData): GetTreeResponseData {
   return { tree: cloneTree(snapshot.tree), currentLeafId: snapshot.currentLeafId };
-}
-
-function cacheKey(sessionId: string, surface?: BranchTreeSurface | null): string {
-  return surface ? `${sessionId}\u0000${JSON.stringify(surface.path)}` : sessionId;
 }
 
 function isConversationNode(node: PimoteTreeNode): boolean {
@@ -120,7 +110,6 @@ export class BranchTreeStore {
   state: BranchTreeState = $state({
     open: false,
     sessionId: null,
-    surface: null,
     tree: [],
     currentLeafId: null,
     busy: false,
@@ -146,23 +135,23 @@ export class BranchTreeStore {
   }
 
   /** Return the reactive cache revision for a session surface. */
-  cacheVersion(sessionId: string, surface?: BranchTreeSurface | null): number {
-    return this.cacheVersions.get(cacheKey(sessionId, surface)) ?? 0;
+  cacheVersion(sessionId: string): number {
+    return this.cacheVersions.get(sessionId) ?? 0;
   }
 
   /** Read a session snapshot without opening the explorer. */
-  async load(sessionId: string, surface?: BranchTreeSurface | null): Promise<GetTreeResponseData | null> {
-    const key = cacheKey(sessionId, surface);
+  async load(sessionId: string): Promise<GetTreeResponseData | null> {
+    const key = sessionId;
     const cached = this.cache.get(key);
     if (cached) {
       if (this.state.sessionId === sessionId) this.state.error = null;
       return cloneSnapshot(cached);
     }
 
-    const requestVersion = this.cacheVersion(sessionId, surface);
+    const requestVersion = this.cacheVersion(sessionId);
     try {
-      const response = await this._transport.send({ type: 'get_tree', sessionId }, surface);
-      if (this.cacheVersion(sessionId, surface) !== requestVersion) return this.load(sessionId, surface);
+      const response = await this._transport.send({ type: 'get_tree', sessionId });
+      if (this.cacheVersion(sessionId) !== requestVersion) return this.load(sessionId);
       if (!response.success || !response.data) {
         if (this.state.sessionId === sessionId) this.state.error = response.error ?? 'Unable to load the branch tree.';
         return null;
@@ -177,26 +166,26 @@ export class BranchTreeStore {
       if (this.state.sessionId === sessionId) this.state.error = null;
       return cloneSnapshot(snapshot);
     } catch (error) {
-      if (this.cacheVersion(sessionId, surface) !== requestVersion) return this.load(sessionId, surface);
+      if (this.cacheVersion(sessionId) !== requestVersion) return this.load(sessionId);
       if (this.state.sessionId === sessionId) this.state.error = error instanceof Error ? error.message : 'Unable to load the branch tree.';
       return null;
     }
   }
 
   /** Open a tree, using a supplied snapshot or the per-surface cache. */
-  async open(sessionId: string, suppliedSnapshot?: GetTreeResponseData, surface?: BranchTreeSurface | null): Promise<void> {
-    this.resetForOpen(sessionId, surface);
+  async open(sessionId: string, suppliedSnapshot?: GetTreeResponseData): Promise<void> {
+    this.resetForOpen(sessionId);
     const generation = this.openGeneration;
-    if (suppliedSnapshot) this.cache.set(cacheKey(sessionId, surface), cloneSnapshot(suppliedSnapshot));
+    if (suppliedSnapshot) this.cache.set(sessionId, cloneSnapshot(suppliedSnapshot));
 
-    const snapshot = suppliedSnapshot ? cloneSnapshot(suppliedSnapshot) : await this.load(sessionId, surface);
+    const snapshot = suppliedSnapshot ? cloneSnapshot(suppliedSnapshot) : await this.load(sessionId);
     if (!snapshot || generation !== this.openGeneration || !this.state.open || this.state.sessionId !== sessionId) return;
     this.publishSnapshot(sessionId, snapshot);
   }
 
   /** Open the explorer and expose the segment containing an entry. */
-  async openFocused(sessionId: string, entryId: string, suppliedSnapshot?: GetTreeResponseData, surface?: BranchTreeSurface | null): Promise<void> {
-    await this.open(sessionId, suppliedSnapshot, surface);
+  async openFocused(sessionId: string, entryId: string, suppliedSnapshot?: GetTreeResponseData): Promise<void> {
+    await this.open(sessionId, suppliedSnapshot);
     if (!this.state.open || this.state.sessionId !== sessionId || this.state.error) return;
 
     this.state.focusedEntryId = entryId;
@@ -208,7 +197,6 @@ export class BranchTreeStore {
     this.openGeneration += 1;
     this.state.open = false;
     this.state.sessionId = null;
-    this.state.surface = null;
     this.state.tree = [];
     this.state.currentLeafId = null;
     this.state.busy = false;
@@ -263,16 +251,11 @@ export class BranchTreeStore {
       this.state.error = 'No session is open.';
       return null;
     }
-    return this.navigateInSession(sessionId, entryId, opts, this.state.surface);
+    return this.navigateInSession(sessionId, entryId, opts);
   }
 
   /** Navigate a session without opening or changing the explorer selection. */
-  async navigateInSession(
-    sessionId: string,
-    entryId: string,
-    opts?: { compactionPrompt?: string },
-    surface?: BranchTreeSurface | null,
-  ): Promise<{ cancelled: boolean; editorText?: string } | null> {
+  async navigateInSession(sessionId: string, entryId: string, opts?: { compactionPrompt?: string }): Promise<{ cancelled: boolean; editorText?: string } | null> {
     const command: PimoteCommand = {
       type: 'navigate_tree',
       sessionId,
@@ -285,20 +268,19 @@ export class BranchTreeStore {
     if (tracksBusy) this.state.busy = true;
     if (this.state.sessionId === sessionId) this.state.error = null;
     try {
-      const response = await this._transport.send(command, surface ?? (this.state.sessionId === sessionId ? this.state.surface : null));
+      const response = await this._transport.send(command);
       if (!response.success || !response.data) {
         if (this.state.sessionId === sessionId) this.state.error = response.error ?? 'Navigation failed.';
-        this.clearNavigationFailure(sessionId, surface ?? (this.state.sessionId === sessionId ? this.state.surface : null));
+        this.clearNavigationFailure(sessionId);
         return null;
       }
       const result = navigationResult(response.data);
-      if (result.cancelled) this.clearNavigationFailure(sessionId, surface ?? (this.state.sessionId === sessionId ? this.state.surface : null));
-      else if (tracksBusy && this.state.sessionId === sessionId && !this.navigationBySession.get(cacheKey(sessionId, surface ?? this.state.surface))?.inProgress)
-        this.state.busy = false;
+      if (result.cancelled) this.clearNavigationFailure(sessionId);
+      else if (tracksBusy && this.state.sessionId === sessionId && !this.navigationBySession.get(sessionId)?.inProgress) this.state.busy = false;
       return result;
     } catch (error) {
       if (this.state.sessionId === sessionId) this.state.error = error instanceof Error ? error.message : 'Navigation failed.';
-      this.clearNavigationFailure(sessionId, surface ?? (this.state.sessionId === sessionId ? this.state.surface : null));
+      this.clearNavigationFailure(sessionId);
       return null;
     }
   }
@@ -312,22 +294,19 @@ export class BranchTreeStore {
 
     const normalizedLabel = label === '' ? undefined : label;
     try {
-      const response = await this._transport.send(
-        {
-          type: 'set_tree_label',
-          sessionId,
-          entryId,
-          ...(normalizedLabel === undefined ? {} : { label: normalizedLabel }),
-        },
-        this.state.sessionId === sessionId ? this.state.surface : null,
-      );
+      const response = await this._transport.send({
+        type: 'set_tree_label',
+        sessionId,
+        entryId,
+        ...(normalizedLabel === undefined ? {} : { label: normalizedLabel }),
+      });
       if (!response.success) {
         if (this.state.sessionId === sessionId) this.state.error = response.error ?? 'Unable to set the branch label.';
         return;
       }
 
       const labelTimestamp = new SvelteDate().toISOString();
-      const key = cacheKey(sessionId, this.state.sessionId === sessionId ? this.state.surface : null);
+      const key = sessionId;
       const cached = this.cache.get(key);
       const baseTree = cached?.tree ?? this.state.tree;
       const nextTree = updateTreeNodeLabel(baseTree, entryId, normalizedLabel, labelTimestamp);
@@ -349,11 +328,10 @@ export class BranchTreeStore {
     }
   }
 
-  private resetForOpen(sessionId: string, surface?: BranchTreeSurface | null): void {
+  private resetForOpen(sessionId: string): void {
     this.openGeneration += 1;
     this.state.open = true;
     this.state.sessionId = sessionId;
-    this.state.surface = surface ? { rootSessionId: surface.rootSessionId, path: [...surface.path] } : null;
     this.state.tree = [];
     this.state.currentLeafId = null;
     this.state.busy = false;
@@ -383,76 +361,45 @@ export class BranchTreeStore {
     );
   }
 
-  private clearNavigationFailure(sessionId: string, surface?: BranchTreeSurface | null): void {
-    this.navigationBySession.delete(cacheKey(sessionId, surface));
+  private clearNavigationFailure(sessionId: string): void {
+    this.navigationBySession.delete(sessionId);
     if (this.state.sessionId === sessionId) this.state.busy = false;
   }
 
-  private invalidateCache(sessionId: string, surface?: BranchTreeSurface | null): void {
-    const key = cacheKey(sessionId, surface);
-    this.cache.delete(key);
-    this.cacheVersions.set(key, this.cacheVersion(sessionId, surface) + 1);
+  private invalidateCache(sessionId: string): void {
+    this.cache.delete(sessionId);
+    this.cacheVersions.set(sessionId, this.cacheVersion(sessionId) + 1);
   }
 
-  private receiveEvent(event: PimoteEvent): void {
+  private receiveEvent(input: PimoteEvent): void {
+    const event: PimoteEvent =
+      input.type === 'subagent_view_event'
+        ? { ...input.event, sessionId: input.childSessionId }
+        : input.type === 'subagent_view_snapshot'
+          ? { ...input, type: 'full_resync', sessionId: input.childSessionId }
+          : input;
     if (!('sessionId' in event) || typeof event.sessionId !== 'string') return;
-    if (event.type === 'subagent_view_snapshot') {
-      const currentSurface = this.state.surface;
-      if (!currentSurface || event.sessionId !== currentSurface.rootSessionId || JSON.stringify(event.path) !== JSON.stringify(currentSurface.path)) return;
-      const sessionId = currentSurface.rootSessionId;
-      this.invalidateCache(sessionId, currentSurface);
-      const navigation = this.navigationBySession.get(cacheKey(sessionId, currentSurface));
-      if (navigation?.closeOnResync) {
-        this.navigationBySession.delete(cacheKey(sessionId, currentSurface));
-        if (this.state.sessionId === sessionId) this.close();
-      } else if (this.state.sessionId === sessionId && navigation?.inProgress && navigation.summarizing) {
-        this.state.busy = true;
-      }
-      return;
-    }
-    let received: PimoteEvent = event as PimoteEvent;
-    let surface: BranchTreeSurface | null = null;
-    if (event.type === 'subagent_view_event') {
-      const currentSurface = this.state.surface;
-      if (!currentSurface || event.sessionId !== currentSurface.rootSessionId || JSON.stringify(event.path) !== JSON.stringify(currentSurface.path)) return;
-      received = event.event as PimoteEvent;
-      surface = currentSurface;
-    }
-    const sessionId = surface?.rootSessionId ?? event.sessionId;
-
-    if (received.type === 'tree_navigation_start') {
-      this.navigationBySession.set(cacheKey(sessionId, surface), {
-        inProgress: true,
-        summarizing: received.summarizing,
-        closeOnResync: false,
-      });
+    const sessionId = event.sessionId;
+    if (event.type === 'tree_navigation_start') {
+      this.navigationBySession.set(sessionId, { inProgress: true, summarizing: event.summarizing, closeOnResync: false });
       if (this.state.sessionId === sessionId) this.state.busy = true;
       return;
     }
-
-    if (received.type === 'tree_navigation_end') {
-      this.navigationBySession.set(cacheKey(sessionId, surface), {
-        inProgress: false,
-        summarizing: false,
-        closeOnResync: true,
-      });
+    if (event.type === 'tree_navigation_end') {
+      this.navigationBySession.set(sessionId, { inProgress: false, summarizing: false, closeOnResync: true });
       if (this.state.sessionId === sessionId) this.state.busy = false;
       return;
     }
-
-    if (received.type === 'agent_end') {
-      this.invalidateCache(sessionId, surface);
+    if (event.type === 'agent_end') {
+      this.invalidateCache(sessionId);
       return;
     }
-
-    if (received.type !== 'full_resync') return;
-
-    this.invalidateCache(sessionId, surface);
-    const navigation = this.navigationBySession.get(cacheKey(sessionId, surface));
+    if (event.type !== 'full_resync') return;
+    this.invalidateCache(sessionId);
+    const navigation = this.navigationBySession.get(sessionId);
     if (!navigation) return;
-
     if (navigation.closeOnResync) {
-      this.navigationBySession.delete(cacheKey(sessionId, surface));
+      this.navigationBySession.delete(sessionId);
       if (this.state.sessionId === sessionId) this.close();
     } else if (this.state.sessionId === sessionId && navigation.inProgress && navigation.summarizing) {
       this.state.busy = true;
@@ -461,9 +408,7 @@ export class BranchTreeStore {
 }
 
 export const branchTreeStore = new BranchTreeStore({
-  send: (command, surface) => {
-    if (surface) return sessionRegistry.sendSubagentCommand(surface.rootSessionId, surface.path, command as unknown as Record<string, unknown>);
-    return connection.send(command);
-  },
+  send: (command) =>
+    command.sessionId ? sessionRegistry.sendSurfaceCommand(command.sessionId, command as unknown as Record<string, unknown>) : Promise.reject(new Error('sessionId is required')),
   onEvent: (listener) => connection.onEvent(listener),
 });

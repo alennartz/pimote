@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { CommandInfo, AutocompleteResponseItem } from '@pimote/shared';
   import { fuzzyFilter } from '$lib/fuzzy.js';
-  import { connection } from '$lib/stores/connection.svelte.js';
+  import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
 
   interface Props {
     items: CommandInfo[];
@@ -10,14 +10,11 @@
     mode: 'command' | 'args' | 'fileRefs';
     sessionId: string;
     commandName: string;
-    /** Surface-local completion keeps child command allowlists on the server. */
-    completeArgs?: (commandName: string, prefix: string) => Promise<AutocompleteResponseItem[]>;
-    completeFileRefs?: (prefix: string) => Promise<AutocompleteResponseItem[]>;
     onselect: (item: { name: string; value?: string; label?: string; description?: string }) => void;
     ondismiss: () => void;
   }
 
-  let { items, query, visible, mode, sessionId, commandName, completeArgs, completeFileRefs, onselect, ondismiss }: Props = $props();
+  let { items, query, visible, mode, sessionId, commandName, onselect, ondismiss }: Props = $props();
 
   let filteredCommands = $derived.by(() => {
     if (mode !== 'command') return [];
@@ -39,30 +36,11 @@
     serverDebounceTimer = setTimeout(async () => {
       const seq = ++serverRequestSeq;
       try {
-        if (currentMode === 'fileRefs' && completeFileRefs) {
-          const items = await completeFileRefs(currentQuery);
-          if (seq !== serverRequestSeq) return;
-          serverItems = items;
-          return;
-        }
-        if (currentMode === 'args' && completeArgs) {
-          const items = await completeArgs(currentCommandName, currentQuery);
-          if (seq !== serverRequestSeq) return;
-          serverItems = items;
-          return;
-        }
-        const res = await (currentMode === 'fileRefs'
-          ? connection.send({
-              type: 'complete_file_refs',
-              sessionId: currentSessionId,
-              prefix: currentQuery,
-            })
-          : connection.send({
-              type: 'complete_args',
-              sessionId: currentSessionId,
-              commandName: currentCommandName,
-              prefix: currentQuery,
-            }));
+        const res = await sessionRegistry.sendSurfaceCommand(currentSessionId, {
+          type: currentMode === 'fileRefs' ? 'complete_file_refs' : 'complete_args',
+          ...(currentMode === 'args' ? { commandName: currentCommandName } : {}),
+          prefix: currentQuery,
+        });
         if (seq !== serverRequestSeq) return;
         if (res.success && res.data) {
           const result = (res.data as { items: AutocompleteResponseItem[] | null }).items;

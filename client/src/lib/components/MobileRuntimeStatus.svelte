@@ -9,7 +9,7 @@
     className: string;
   }
 
-  const navigationIndicator = createDelayedIndicator(() => sessionRegistry.viewed?.isNavigatingTree ?? false);
+  const navigationIndicator = createDelayedIndicator(() => sessionRegistry.viewedConversation?.isNavigatingTree ?? false);
 
   $effect(() => {
     navigationIndicator.update();
@@ -18,11 +18,9 @@
 
   let chips = $derived.by(() => {
     const next: StatusChip[] = [];
-    const session = sessionRegistry.viewed;
-    const child = sessionRegistry.viewedSubagentAttachment;
-    const isCompacting = child?.state.isCompacting ?? session?.isCompacting;
+    const session = sessionRegistry.viewedConversation;
 
-    if (isCompacting) {
+    if (session?.isCompacting) {
       next.push({
         label: 'Compacting…',
         className: 'border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-400',

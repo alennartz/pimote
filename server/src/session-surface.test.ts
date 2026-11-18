@@ -104,6 +104,14 @@ function fixture() {
       publish({ type: 'queue_update', steering: data.steering, followUp: data.followUp });
       return 'queued';
     },
+    getSteeringMessages: () => [...data.steering],
+    clearQueue() {
+      const drained = { steering: data.steering, followUp: data.followUp };
+      data.steering = [];
+      data.followUp = [];
+      publish({ type: 'queue_update', steering: data.steering, followUp: data.followUp });
+      return drained;
+    },
     async abort() {
       data.streaming = false;
     },
@@ -144,7 +152,7 @@ function fixture() {
         snapshotRead();
         return result;
       },
-      buildContextEntries: () => [compacted, recent],
+      buildContextEntries: () => data.branch,
       getTree: () => [{ entry: old, label: data.label, children: [{ entry: recent, children: [] }] }],
       getLeafId: () => data.leaf,
       appendLabelChange: (_id: string, label?: string) => {
@@ -153,24 +161,43 @@ function fixture() {
     },
   } as unknown as BorrowedAgentSession;
   const capabilities: SessionSurfaceCapabilities = {
+    operations: [
+      'prompt',
+      'steer',
+      'follow_up',
+      'stop',
+      'bash',
+      'abort_bash',
+      'set_model',
+      'cycle_model',
+      'set_thinking_level',
+      'cycle_thinking_level',
+      'set_auto_compaction',
+      'compact',
+      'tree',
+      'completion',
+      'state',
+      'meta',
+    ],
     resolveModel: async (provider, id) =>
       provider === 'test' && id === 'model-b'
         ? ({ provider: 'test', id: 'model-b', name: 'Model B' } as Awaited<ReturnType<SessionSurfaceCapabilities['resolveModel']>>)
         : undefined,
     getSettings: () => ({ availableThinkingLevels: ['off', 'high'], autoCompactionEnabled: data.autoCompactionEnabled }),
-    getCommands: async () => [{ name: 'review', description: 'Review changes', hasArgCompletions: true }],
+    getCommands: async () => [{ name: 'tree', description: 'Navigate history', hasArgCompletions: true }],
     completeArgs: async () => [{ value: 'src', label: 'src' }],
     completeFileRefs: async () => [{ value: '@src/main.ts', label: 'src/main.ts' }],
     executeBash: async (command) => ({ output: `ran ${command}` }),
     getGitBranch: () => null,
   };
-  const stop = async (..._args: readonly unknown[]) => undefined;
+  const stop = async () => native.abort();
   const surface = createSessionSurface({
     sessionId: 'child-session',
     session: native,
     kind: 'child',
     capabilities,
-    parentCursor: 17,
+    path: ['worker'],
+    incarnation: 'inc',
     stop,
   } as SessionSurfaceOptions & { stop: typeof stop });
   return { surface, data, publish, native, capabilities };
@@ -236,7 +263,7 @@ describe('SessionSurface', () => {
       kind,
       capabilities: f.capabilities,
       subagentProvider: provider,
-      subagentPath: kind === 'root' ? [] : ['worker'],
+      path: kind === 'root' ? [] : ['worker'],
     });
     const live: PimoteSessionEvent[] = [];
     surface.subscribe((item) => live.push(item));
@@ -318,7 +345,7 @@ describe('SessionSurface', () => {
       kind: 'root',
       capabilities: root.capabilities,
       subagentProvider: provider,
-      subagentPath: [],
+      path: [],
     });
     const makeChildSurface = () =>
       createSessionSurface({
@@ -327,7 +354,7 @@ describe('SessionSurface', () => {
         kind: 'child',
         capabilities: child.capabilities,
         subagentProvider: provider,
-        subagentPath: ['worker'],
+        path: ['worker'],
       });
     const childSurface = makeChildSurface();
     await rootSurface.initialize();
@@ -447,7 +474,7 @@ describe('SessionSurface', () => {
       kind: 'child',
       capabilities: f.capabilities,
       subagentProvider: provider,
-      subagentPath: ['worker'],
+      path: ['worker'],
     });
     const live: PimoteSessionEvent[] = [];
     surface.subscribe((event) => live.push(event));
@@ -509,7 +536,7 @@ describe('SessionSurface', () => {
       kind: 'child',
       capabilities: f.capabilities,
       subagentProvider: provider,
-      subagentPath: ['worker'],
+      path: ['worker'],
     });
     const snapshot = await surface.initialize();
     expect(snapshot.messages.some((message) => message.content.some((block) => block.type === 'subagent'))).toBe(false);
@@ -540,7 +567,7 @@ describe('SessionSurface', () => {
       kind: 'child',
       capabilities: f.capabilities,
       subagentProvider: provider,
-      subagentPath: ['worker'],
+      path: ['worker'],
     });
     const live: PimoteSessionEvent[] = [];
     surface.subscribe((event) => live.push(event));
@@ -667,29 +694,24 @@ describe('SessionSurface', () => {
     expect(snapshot.messages).toContainEqual(expect.objectContaining({ role: 'custom', customType: 'print-prompt', entryId: 'prompt-1' }));
   });
 
-  it('returns the full saved branch instead of only the current compacted context', async () => {
+  it.each(['root', 'child'] as const)('uses the native compacted context for the %s transcript', async (kind) => {
     const f = fixture();
-    const snapshot = await f.surface.initialize();
-    expect(snapshot.messages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ content: expect.arrayContaining([expect.objectContaining({ text: 'Before compaction' })]) }),
-        expect.objectContaining({ content: expect.arrayContaining([expect.objectContaining({ text: 'After compaction' })]) }),
-      ]),
-    );
-    expect(await f.surface.getMessages()).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ content: expect.arrayContaining([expect.objectContaining({ text: 'Before compaction' })]) }),
-        expect.objectContaining({ content: expect.arrayContaining([expect.objectContaining({ text: 'After compaction' })]) }),
-      ]),
-    );
+    f.native.sessionManager.buildContextEntries = () => [f.data.branch[2], f.data.branch[1]] as never;
+    const surface = createSessionSurface({ sessionId: f.native.sessionId, session: f.native, kind, capabilities: f.capabilities });
+    const snapshot = await surface.initialize();
+    const texts = snapshot.messages.flatMap((message) => message.content.map((content) => content.text));
+    expect(texts).toContain('After compaction');
+    expect(texts).not.toContain('Before compaction');
+    const saved = await surface.getMessages();
+    expect(saved.flatMap((message) => message.content.map((content) => content.text))).toEqual(texts);
   });
 
-  it('uses independent observer cursors and never adopts the parent cursor', async () => {
+  it('reads independent replay positions from the shared surface', async () => {
     const f = fixture();
     await f.surface.initialize();
-    const first = await f.surface.attachObserver('connection-1');
+    const first = f.surface.sync();
     f.publish(assistantEnd('One'));
-    const second = await f.surface.attachObserver('connection-2', first.cursor);
+    const second = f.surface.sync(first.cursor);
     expect(second.events).toContainEqual(
       expect.objectContaining({
         type: 'message_end',
@@ -698,7 +720,6 @@ describe('SessionSurface', () => {
         }),
       }),
     );
-    first.release();
     f.publish(assistantEnd('Two'));
     const replay = f.surface.replay(second.cursor);
     expect(replay.kind).toBe('events');
@@ -711,7 +732,6 @@ describe('SessionSurface', () => {
           }),
         }),
       );
-    second.release();
   });
 
   it('routes root steer and follow-up through prompt preflight', async () => {
@@ -820,8 +840,8 @@ describe('SessionSurface', () => {
     const f = fixture();
     await f.surface.initialize();
     await expect(f.surface.getMeta()).resolves.toMatchObject({ lifetimeCostUsd: 0 });
-    await expect(f.surface.getCommands()).resolves.toContainEqual(expect.objectContaining({ name: 'review' }));
-    await expect(f.surface.completeArgs('review', 's')).resolves.toContainEqual(expect.objectContaining({ value: 'src' }));
+    await expect(f.surface.getCommands()).resolves.toContainEqual(expect.objectContaining({ name: 'tree' }));
+    await expect(f.surface.completeArgs('tree', 's')).resolves.toContainEqual(expect.objectContaining({ value: 'src' }));
     await expect(f.surface.completeFileRefs('@src')).resolves.toContainEqual(expect.objectContaining({ value: '@src/main.ts' }));
     await expect(f.surface.dispatch({ type: 'bash', command: 'pwd' })).resolves.toMatchObject({ result: { output: 'ran pwd' } });
   });

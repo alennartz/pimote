@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { WebSocket } from 'ws';
-import { QueueOwnership } from './queue-ownership.js';
+import { createSessionSurface, createSessionInteractionState } from './session-surface.js';
+import type { BorrowedAgentSession } from '@pimote/sdk/subagents';
 import { UserProfiles, type SessionRef } from './user-profiles.js';
 import { WsHandler, type ClientRegistry } from './ws-handler.js';
 import { createServer, type PimoteServer } from './server.js';
@@ -70,7 +71,7 @@ function createMockSlot(id: string, folderPath = '/home/user/project'): ManagedS
     panelListenerUnsubs: [],
     panelThrottleTimer: null,
     treeNavigationInProgress: false,
-    queueOwnership: new QueueOwnership(),
+    interaction: createSessionInteractionState(),
   };
 
   const runtime: any = { session: mockSession, rebind: undefined };
@@ -86,6 +87,14 @@ function createMockSlot(id: string, folderPath = '/home/user/project'): ManagedS
       return this.runtime.session;
     },
   };
+  slot.sessionSurface = createSessionSurface({
+    sessionId: id,
+    session: mockSession as unknown as BorrowedAgentSession,
+    kind: 'root',
+    eventBuffer: sessionState.eventBuffer,
+    interaction: sessionState.interaction,
+  });
+  void slot.sessionSurface.initialize();
   return slot;
 }
 

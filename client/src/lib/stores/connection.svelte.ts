@@ -1,6 +1,5 @@
 // ConnectionStore — Svelte 5 runes-based WebSocket connection manager
 import type {
-  AgentPath,
   OpenSessionResponseData,
   PimoteCommand,
   PimoteResponse,
@@ -10,8 +9,6 @@ import type {
   UserSessionsChangedEvent,
   UserOpenViewRef,
   SubagentViewEvent,
-  SubagentViewSnapshot,
-  SubagentViewClosedEvent,
   FullResyncEvent,
   FullResyncStartEvent,
   FullResyncChunkEvent,
@@ -42,6 +39,7 @@ interface PendingJsonField {
 
 interface PendingFullResync {
   readonly start: FullResyncStartEvent;
+  readonly view?: SubagentViewEvent;
   readonly messages: PimoteAgentMessage[];
   readonly branchEntryIds: string[];
   readonly activeSubagentContent: PimoteActiveSubagentContent[];
@@ -53,11 +51,6 @@ interface PendingFullResync {
   messageParseFailed: boolean;
   streamingMessage: StreamingMessage | null;
   jsonFields: Map<FullResyncDataField, PendingJsonField>;
-}
-
-/** Keep child-view cursors in a namespace separate from root replay cursors. */
-function subagentViewKey(rootSessionId: string, path: AgentPath): string {
-  return `${rootSessionId}\u0000${JSON.stringify(path)}`;
 }
 
 /** Errors that mean a request may have reached the server before the socket dropped. */
@@ -181,24 +174,11 @@ export class ConnectionStore {
   syncDetail: string | null = $state(null);
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive internal bookkeeping; no template reads it
   private sessionCursors: Map<string, number> = new Map();
-  // A child surface has its own EventBuffer. Never fold these positions into
-  // sessionCursors: doing so makes the next root restore skip parent events.
-  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- cursor bookkeeping, not UI state
-  private subagentViewCursors: Map<string, number> = new Map();
   subscribedSessions: Map<string, string> = $state(new SvelteMap());
 
   /** Last root replay cursor observed for a session. */
   getRootCursor(sessionId: string): number | undefined {
     return this.sessionCursors.get(sessionId);
-  }
-
-  /** Last child-view cursor observed for one root/path attachment. */
-  getSubagentViewCursor(rootSessionId: string, path: AgentPath): number | undefined {
-    return this.subagentViewCursors.get(subagentViewKey(rootSessionId, path));
-  }
-
-  clearSubagentViewCursor(rootSessionId: string, path: AgentPath): void {
-    this.subagentViewCursors.delete(subagentViewKey(rootSessionId, path));
   }
 
   private ws: WebSocket | null = null;
@@ -413,56 +393,10 @@ export class ConnectionStore {
       for (const batched of event.events) this.handleWireEvent(batched, ws);
       return;
     }
-    if (event.type === 'full_resync_start') {
-      this.beginFullResync(event as FullResyncStartEvent);
-      return;
-    }
-    if (event.type === 'full_resync_chunk') {
-      this.appendFullResyncChunk(event as FullResyncChunkEvent);
-      return;
-    }
-    if (event.type === 'full_resync_branch_chunk') {
-      this.appendFullResyncBranchChunk(event as FullResyncBranchChunkEvent);
-      return;
-    }
-    if (event.type === 'full_resync_json_chunk') {
-      this.appendFullResyncJsonChunk(event as FullResyncJsonChunkEvent);
-      return;
-    }
-    if (event.type === 'full_resync_data_chunk') {
-      this.appendFullResyncDataChunk(event as FullResyncDataChunkEvent);
-      return;
-    }
-
-    // Track root replay cursors only. Child view messages carry a
-    // `viewCursor` and must never advance the root EventBuffer position.
-    // For buffered_events envelopes (which have no cursor of their own),
-    // advance to the highest root cursor among the sub-events so a later
-    // reconnect does not replay the same parent events.
-    if (event.type === 'buffered_events' && 'events' in event && 'sessionId' in event) {
-      const buffered = event as { sessionId: string; events: Array<{ cursor?: number; type?: string }> };
-      let max = this.sessionCursors.get(buffered.sessionId) ?? 0;
-      for (const sub of buffered.events) {
-        if (sub.type === 'subagent_view_event') continue;
-        if (typeof sub.cursor === 'number' && sub.cursor > max) max = sub.cursor;
-      }
-      this.sessionCursors.set(buffered.sessionId, max);
-    } else if (event.type === 'subagent_view_snapshot') {
-      const snapshot = event as SubagentViewSnapshot;
-      const key = subagentViewKey(snapshot.sessionId, snapshot.path);
-      const previous = this.subagentViewCursors.get(key) ?? 0;
-      if (snapshot.viewCursor === 0 || snapshot.viewCursor > previous) this.subagentViewCursors.set(key, snapshot.viewCursor);
-    } else if (event.type === 'subagent_view_event') {
-      const viewEvent = event as SubagentViewEvent;
-      const key = subagentViewKey(viewEvent.sessionId, viewEvent.path);
-      const previous = this.subagentViewCursors.get(key) ?? 0;
-      if (viewEvent.viewCursor > previous) this.subagentViewCursors.set(key, viewEvent.viewCursor);
-    } else if (event.type === 'subagent_view_closed') {
-      const closed = event as SubagentViewClosedEvent;
-      this.subagentViewCursors.delete(subagentViewKey(closed.sessionId, closed.path));
-    } else if ('cursor' in event && typeof event.cursor === 'number' && 'sessionId' in event && typeof event.sessionId === 'string') {
-      this.sessionCursors.set(event.sessionId, event.cursor);
-    }
+    if (event.type === 'subagent_view_event') {
+      if (this.collectFullResync(event.event, event)) return;
+    } else if (this.collectFullResync(event)) return;
+    this.recordRootCursor(event);
 
     if (event.type === 'user_sessions_changed') {
       this.handleUserSessionsChanged(event as UserSessionsChangedEvent, ws);
@@ -475,11 +409,47 @@ export class ConnectionStore {
     this.emitEvent(event);
   }
 
-  private beginFullResync(start: FullResyncStartEvent): void {
+  private collectFullResync(event: PimoteEvent, view?: SubagentViewEvent): boolean {
+    switch (event.type) {
+      case 'full_resync_start':
+        this.beginFullResync(event, view);
+        return true;
+      case 'full_resync_chunk':
+        this.appendFullResyncChunk(event);
+        return true;
+      case 'full_resync_branch_chunk':
+        this.appendFullResyncBranchChunk(event);
+        return true;
+      case 'full_resync_json_chunk':
+        this.appendFullResyncJsonChunk(event);
+        return true;
+      case 'full_resync_data_chunk':
+        this.appendFullResyncDataChunk(event);
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private recordRootCursor(event: PimoteEvent): void {
+    if (event.type === 'subagent_view_snapshot' || event.type === 'subagent_view_event' || event.type === 'subagent_view_closed') return;
+    if (event.type === 'buffered_events') {
+      const highest = event.events.reduce(
+        (cursor, item) => ('cursor' in item && typeof item.cursor === 'number' ? Math.max(cursor, item.cursor) : cursor),
+        this.sessionCursors.get(event.sessionId) ?? 0,
+      );
+      this.sessionCursors.set(event.sessionId, highest);
+    } else if ('cursor' in event && typeof event.cursor === 'number' && 'sessionId' in event) {
+      this.sessionCursors.set(event.sessionId, event.cursor);
+    }
+  }
+
+  private beginFullResync(start: FullResyncStartEvent, view?: SubagentViewEvent): void {
     if (!Number.isSafeInteger(start.totalMessages) || start.totalMessages < 0) return;
     if (start.totalBranchEntryIds !== undefined && (!Number.isSafeInteger(start.totalBranchEntryIds) || start.totalBranchEntryIds < 0)) return;
     const pending: PendingFullResync = {
       start,
+      ...(view ? { view } : {}),
       messages: [],
       branchEntryIds: [],
       activeSubagentContent: [],
@@ -627,6 +597,8 @@ export class ConnectionStore {
     const event: FullResyncEvent = {
       type: 'full_resync',
       sessionId: start.sessionId,
+      ...(start.cursor !== undefined ? { cursor: start.cursor } : {}),
+      ...(start.pendingSteeringMessages !== undefined ? { pendingSteeringMessages: start.pendingSteeringMessages } : {}),
       state: start.state,
       messages,
       ...(start.activeSubagentContent !== undefined
@@ -646,7 +618,21 @@ export class ConnectionStore {
           ? { runningToolCallIds: pending.runningToolCallIds }
           : {}),
     };
-    this.emitEvent(event);
+    const view = pending.view;
+    const { cursor: _cursor, ...payload } = event;
+    const snapshot: PimoteEvent = view
+      ? {
+          ...payload,
+          type: 'subagent_view_snapshot',
+          sessionId: view.sessionId,
+          childSessionId: view.childSessionId,
+          path: view.path,
+          incarnation: view.incarnation,
+          viewCursor: view.viewCursor,
+        }
+      : event;
+    this.recordRootCursor(snapshot);
+    this.emitEvent(snapshot);
   }
 
   private handleUserSessionsChanged(event: UserSessionsChangedEvent, ws: WebSocket): void {
@@ -853,10 +839,6 @@ export class ConnectionStore {
   removeSubscribedSession(id: string): void {
     this.subscribedSessions.delete(id);
     this.sessionCursors.delete(id);
-    const prefix = `${id}\u0000`;
-    for (const key of this.subagentViewCursors.keys()) {
-      if (key.startsWith(prefix)) this.subagentViewCursors.delete(key);
-    }
   }
 
   /** Empty the seed the connect-burst reconcile consumes. A deliberate user

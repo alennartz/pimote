@@ -118,6 +118,8 @@ When pimote isn't present, the EventBus emit fires with no listener, `detect()` 
 
 This module defines the per-session presentation provider for interactive subagent views. A provider publishes a root-relative hierarchy, typed subagent operations, one ordered replay cursor, and leases to existing child sessions. Pimote discovers providers on the root session's EventBus; child runtimes stay owned by the extension that created them.
 
+A borrowed session exposes native `clearQueue` and `isBashRunning` alongside its conversation controls. Pimote restores drained messages to their senders. Providers list admitted commands in `capabilities.operations`. An absent list admits no commands. The owner-control port still authorizes Stop, teardown, and resurrection.
+
 Use `registerProvider(pi, provider)` to publish a provider. Use `discoverProvider(pi, onProvider)` or the discovery handle to find providers, including late registration and replacement. Registration and discovery return cleanup functions or handles. Cleanup stops discovery or registration; it does not dispose the provider or child sessions. The `SubagentPresentationProvider` contract, typed operation data, cursors, snapshots, and borrowed-session lease types are exported from this module. The my-pi subagents extension implements this provider for Pimote.
 
 Provider operations carry typed placement through `toolCallId` and `contentIndex`, or through the containing custom entry's `entryId`. Pimote's server projector suppresses the declared native renderers and places each operation as typed subagent content inside its originating assistant row, preserving surrounding native content order.

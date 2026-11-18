@@ -1,47 +1,26 @@
 <script lang="ts">
   import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
-  import { connection } from '$lib/stores/connection.svelte.js';
   import Undo2 from '@lucide/svelte/icons/undo-2';
 
   let loading = $state(false);
-
-  const child = $derived(sessionRegistry.viewedSubagentAttachment);
-  const pending = $derived(child?.pendingSteeringMessages ?? sessionRegistry.viewed?.pendingSteeringMessages ?? []);
+  const session = $derived(sessionRegistry.viewedConversation);
+  const pending = $derived(session?.pendingSteeringMessages ?? []);
 
   async function dequeue() {
-    const session = sessionRegistry.viewed;
-    if (!session || loading) return;
-
+    const sessionId = session?.sessionId;
+    if (!sessionId || loading) return;
     loading = true;
     try {
-      const res = await connection.send({
-        type: 'dequeue_steering',
-        sessionId: session.sessionId,
-      });
-      if (res.success && res.data) {
-        const { steering } = res.data as { steering: string[]; followUp: string[] };
-        if (steering.length > 0) {
-          sessionRegistry.restoreQueuedDrafts(session.sessionId, steering);
-        }
-        session.pendingSteeringMessages = [];
-      }
-    } catch (e) {
-      console.error('Failed to dequeue steering messages:', e);
+      await sessionRegistry.sendSurfaceCommand(sessionId, { type: 'dequeue_steering' });
+    } catch (error) {
+      console.error('Failed to dequeue steering messages:', error);
     } finally {
       loading = false;
     }
   }
 </script>
 
-{#if pending.length > 0 && child}
-  <div class="border-border bg-background w-full border-t">
-    <div class="mx-auto flex max-w-3xl flex-col gap-0.5 px-4 py-2">
-      {#each pending as msg, i (i)}
-        <p class="text-muted-foreground truncate text-left text-xs">{msg}</p>
-      {/each}
-    </div>
-  </div>
-{:else if pending.length > 0}
+{#if pending.length > 0}
   <button
     class="border-border bg-background hover:bg-accent/50 active:bg-accent w-full border-t transition-colors"
     onclick={dequeue}

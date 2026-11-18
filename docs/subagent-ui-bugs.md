@@ -127,3 +127,13 @@ A child view kept showing the state it had when the app lost its socket, while t
 Child views now sync as observed session surfaces. A reconnect asks for each open view with its cursor; the server answers with a delta or a snapshot, and a path it cannot serve answers `subagent_view_unavailable` so the ghost closes through a response instead of a lost push.
 
 Commits: 8884704 and fd6e7be in Pimote. Model: DR-089.
+
+## BUG-015: Child streaming flicker and lost queued drafts
+
+**Status:** Fixed in source. Deployment pending.
+
+The child transcript reducer replaced content objects on every delta and changed message keys at completion. Tool and reasoning sections remounted. Child Abort also returned empty queues and ignored draft restoration.
+
+Root and child conversations now share state, transcript reduction, command responses, input dispatch, queue ownership, Abort recovery, bash completion, settings, autocomplete, costs, branch trees, and snapshot delivery. Child identity, owner control, capability limits, topology, and borrowed-runtime lifetime remain separate.
+
+The shared delivery gate prevents live events from reaching an attaching observer before its replay or snapshot. Offline draft recovery survives the last child view closing.

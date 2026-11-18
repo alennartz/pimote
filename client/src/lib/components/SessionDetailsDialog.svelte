@@ -20,21 +20,21 @@
 
   let open = $state(false);
 
-  let session = $derived(sessionRegistry.viewed);
+  let session = $derived(sessionRegistry.viewedConversation);
   let child = $derived(sessionRegistry.viewedSubagentAttachment);
   let childNode = $derived.by(() => {
     const rootId = sessionRegistry.viewedSessionId;
     const path = rootId ? sessionRegistry.getSelectedSubagentPath?.(rootId) : null;
     return rootId && path ? sessionRegistry.getSubagentNode?.(rootId, path) : null;
   });
-  let contextPercent = $derived(child?.contextUsage?.percent ?? childNode?.contextFill ?? session?.contextUsage?.percent);
-  let contextDisplay = $derived(child ? (contextPercent === null || contextPercent === undefined ? null : `${Math.round(contextPercent)}%`) : getContextDisplay(session));
+  let contextPercent = $derived(session?.contextUsage?.percent);
+  let contextDisplay = $derived(getContextDisplay(session));
   let contextTone = $derived(getContextTone(contextPercent));
 
   let connectionLabel = $derived(connection.phaseLabel);
 
   /** The pi session behind the shown surface: the child when one is open. */
-  let sessionIdentity = $derived(child ? { id: child.childSessionId, file: child.state.sessionFile } : session ? { id: session.sessionId, file: session.sessionFile } : null);
+  let sessionIdentity = $derived(session ? { id: session.sessionId, file: session.sessionFile } : null);
 
   async function openFolderInstructions(): Promise<void> {
     const folderPath = session?.folderPath;
@@ -128,20 +128,18 @@
           </div>
         {/if}
 
-        {#if !child}
-          <div class="border-border/60 flex items-center justify-between gap-3 border-t px-3 py-3">
-            <span class="text-muted-foreground">Folder instructions</span>
-            <Button
-              variant="ghost"
-              class="gap-1.5 max-md:min-h-11"
-              disabled={connection.status !== 'connected' || !session?.folderPath || session.isRestoring || session.sessionId.startsWith('pending-')}
-              onclick={() => void openFolderInstructions()}
-            >
-              <FilePen class="size-4" />
-              Edit AGENTS.md
-            </Button>
-          </div>
-        {/if}
+        <div class="border-border/60 flex items-center justify-between gap-3 border-t px-3 py-3">
+          <span class="text-muted-foreground">Folder instructions</span>
+          <Button
+            variant="ghost"
+            class="gap-1.5 max-md:min-h-11"
+            disabled={connection.status !== 'connected' || !session?.folderPath || session.isRestoring || session.sessionId.startsWith('pending-')}
+            onclick={() => void openFolderInstructions()}
+          >
+            <FilePen class="size-4" />
+            Edit AGENTS.md
+          </Button>
+        </div>
 
         {#if contextDisplay}
           <div class="border-border/60 flex items-center justify-between gap-3 border-t px-3 py-3">
@@ -163,7 +161,7 @@
           </div>
         {/if}
 
-        {#if !child && session?.gitBranch}
+        {#if session?.gitBranch}
           <div class="border-border/60 flex items-start justify-between gap-3 border-t px-3 py-3">
             <span class="text-muted-foreground">Git branch</span>
             <span class="max-w-[60%] min-w-0 truncate text-right font-medium">{session.gitBranch}</span>
@@ -177,21 +175,21 @@
           {/if}
         {/if}
 
-        {#if child?.state.isStreaming || child?.state.isCompacting || session?.isStreaming || session?.isCompacting || session?.isNavigatingTree}
+        {#if session?.isStreaming || session?.isCompacting || session?.isNavigatingTree}
           <div class="border-border/60 flex items-start justify-between gap-3 border-t px-3 py-3">
             <span class="text-muted-foreground">Runtime</span>
             <div class="flex flex-wrap justify-end gap-1.5 text-xs">
-              {#if child?.state.isStreaming || (!child && session?.isStreaming)}
+              {#if session?.isStreaming}
                 <span class="inline-flex items-center rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 font-medium text-emerald-600 dark:text-emerald-400"
                   >Streaming</span
                 >
               {/if}
-              {#if child?.state.isCompacting || (!child && session?.isCompacting)}
+              {#if session?.isCompacting}
                 <span class="inline-flex items-center rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 font-medium text-amber-600 dark:text-amber-400"
                   >Compacting…</span
                 >
               {/if}
-              {#if !child && session?.isNavigatingTree}
+              {#if session?.isNavigatingTree}
                 <span class="inline-flex items-center rounded-full border border-violet-500/20 bg-violet-500/10 px-2 py-0.5 font-medium text-violet-600 dark:text-violet-400"
                   >{session.treeNavigationSummarizing ? 'Summarizing…' : 'Navigating…'}</span
                 >

@@ -116,7 +116,7 @@ beforeEach(() => {
     },
     messages: [{ role: 'user', content: [{ type: 'text', text: initialTask }] }],
   });
-  sessionRegistry.setSubagentDraftText('root', ['worker'], 'Child draft');
+  sessionRegistry.setDraftText(sessionRegistry.getSubagentAttachment('root', ['worker'])!.sessionId, 'Child draft');
 });
 
 afterEach(async () => {
@@ -390,7 +390,7 @@ describe('Panel hierarchy navigation', () => {
     target.querySelector<HTMLButtonElement>('[data-node="worker"] button[aria-label="Show worker view"]')!.click();
     await tick();
     expect(sessionRegistry.viewedSurface?.kind).toBe('child');
-    expect(sessionRegistry.getSubagentDraftText('root', ['worker'])).toBe('Child draft');
+    expect(sessionRegistry.getSubagentAttachment('root', ['worker'])?.draftText).toBe('Child draft');
     expect(sessionRegistry.getSubagentAttachment('root', ['worker'])?.messages[0].content[0]).toMatchObject({ type: 'text', text: initialTask });
   });
 });

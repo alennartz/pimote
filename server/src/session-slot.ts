@@ -55,17 +55,18 @@ function queueLiveEvent(slot: ManagedSlot, observer: SessionObserver, event: Pim
 }
 
 /** Batch one event for an observer socket, including an owned child view. */
-export function sendBatchedEvent(socket: EventSocket, event: PimoteEvent): void {
-  if (socket.readyState !== 1) return;
+export function sendBatchedEvent(socket: EventSocket, event: PimoteEvent): boolean {
+  if (socket.readyState !== 1) return false;
   if (isStreamingEvent(event)) {
     queueLiveEventEntry(socket, { event });
-    return;
+    return true;
   }
   flushLiveBatch(socket);
   try {
     socket.send(JSON.stringify(event));
+    return true;
   } catch {
-    // WebSocket send failed — ignore (client disconnecting)
+    return false;
   }
 }
 

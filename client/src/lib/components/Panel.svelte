@@ -281,7 +281,7 @@
   function prepareResurrection(closed: SubagentViewClosedNotice, open = true): void {
     const node = closed.node;
     const path = closed.path;
-    resurrectSavedSessionId = node?.sessionId ?? selectedAttachment?.childSessionId ?? '';
+    resurrectSavedSessionId = node?.sessionId ?? selectedAttachment?.sessionId ?? '';
     resurrectLocalId = path[path.length - 1] ?? '';
     resurrectParentPath = path.slice(0, -1);
     resurrectTask = node?.task ?? '';

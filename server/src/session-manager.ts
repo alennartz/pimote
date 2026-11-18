@@ -15,26 +15,15 @@ import {
 import type { AgentSession, AgentSessionRuntime, EventBusController, CreateAgentSessionRuntimeFactory, ExtensionCommandContextActions } from '@earendil-works/pi-coding-agent';
 import type { PimoteConfig } from './config.js';
 import { EventBuffer } from './event-buffer.js';
-import { attributeDrained, QUEUE_KINDS, QueueOwnership, type QueueTexts } from './queue-ownership.js';
 import { extractMessageEntryIds, rendererRegisteredVisibility } from './message-mapper.js';
-import type {
-  PimoteEvent,
-  Card,
-  DownloadItem,
-  DownloadSnapshotUpdateEvent,
-  DownloadUpdateEvent,
-  SessionMeta,
-  SessionSettingsChangedEvent,
-  SubagentSnapshot,
-} from '../../shared/dist/index.js';
+import type { PimoteEvent, Card, DownloadItem, DownloadSnapshotUpdateEvent, DownloadUpdateEvent, SessionMeta, SubagentSnapshot } from '../../shared/dist/index.js';
 import type { PushNotificationPayload, PushNotificationService } from './push-notification.js';
 import { applyPanelMessage, getMergedPanelCards } from './panel-state.js';
 import { createExtensionUIBridge } from './extension-ui-bridge.js';
-import { resolveAllSlotPendingUi, sendSlotEvent } from './session-slot.js';
+import { resolveAllSlotPendingUi, sendBatchedEvent, sendSlotEvent } from './session-slot.js';
 export { sendBatchedEvent, sendSlotEvent, waitForSlotUiResponse, resolveSlotPendingUi, resolveAllSlotPendingUi, replaySlotPendingUiRequests } from './session-slot.js';
 import { askActivity } from '@pimote/sdk/activity';
 import { getGitBranch } from './git-branch.js';
-import { completeFileRefs } from './file-references.js';
 import { makeSessionMeta } from './session-usage.js';
 import { LoginOrchestrator } from './login-orchestrator.js';
 import { createVoiceExtension } from './voice/index.js';
@@ -43,7 +32,7 @@ import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
 import { loadManagerExtension } from './manager/attachment.js';
 import { discoverProvider, type BorrowedAgentSession, type SubagentPresentationProvider, type SubagentProviderDiscovery } from '@pimote/sdk/subagents';
 import { createSubagentHost, type SubagentHost, type SubagentViewChange } from './subagent-host.js';
-import { createSessionSurface, type SessionSurface, type SessionSurfaceCapabilities, type SessionSurfaceCallerContext, type SessionSurfaceCommand } from './session-surface.js';
+import { createSessionSurface, createSessionInteractionState, type SessionInteractionState, type SessionSurface } from './session-surface.js';
 
 /** Narrow interface for the WebSocket used for event routing.
  *  Avoids importing the `ws` package type in session-manager. */
@@ -111,17 +100,10 @@ export interface SessionState {
   treeNavigationInProgress: boolean;
   /** Whether the in-progress tree navigation will produce a branch summary. */
   treeNavigationSummarizing?: boolean;
-  /** True from bash admission through extension interception/native execution. */
-  bashDispatchInProgress?: boolean;
-  /** Set when abort_bash arrives before native execution has been admitted. */
-  bashAbortRequested?: boolean;
-  /** Which client submitted each message in pi's steering and follow-up queues. */
-  queueOwnership: QueueOwnership;
-  /** Abort-drained drafts for senders that were offline, delivered on their next claim. */
-  undeliveredDrafts?: Map<string, QueueTexts>;
+  interaction: SessionInteractionState;
 }
 
-export type SubagentViewListener = (change: SubagentViewChange, path: readonly string[], incarnation: string, viewCursor: number) => void;
+export type SubagentViewListener = (change: SubagentViewChange, path: readonly string[], incarnation: string, viewCursor: number) => boolean;
 
 export interface ManagedSlot {
   runtime: AgentSessionRuntime;
@@ -614,16 +596,11 @@ export function createSessionState(
     panelListenerUnsubs: [],
     panelThrottleTimer: null,
     treeNavigationInProgress: false,
-    bashDispatchInProgress: false,
-    bashAbortRequested: false,
-    queueOwnership: new QueueOwnership(),
+    interaction: createSessionInteractionState(),
   };
 
   // Subscribe to session events
   const unsubscribe = session.subscribe((event) => {
-    if (event.type === 'queue_update') {
-      for (const kind of QUEUE_KINDS) state.queueOwnership.syncFromPi(kind, event[kind]);
-    }
     if (event.type === 'agent_start' && state.status !== 'working') {
       state.status = 'working';
       state.idleSince = null;
@@ -642,25 +619,10 @@ export function createSessionState(
       state.status = 'idle';
       state.idleSince = Date.now();
       state.needsAttention = true;
-      // Nothing queued can still arrive from an idle session. Drop unconsumed intents.
-      state.queueOwnership.clearIntents();
       // A user-aborted run does not warrant a completion push: whoever
       // aborted it is already engaged with the session.
       if (!event.aborted && slotRef.slot) callbacks.onSessionIdle?.(sessionId, slotRef.slot);
       callbacks.onStatusChange?.(sessionId, folderPath);
-    }
-    const rootSurface = slotRef.slot?.sessionSurface;
-    if (rootSurface) {
-      // The shared root surface owns mapping and the slot event buffer. The
-      // state subscriber still owns status, queue, and idle bookkeeping above.
-      rootSurface.acceptNativeEvent(event);
-    } else {
-      eventBuffer.onEvent(
-        event,
-        sessionId,
-        (e) => callbacks.sendEvent(e),
-        () => session.messages[session.messages.length - 1],
-      );
     }
   });
 
@@ -668,7 +630,7 @@ export function createSessionState(
 
   // Bind feature EventBus listeners after the state holder exists.
   state.panelListenerUnsubs = setupSlotPanelListeners(eventBus, state, sessionId, callbacks.sendEvent);
-  state.panelListenerUnsubs.push(eventBus.on(SETTINGS_CHANGED_CHANNEL, () => callbacks.sendEvent(makeSessionSettingsEvent(sessionId, session))));
+  state.panelListenerUnsubs.push(eventBus.on(SETTINGS_CHANGED_CHANNEL, () => slotRef.slot?.sessionSurface?.refreshSettings()));
   state.downloadListenerUnsub = setupSlotDownloadListener(eventBus, {
     sessionId,
     folderPath,
@@ -705,18 +667,7 @@ function teardownSessionState(state: SessionState): void {
 /** EventBus channel on which the settings watcher reports model and thinking-level changes. */
 const SETTINGS_CHANGED_CHANNEL = 'pimote:settings-changed';
 
-/** Snapshot of a session's settings, as observers render them. */
-export function makeSessionSettingsEvent(sessionId: string, session: AgentSession): SessionSettingsChangedEvent {
-  const model = session.model;
-  return {
-    type: 'session_settings_changed',
-    sessionId,
-    model: model ? { provider: model.provider, id: model.id, name: model.name } : null,
-    thinkingLevel: session.thinkingLevel,
-    availableThinkingLevels: session.getAvailableThinkingLevels(),
-    autoCompactionEnabled: session.autoCompactionEnabled,
-  };
-}
+export { makeSessionSettingsEvent } from './session-surface.js';
 
 /**
  * Report model and thinking-level changes from every source (pimote commands,
@@ -965,115 +916,6 @@ export class PimoteSessionManager {
     await this.closeSession(currentId);
   }
 
-  /** Build the narrow Pimote capability adapter used by a child surface. */
-  private childSurfaceCapabilities(session: BorrowedAgentSession): SessionSurfaceCapabilities {
-    const native = session as BorrowedAgentSession & {
-      modelRuntime?: { getAvailable?: () => Promise<readonly unknown[]> | readonly unknown[] };
-      getAvailableThinkingLevels?: () => readonly string[];
-      autoCompactionEnabled?: boolean;
-      sessionName?: string;
-      executeBash?: (command: string, context?: unknown, options?: unknown) => Promise<unknown>;
-    };
-    return {
-      resolveModel: async (provider, modelId) => {
-        const models = (await native.modelRuntime?.getAvailable?.()) ?? [];
-        return models.find((candidate) => {
-          if (!candidate || typeof candidate !== 'object') return false;
-          const value = candidate as { provider?: unknown; id?: unknown };
-          return value.provider === provider && value.id === modelId;
-        }) as Awaited<ReturnType<SessionSurfaceCapabilities['resolveModel']>>;
-      },
-      getSettings: () => ({
-        availableThinkingLevels: [...(native.getAvailableThinkingLevels?.() ?? [])],
-        autoCompactionEnabled: native.autoCompactionEnabled === true,
-        ...(typeof native.sessionName === 'string' ? { sessionName: native.sessionName } : {}),
-      }),
-      getCommands: async () => [],
-      completeArgs: async () => [],
-      completeFileRefs: async (prefix) => {
-        const cwd = native.sessionManager.getCwd();
-        return (await completeFileRefs({ prefix, cwd })).items;
-      },
-      executeBash: async (command, options) => {
-        if (!native.executeBash) throw new Error('native bash is not available');
-        return native.executeBash(command, undefined, options);
-      },
-      getGitBranch: () => null,
-    };
-  }
-
-  private async rootAbort(slot: ManagedSlot, caller?: SessionSurfaceCallerContext): Promise<QueueTexts> {
-    const session = slot.session;
-    // Read ownership before clearing. The queue_update emitted by clearQueue
-    // removes the ledger entries that let us restore each sender's drafts.
-    const owners = slot.sessionState.queueOwnership.snapshot();
-    slot.eventBusRef.current?.emit('pimote:voice:cancel-pending', undefined);
-    const drained = session.clearQueue();
-    const drafts = attributeDrained(owners, drained, caller?.clientId ?? '');
-    for (const [clientId, group] of drafts) {
-      if (!clientId || clientId === caller?.clientId) continue;
-      const observer = slot.observers.get(clientId);
-      const event = { type: 'queued_drafts_restored' as const, sessionId: slot.sessionState.id, ...group };
-      let delivered = false;
-      if (observer?.ws?.readyState === 1) {
-        try {
-          observer.ws.send(JSON.stringify(event));
-          delivered = true;
-        } catch {
-          delivered = false;
-        }
-      }
-      if (!delivered) {
-        const held = (slot.sessionState.undeliveredDrafts ??= new Map());
-        const prior = held.get(clientId) ?? { steering: [], followUp: [] };
-        held.set(clientId, { steering: [...prior.steering, ...group.steering], followUp: [...prior.followUp, ...group.followUp] });
-      }
-    }
-    resolveAllSlotPendingUi(slot);
-    return (await session.abort(), drafts.get(caller?.clientId ?? '') ?? { steering: [], followUp: [] });
-  }
-
-  private async rootBash(slot: ManagedSlot, command: Extract<SessionSurfaceCommand, { type: 'bash' }>): Promise<unknown> {
-    const session = slot.session;
-    const state = slot.sessionState;
-    if (session.isBashRunning || state.bashDispatchInProgress === true) throw new Error('bash_already_running');
-    state.bashDispatchInProgress = true;
-    state.bashAbortRequested = false;
-    try {
-      let extensionResult: Awaited<ReturnType<AgentSession['extensionRunner']['emitUserBash']>>;
-      try {
-        extensionResult = await session.extensionRunner.emitUserBash({
-          type: 'user_bash',
-          command: command.command,
-          excludeFromContext: command.excludeFromContext === true,
-          cwd: session.sessionManager.getCwd(),
-        });
-      } catch (error) {
-        console.error('[SessionManager] user_bash extension handler failed:', error);
-        throw new Error('bash_extension_error', { cause: error });
-      }
-      if (extensionResult?.result) {
-        session.recordBashResult(command.command, extensionResult.result, { excludeFromContext: command.excludeFromContext === true });
-        return extensionResult.result;
-      }
-      const execution = session.executeBash(command.command, undefined, {
-        id: command.id,
-        excludeFromContext: command.excludeFromContext === true,
-        operations: extensionResult?.operations,
-      });
-      if (state.bashAbortRequested) session.abortBash();
-      return await execution;
-    } finally {
-      state.bashDispatchInProgress = false;
-      state.bashAbortRequested = false;
-    }
-  }
-
-  private async rootAbortBash(slot: ManagedSlot): Promise<void> {
-    if (slot.sessionState.bashDispatchInProgress === true) slot.sessionState.bashAbortRequested = true;
-    slot.session.abortBash();
-  }
-
   /** Ensure one shared root surface for this concrete AgentSession. */
   private ensureRootSessionSurface(slot: ManagedSlot): SessionSurface {
     if (slot.sessionSurface) return slot.sessionSurface;
@@ -1082,16 +924,19 @@ export class PimoteSessionManager {
       session: slot.session as unknown as BorrowedAgentSession,
       kind: 'root',
       eventBuffer: slot.sessionState.eventBuffer,
-      subscribeNative: false,
-      rootAbort: (caller) => this.rootAbort(slot, caller),
-      rootBash: (command) => this.rootBash(slot, command),
-      rootAbortBash: () => this.rootAbortBash(slot),
+      interaction: slot.sessionState.interaction,
+      beforeAbort: () => {
+        slot.eventBusRef.current?.emit('pimote:voice:cancel-pending', undefined);
+        resolveAllSlotPendingUi(slot);
+      },
+      sendToClient: (clientId, event) => {
+        const observer = slot.observers.get(clientId);
+        return observer ? sendBatchedEvent(observer.ws, event) : false;
+      },
       getGitBranch: () => this.getLastKnownGitBranch(slot.sessionState.id),
     });
     slot.sessionSurface = surface;
     slot.sessionSurfaceUnsubscribe = surface.subscribe((event) => sendSlotEvent(slot, event));
-    // The slot state owns the native subscription and feeds this surface. The
-    // snapshot is still initialized here so staged events cross one boundary.
     void surface.initialize().catch((error) => {
       console.error('[SessionManager] Root session surface initialization failed:', error);
     });
@@ -1116,10 +961,8 @@ export class PimoteSessionManager {
       emitParentEvent: (event) => {
         slot.sessionState.eventBuffer.appendTopologyEvent(event, slot.sessionState.id, (mapped) => sendSlotEvent(slot, mapped));
       },
-      emitViewChange: (clientId, change, path, incarnation, viewCursor) => {
-        slot.subagentViewListeners?.get(clientId)?.(change, path, incarnation, viewCursor);
-      },
-      childCapabilities: (session) => this.childSurfaceCapabilities(session),
+      emitViewChange: (clientId, change, path, incarnation, viewCursor) => slot.subagentViewListeners?.get(clientId)?.(change, path, incarnation, viewCursor) ?? false,
+      bufferCapacity: this.currentConfig().bufferSize,
     });
   }
 
@@ -1760,7 +1603,7 @@ export class PimoteSessionManager {
       slot.observers.size > 0 ||
       isCallActive ||
       slot.session.isBashRunning ||
-      slot.sessionState.bashDispatchInProgress === true ||
+      slot.sessionSurface?.isBashDispatching === true ||
       slot.sessionState.treeNavigationInProgress ||
       slot.sessionState.idleSince === null
     );

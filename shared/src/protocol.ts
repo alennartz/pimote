@@ -1036,125 +1036,38 @@ export interface SubagentCloseViewCommand extends CommandBase {
   path: AgentPath;
 }
 
-export interface SubagentPromptCommand extends SubagentCommandBase {
-  type: 'subagent_prompt';
-  message: string;
-  /** Content-addressed image paths (`/i/<sha256>`). Legacy data URLs remain accepted. */
-  images?: string[];
-  streamingBehavior?: 'streaming' | 'blocking';
-  clientMessageId?: string;
-}
+type SubagentSurfaceCommand<C extends { type: string }> = Omit<C, 'type' | 'sessionId'> &
+  SubagentCommandBase & {
+    type: `subagent_${C['type']}`;
+  };
 
-export interface SubagentSteerCommand extends SubagentCommandBase {
-  type: 'subagent_steer';
-  message: string;
-  /** Content-addressed image paths (`/i/<sha256>`). Legacy data URLs remain accepted. */
-  images?: string[];
-}
+export type SubagentPromptCommand = SubagentSurfaceCommand<PromptCommand>;
+export type SubagentSteerCommand = SubagentSurfaceCommand<SteerCommand>;
+export type SubagentFollowUpCommand = SubagentSurfaceCommand<FollowUpCommand>;
+export type SubagentBashCommand = SubagentSurfaceCommand<BashCommand>;
+export type SubagentAbortBashCommand = SubagentSurfaceCommand<AbortBashCommand>;
+export type SubagentSetModelCommand = SubagentSurfaceCommand<SetModelCommand>;
+export type SubagentCycleModelCommand = SubagentSurfaceCommand<CycleModelCommand>;
+export type SubagentGetAvailableModelsCommand = SubagentSurfaceCommand<GetAvailableModelsCommand>;
+export type SubagentSetThinkingLevelCommand = SubagentSurfaceCommand<SetThinkingLevelCommand>;
+export type SubagentCycleThinkingLevelCommand = SubagentSurfaceCommand<CycleThinkingLevelCommand>;
+export type SubagentCompactCommand = SubagentSurfaceCommand<CompactCommand>;
+export type SubagentSetAutoCompactionCommand = SubagentSurfaceCommand<SetAutoCompactionCommand>;
+export type SubagentGetStateCommand = SubagentSurfaceCommand<GetStateCommand>;
+export type SubagentGetMessagesCommand = SubagentSurfaceCommand<GetMessagesCommand>;
+export type SubagentGetSessionStatsCommand = SubagentSurfaceCommand<GetSessionStatsCommand>;
+export type SubagentGetSessionMetaCommand = SubagentSurfaceCommand<GetSessionMetaCommand>;
+export type SubagentGetCommandsCommand = SubagentSurfaceCommand<GetCommandsCommand>;
+export type SubagentCompleteArgsCommand = SubagentSurfaceCommand<CompleteArgsCommand>;
+export type SubagentCompleteFileRefsCommand = SubagentSurfaceCommand<CompleteFileRefsCommand>;
+export type SubagentGetTreeCommand = SubagentSurfaceCommand<GetTreeCommand>;
+export type SubagentNavigateTreeCommand = SubagentSurfaceCommand<NavigateTreeCommand>;
+export type SubagentSetTreeLabelCommand = SubagentSurfaceCommand<SetTreeLabelCommand>;
+export type SubagentDequeueSteeringCommand = SubagentSurfaceCommand<DequeueSteeringCommand>;
 
-export interface SubagentFollowUpCommand extends SubagentCommandBase {
-  type: 'subagent_follow_up';
-  message: string;
-}
-
-export interface SubagentAbortCommand extends SubagentCommandBase {
-  type: 'subagent_abort';
-  /** Child session identity checked by the owning manager before Stop. */
+export type SubagentAbortCommand = SubagentSurfaceCommand<AbortCommand> & {
   expectedSessionId: string;
-}
-
-export interface SubagentBashCommand extends SubagentCommandBase {
-  type: 'subagent_bash';
-  command: string;
-  excludeFromContext?: boolean;
-}
-
-export interface SubagentAbortBashCommand extends SubagentCommandBase {
-  type: 'subagent_abort_bash';
-}
-
-export interface SubagentSetModelCommand extends SubagentCommandBase {
-  type: 'subagent_set_model';
-  provider: string;
-  modelId: string;
-}
-
-export interface SubagentCycleModelCommand extends SubagentCommandBase {
-  type: 'subagent_cycle_model';
-}
-
-export interface SubagentGetAvailableModelsCommand extends SubagentCommandBase {
-  type: 'subagent_get_available_models';
-}
-
-export interface SubagentSetThinkingLevelCommand extends SubagentCommandBase {
-  type: 'subagent_set_thinking_level';
-  level: string;
-}
-
-export interface SubagentCycleThinkingLevelCommand extends SubagentCommandBase {
-  type: 'subagent_cycle_thinking_level';
-}
-
-export interface SubagentCompactCommand extends SubagentCommandBase {
-  type: 'subagent_compact';
-  customInstructions?: string;
-}
-
-export interface SubagentSetAutoCompactionCommand extends SubagentCommandBase {
-  type: 'subagent_set_auto_compaction';
-  enabled: boolean;
-}
-
-export interface SubagentGetStateCommand extends SubagentCommandBase {
-  type: 'subagent_get_state';
-}
-
-export interface SubagentGetMessagesCommand extends SubagentCommandBase {
-  type: 'subagent_get_messages';
-}
-
-export interface SubagentGetSessionStatsCommand extends SubagentCommandBase {
-  type: 'subagent_get_session_stats';
-}
-
-export interface SubagentGetSessionMetaCommand extends SubagentCommandBase {
-  type: 'subagent_get_session_meta';
-}
-
-export interface SubagentGetCommandsCommand extends SubagentCommandBase {
-  type: 'subagent_get_commands';
-}
-
-export interface SubagentCompleteArgsCommand extends SubagentCommandBase {
-  type: 'subagent_complete_args';
-  commandName: string;
-  prefix: string;
-}
-
-export interface SubagentCompleteFileRefsCommand extends SubagentCommandBase {
-  type: 'subagent_complete_file_refs';
-  prefix: string;
-}
-
-export interface SubagentGetTreeCommand extends SubagentCommandBase {
-  type: 'subagent_get_tree';
-}
-
-export interface SubagentNavigateTreeCommand extends SubagentCommandBase {
-  type: 'subagent_navigate_tree';
-  targetId: string;
-  summarize?: boolean;
-  customInstructions?: string;
-  replaceInstructions?: boolean;
-  label?: string;
-}
-
-export interface SubagentSetTreeLabelCommand extends SubagentCommandBase {
-  type: 'subagent_set_tree_label';
-  entryId: string;
-  label?: string;
-}
+};
 
 export interface SubagentStopCommand extends CommandBase {
   type: 'subagent_stop';
@@ -1261,6 +1174,7 @@ export type PimoteCommand =
   | SubagentPromptCommand
   | SubagentSteerCommand
   | SubagentFollowUpCommand
+  | SubagentDequeueSteeringCommand
   | SubagentAbortCommand
   | SubagentBashCommand
   | SubagentAbortBashCommand
@@ -1665,6 +1579,8 @@ export interface SessionCommandsChangedEvent {
 export interface ConnectionRestoredEvent {
   type: 'connection_restored';
   sessionId: string;
+  cursor?: number;
+  state?: SessionState;
 }
 
 /** Broadcast after a folder registry/discovery mutation — a delta over the
@@ -1736,6 +1652,8 @@ export interface EventBatchEvent {
 export interface FullResyncEvent {
   type: 'full_resync';
   sessionId: string;
+  cursor?: number;
+  pendingSteeringMessages?: readonly string[];
   state: SessionState;
   messages: PimoteAgentMessage[];
   activeSubagentContent?: readonly PimoteActiveSubagentContent[];
@@ -1753,12 +1671,14 @@ export interface FullResyncEvent {
 export interface FullResyncStartEvent {
   type: 'full_resync_start';
   sessionId: string;
+  cursor?: number;
   snapshotId: string;
   totalMessages: number;
   totalBranchEntryIds?: number;
   hasStreamingMessage?: boolean;
   hasActiveSubagentContent?: boolean;
   hasRunningToolCallIds?: boolean;
+  pendingSteeringMessages?: readonly string[];
   state: SessionState;
   activeSubagentContent?: readonly PimoteActiveSubagentContent[];
   branchEntryIds?: readonly string[];
@@ -1805,6 +1725,22 @@ export interface FullResyncDataChunkEvent {
   final: boolean;
 }
 
+/** Transcript, settings, recovery, and resync frames for one session surface. */
+export type PimoteSurfaceEvent =
+  | PimoteSessionEvent
+  | BufferedEventsEvent
+  | ConnectionRestoredEvent
+  | SessionSettingsChangedEvent
+  | SessionStateChangedEvent
+  | QueuedDraftsRestoredEvent
+  | SessionRestoreEvent
+  | FullResyncEvent
+  | FullResyncStartEvent
+  | FullResyncChunkEvent
+  | FullResyncBranchChunkEvent
+  | FullResyncJsonChunkEvent
+  | FullResyncDataChunkEvent;
+
 /** Root-scoped hierarchy snapshot at a provider cursor boundary. */
 type SubagentSnapshotEventBase = {
   type: 'subagent_snapshot';
@@ -1827,24 +1763,18 @@ export interface SubagentOpenViewResponseData {
   viewCursor: SubagentViewCursor;
   /** `events` when the supplied cursor replayed, `snapshot` otherwise. */
   mode: 'events' | 'snapshot';
+  meta?: SessionMeta;
+  commands?: CommandInfo[];
 }
 
 /** Full child transcript and state at an independent view cursor. */
-export interface SubagentViewSnapshot {
+export interface SubagentViewSnapshot extends Omit<FullResyncEvent, 'type' | 'sessionId'> {
   type: 'subagent_view_snapshot';
   sessionId: string;
   childSessionId: string;
   path: AgentPath;
   incarnation: string;
   viewCursor: SubagentViewCursor;
-  state: SessionState;
-  messages: PimoteAgentMessage[];
-  pendingSteeringMessages?: readonly string[];
-  activeSubagentContent?: readonly PimoteActiveSubagentContent[];
-  /** Current child branch, independent of its rendered message projection. */
-  branchEntryIds?: readonly string[];
-  streamingMessage?: StreamingMessage;
-  runningToolCallIds?: string[];
 }
 
 /** Native Pi event on a child-view cursor. */
@@ -1855,7 +1785,7 @@ export interface SubagentViewEvent {
   path: AgentPath;
   incarnation: string;
   viewCursor: SubagentViewCursor;
-  event: PimoteSessionEvent;
+  event: PimoteSurfaceEvent;
 }
 
 /** A child view closed because its runtime was replaced, became unavailable,

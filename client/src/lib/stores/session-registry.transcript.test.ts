@@ -57,8 +57,7 @@ function transcript(kind: 'root' | 'child') {
       }
     },
     addPrompt(): void {
-      if (kind === 'root') registry.addOptimisticUserMessage(sessionId, prompt, 'prompt-1');
-      else registry.addSubagentOptimisticUserMessage(sessionId, path, prompt, 'prompt-1');
+      registry.addOptimisticUserMessage(kind === 'root' ? sessionId : childSessionId, prompt, 'prompt-1');
     },
   };
 }

@@ -144,7 +144,7 @@ export type SubagentOperation =
 
 /** Provider-owned child capabilities. It never exposes extension machinery. */
 export interface SubagentCapabilities {
-  /** Explicitly admitted identity-preserving operations. */
+  /** Explicitly admitted identity-preserving operations. Absence admits no commands. */
   readonly operations?: readonly SubagentOperation[];
   /** Whether the child renderer can expose a view. */
   readonly renderer?: Readonly<{ visible?: boolean; [key: string]: unknown }>;
@@ -188,6 +188,8 @@ export type BorrowedAgentSession = Pick<
   | 'isStreaming'
   | 'isIdle'
   | 'isCompacting'
+  | 'isBashRunning'
+  | 'clearQueue'
   | 'subscribe'
   | 'prompt'
   | 'steer'
