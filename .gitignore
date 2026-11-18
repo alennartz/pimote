@@ -7,6 +7,9 @@ pimote-*.tgz
 # Local manual-test scratch drivers
 tools/manual-test/**/cdp-drive-tmp.mjs
 
+# Local sandbox process state
+/sandbox.pid
+
 # OS / editor hygiene
 .DS_Store
 Thumbs.db
