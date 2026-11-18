@@ -119,7 +119,7 @@ The npm package is the authoring surface for extension developers. The app bundl
 
 Native Kotlin voice-first peer that connects to Pimote through Android's calling surfaces.
 
-**Responsibilities:** WebSocket/session synchronization, self-managed Telecom calls, WebRTC audio, contacts sync, Assistant shortcuts, Android Auto car UI, Compose UI, settings and authentication
+**Responsibilities:** WebSocket/session synchronization, self-managed Telecom calls, WebRTC audio, contacts sync, Assistant shortcuts, Android Auto car UI, Compose UI, settings and authentication; pinned Docker build image and host-side wireless ADB selection and install
 
 **Dependencies:** Server's WebSocket API; Protocol mirror (hard-cut removes session ownership fields, `open_session.force`, and session-level `displaced`, and adds archived-session close vocabulary; Android must update in lockstep; windowed `list_folders` and `folders_changed` also have no compatibility shim; push metadata `projectName` is deliberate wire vocabulary); Android Telecom, Contacts, Car App, and WebRTC APIs
 

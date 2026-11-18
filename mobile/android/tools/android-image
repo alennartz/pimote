@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=common.sh
+source "$SCRIPT_DIR/common.sh"
+
+android_require_docker
+
+versions="$ANDROID_DIR/versions.env"
+[[ -f "$versions" ]] || android_error "missing $versions"
+# shellcheck source=/dev/null
+source "$versions"
+
+for pin in ANDROID_BASE_IMAGE ANDROID_BASE_IMAGE_DIGEST ANDROID_JDK_MAJOR_VERSION \
+    ANDROID_CMDLINE_TOOLS_VERSION ANDROID_CMDLINE_TOOLS_REVISION \
+    ANDROID_PLATFORM_VERSION ANDROID_BUILD_TOOLS_VERSION; do
+    [[ -n "${!pin:-}" ]] || android_error "$pin is empty in $versions"
+done
+
+build_args=(
+    --build-arg "ANDROID_BASE_IMAGE=$ANDROID_BASE_IMAGE"
+    --build-arg "ANDROID_BASE_IMAGE_DIGEST=$ANDROID_BASE_IMAGE_DIGEST"
+    --build-arg "ANDROID_JDK_MAJOR_VERSION=$ANDROID_JDK_MAJOR_VERSION"
+    --build-arg "ANDROID_CMDLINE_TOOLS_VERSION=$ANDROID_CMDLINE_TOOLS_VERSION"
+    --build-arg "ANDROID_CMDLINE_TOOLS_REVISION=$ANDROID_CMDLINE_TOOLS_REVISION"
+    --build-arg "ANDROID_PLATFORM_VERSION=$ANDROID_PLATFORM_VERSION"
+    --build-arg "ANDROID_BUILD_TOOLS_VERSION=$ANDROID_BUILD_TOOLS_VERSION"
+)
+
+android_log "building $ANDROID_IMAGE from ${ANDROID_BASE_IMAGE}@${ANDROID_BASE_IMAGE_DIGEST}"
+docker build \
+    "${build_args[@]}" \
+    --file "$ANDROID_DIR/build.Dockerfile" \
+    --tag "$ANDROID_IMAGE" \
+    "$ANDROID_DIR"
+android_log "build image ready: $ANDROID_IMAGE"

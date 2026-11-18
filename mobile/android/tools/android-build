@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=common.sh
+source "$SCRIPT_DIR/common.sh"
+
+android_require_docker
+
+android_log "assembling the debug APK"
+rm -f "$ANDROID_APK_PATH"
+"$SCRIPT_DIR/run-container" -- ./gradlew assembleDebug
+
+[[ -f "$ANDROID_APK_PATH" ]] || android_error "Gradle did not produce $ANDROID_APK_PATH"
+printf 'APK=%s\n' "$ANDROID_APK_PATH"

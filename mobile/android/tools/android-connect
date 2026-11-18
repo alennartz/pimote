@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=common.sh
+source "$SCRIPT_DIR/common.sh"
+
+android_load_config
+android_require_adb
+android_require_device_format
+
+serial=$(android_select_device "${ANDROID_DEVICE:-}")
+printf 'ANDROID_SERIAL=%s\n' "$serial"

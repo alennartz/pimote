@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=common.sh
+source "$SCRIPT_DIR/common.sh"
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: run-container [--interactive] [--no-cache-prep] -- command [args...]
+
+Run a command in the pinned Android build image. The repository mounts at
+/workspace. Cache and home directories persist in named Docker volumes.
+EOF
+}
+
+interactive=false
+prepare_caches=true
+while (($#)); do
+    case "$1" in
+        --interactive)
+            interactive=true
+            shift
+            ;;
+        --no-cache-prep)
+            prepare_caches=false
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+(($# > 0)) || { usage; exit 2; }
+
+android_require_docker
+android_require_image
+
+uid=$(id -u)
+gid=$(id -g)
+
+# Docker creates named volumes as root. Change ownership only when a cache root
+# has a different owner, and run the cheap check on every invocation.
+prepare_gradle_cache() {
+    docker volume create "$ANDROID_GRADLE_CACHE_VOLUME" >/dev/null
+    docker run --rm \
+        --user 0:0 \
+        --mount "type=volume,source=$ANDROID_GRADLE_CACHE_VOLUME,target=/cache/gradle" \
+        --entrypoint /bin/bash \
+        "$ANDROID_IMAGE" \
+        -c '
+            set -eu
+            path=/cache/gradle
+            uid=$1
+            gid=$2
+            mkdir -p "$path"
+            if [ "$(stat -c "%u:%g" "$path")" != "$uid:$gid" ]; then
+                chown -R "$uid:$gid" "$path"
+            fi
+        ' android-cache-prep "$uid" "$gid"
+}
+
+# Android Debug Gradle signs every debug APK with $user.home/.android/debug.keystore.
+# The home volume keeps that key across containers, so adb install -r updates the
+# app in place. A key left by the older repo-local HOME seeds the volume once.
+prepare_home() {
+    docker volume create "$ANDROID_HOME_VOLUME" >/dev/null
+    docker run --rm \
+        --user 0:0 \
+        --mount "type=bind,source=$ANDROID_DIR,target=/legacy,readonly" \
+        --mount "type=volume,source=$ANDROID_HOME_VOLUME,target=/home/android" \
+        --entrypoint /bin/bash \
+        "$ANDROID_IMAGE" \
+        -c '
+            set -eu
+            uid=$1
+            gid=$2
+            mkdir -p /home/android/.android
+            legacy=/legacy/.docker-home/.android/debug.keystore
+            target=/home/android/.android/debug.keystore
+            if [ ! -f "$target" ] && [ -f "$legacy" ]; then
+                cp "$legacy" "$target"
+            fi
+            chown -R "$uid:$gid" /home/android
+            chmod 700 /home/android/.android
+        ' android-home-prep "$uid" "$gid"
+}
+
+if $prepare_caches; then
+    prepare_gradle_cache
+    prepare_home
+fi
+
+args=(
+    --rm
+    --init
+    --user "$uid:$gid"
+    --mount "type=bind,source=$ANDROID_ROOT_DIR,target=/workspace"
+    --mount "type=volume,source=$ANDROID_GRADLE_CACHE_VOLUME,target=/cache/gradle"
+    --mount "type=volume,source=$ANDROID_HOME_VOLUME,target=/home/android"
+    --workdir /workspace/mobile/android
+    --env HOME=/home/android
+    # Android Gradle resolves the debug keystore from Java's user.home, not HOME.
+    --env JAVA_TOOL_OPTIONS=-Duser.home=/home/android
+    --env GRADLE_USER_HOME=/cache/gradle
+    --env ANDROID_HOME=/opt/android-sdk
+    --env ANDROID_SDK_ROOT=/opt/android-sdk
+)
+
+if $interactive; then
+    if [[ -t 0 && -t 1 ]]; then
+        args+=(-it)
+    else
+        args+=(-i)
+    fi
+fi
+
+# The wrapper creates the caller-owned HOME, then execs the requested command so
+# its exit code and terminal signals reach the host unchanged.
+docker run "${args[@]}" \
+    --entrypoint /bin/bash \
+    "$ANDROID_IMAGE" \
+    -lc 'mkdir -p "$HOME" && exec "$@"' android-container "$@"

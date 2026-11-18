@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=common.sh
+source "$SCRIPT_DIR/common.sh"
+
+android_load_config
+android_require_adb
+android_require_device_format
+android_require_server_url
+android_require_docker
+
+# Select the phone before the build, so an unreachable device fails in seconds.
+serial=$(android_select_device "${ANDROID_DEVICE:-}")
+android_print_server_url
+
+"$SCRIPT_DIR/android-build"
+[[ -f "$ANDROID_APK_PATH" ]] || android_error "debug APK is missing: $ANDROID_APK_PATH"
+
+android_log "installing $ANDROID_APK_PATH on $serial"
+"$ANDROID_ADB" -s "$serial" install -r "$ANDROID_APK_PATH"

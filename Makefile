@@ -2,7 +2,8 @@
         dev dev-server dev-client \
         start test clean help \
         format format-check lint check \
-        android-image android-build android-test android-shell android-gradle android-clean
+        android-image android-build android-test android-connect android-install android-shell \
+        android-gradle android-clean android-tooling-test
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -116,37 +117,36 @@ clean:
 
 # ── Android client (mobile/android) ───────────────────────────────────────────
 
-ANDROID_DIR := mobile/android
+ANDROID_TOOLS := mobile/android/tools
 ANDROID_IMAGE ?= pimote-android-builder:local
-ANDROID_DOCKER_RUN := docker run --rm -t \
-	-v $(CURDIR)/$(ANDROID_DIR):/workspace \
-	-w /workspace \
-	-u $(shell id -u):$(shell id -g) \
-	-e HOME=/workspace/.docker-home \
-	$(ANDROID_IMAGE)
+export ANDROID_IMAGE
 
 android-image:
-	docker build -f $(ANDROID_DIR)/build.Dockerfile -t $(ANDROID_IMAGE) $(ANDROID_DIR)
+	$(ANDROID_TOOLS)/android-image
 
 android-build:
-	$(ANDROID_DOCKER_RUN) ./gradlew assembleDebug
+	$(ANDROID_TOOLS)/android-build
 
 android-test:
-	$(ANDROID_DOCKER_RUN) ./gradlew test
+	$(ANDROID_TOOLS)/run-container -- ./gradlew test
+
+android-connect:
+	$(ANDROID_TOOLS)/android-connect
+
+android-install:
+	$(ANDROID_TOOLS)/android-install
 
 android-shell:
-	docker run --rm -it \
-		-v $(CURDIR)/$(ANDROID_DIR):/workspace \
-		-w /workspace \
-		-u $(shell id -u):$(shell id -g) \
-		-e HOME=/workspace/.docker-home \
-		$(ANDROID_IMAGE) bash
+	$(ANDROID_TOOLS)/run-container --interactive -- bash
 
 android-gradle:
-	$(ANDROID_DOCKER_RUN) ./gradlew $(ARGS)
+	$(ANDROID_TOOLS)/run-container -- ./gradlew $(ARGS)
 
 android-clean:
-	$(ANDROID_DOCKER_RUN) ./gradlew clean
+	$(ANDROID_TOOLS)/run-container -- ./gradlew clean
+
+android-tooling-test:
+	bash mobile/android/tests/discovery.test.sh
 
 # ── Help ──────────────────────────────────────────────────────────────────────
 
@@ -180,9 +180,12 @@ help:
 	@echo "  android-image    Build the Android build container image ($(ANDROID_IMAGE))"
 	@echo "  android-build    Assemble the debug APK inside the build container"
 	@echo "  android-test     Run Android unit tests inside the build container"
+	@echo "  android-connect  Connect and verify the wireless debugging phone"
+	@echo "  android-install  Build the debug APK and install it on the phone"
 	@echo "  android-shell    Interactive bash shell inside the build container"
 	@echo "  android-gradle   Run an arbitrary gradle task: make android-gradle ARGS=\"<task>\""
 	@echo "  android-clean    gradle clean inside the build container"
+	@echo "  android-tooling-test  Test host device selection (no Docker or phone)"
 	@echo ""
 	@echo "  help             Show this message"
 	@echo ""
