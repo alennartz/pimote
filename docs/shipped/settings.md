@@ -103,4 +103,4 @@ An `AGENTS.md` save invalidates folder discovery and broadcasts the change, beca
 
 ## Extension files
 
-A Pimote extension adds catalog files with `context.settings.registerFile(path)`. A relative path resolves from the extension's own entry module, and a leading `~` expands to the home directory. See `extensions.md`.
+A Pimote extension adds catalog files with `context.settings.registerFile(path)`. A relative path resolves from the extension's own entry module, and a leading `~` expands to the home directory. See the SDK guide `packages/sdk/docs/authoring.md`.

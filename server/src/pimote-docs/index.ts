@@ -11,8 +11,24 @@ const PACKAGE_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 /** Shipped documentation files, relative to the package root, with the task each one serves. */
 export const PIMOTE_DOC_FILES: ReadonlyArray<{ path: string; purpose: string }> = [
   {
-    path: 'docs/shipped/tools.md',
-    purpose: 'Manager tool reference: which sessions carry the tools, every parameter and result, error recovery, and the spill guard.',
+    path: 'packages/sdk/docs/authoring.md',
+    purpose: 'Pimote extension host and factory contract: where modules load, package manifests, registrations, reload, and diagnostics.',
+  },
+  {
+    path: 'packages/sdk/docs/panels.md',
+    purpose: 'Card data for the session panel: handle lifetime, colors, links, validation, and repaint on client claim.',
+  },
+  {
+    path: 'packages/sdk/docs/activity.md',
+    purpose: 'The reap-guard veto: when Pimote closes an idle session and how a responder holds it open.',
+  },
+  {
+    path: 'packages/sdk/docs/folders.md',
+    purpose: 'Folder source contract: entry shapes, which facts Pimote owns, open hooks, and promised hubs.',
+  },
+  {
+    path: 'packages/sdk/docs/subagents.md',
+    purpose: 'The interactive subagent provider: registration, operations, placement, leases, and replay.',
   },
   {
     path: 'docs/shipped/folders.md',
@@ -35,21 +51,12 @@ export const PIMOTE_DOC_FILES: ReadonlyArray<{ path: string; purpose: string }> 
     purpose: 'Native config fields and the global Settings catalog: file set, validation, and when each change applies.',
   },
   {
-    path: 'docs/shipped/extensions.md',
-    purpose: 'Pimote extension host: module locations, package entries, the factory context, reload, and diagnostics.',
-  },
-  {
     path: 'docs/shipped/delivery.md',
-    purpose: 'Report hosting and file download offers: URLs, serving rules, lifetime, and the choice between them.',
+    purpose: 'Report hosting and file download offers: serving rules, lifetime, and what a browser does with each.',
   },
   {
     path: 'docs/shipped/static-reports.md',
     purpose: 'Layout and visual design for HTML reports hosted with pimote_static_host.',
-  },
-  {
-    path: 'packages/sdk/README.md',
-    purpose:
-      'The @pimote/sdk API for session extensions and the process-global Pimote host: panels, activity, folder sources, Settings files, scopes, and reload. Read it before you write an extension.',
   },
 ];
 

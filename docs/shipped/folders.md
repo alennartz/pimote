@@ -2,7 +2,7 @@
 
 Pimote discovers folders under configured scan roots and shows what it finds as one flat listing. This page describes the walk, the folder identity, and the rules that decide whether a folder appears. Read it before you create, move, or curate a folder.
 
-`hubs.md` covers hub shapes. `recipes.md` covers creation examples. `tools.md` covers the tool parameters.
+`hubs.md` covers hub shapes. `recipes.md` covers creation examples.
 
 ## Scan roots
 

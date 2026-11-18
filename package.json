@@ -34,7 +34,8 @@
     "README.md",
     "LICENSE",
     "docs/shipped/**",
-    "packages/sdk/README.md"
+    "packages/sdk/README.md",
+    "packages/sdk/docs/**"
   ],
   "engines": {
     "node": ">=22.19.0"

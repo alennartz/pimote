@@ -56,6 +56,6 @@ describe('pimote-docs prompt section', () => {
   it('keeps the routing text small enough for every system prompt', () => {
     const purposeCharacters = PIMOTE_DOC_FILES.reduce((total, file) => total + file.purpose.length, 0);
 
-    expect(purposeCharacters).toBeLessThan(1400);
+    expect(purposeCharacters).toBeLessThan(1600);
   });
 });
