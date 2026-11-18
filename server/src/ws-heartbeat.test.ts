@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { WebSocket } from 'ws';
 import { startWebSocketHeartbeat } from './ws-heartbeat.js';
 
-/** Wire-level fake: records pings/terminations, delivers pongs on demand. */
+/** Wire-level fake: records pings/terminations, delivers pongs and messages on demand. */
 function createFakeSocket() {
   const listeners = new Map<string, () => void>();
   return {
@@ -19,6 +19,9 @@ function createFakeSocket() {
     },
     pong() {
       listeners.get('pong')?.();
+    },
+    message() {
+      listeners.get('message')?.();
     },
   };
 }
@@ -59,20 +62,6 @@ describe('startWebSocketHeartbeat', () => {
     heartbeat.stop();
   });
 
-  it('terminates a socket five seconds after a ping misses its pong', () => {
-    const socket = createFakeSocket();
-    const heartbeat = startWebSocketHeartbeat({ clients: clientSet(socket) }, 20_000);
-    heartbeat.track(socket);
-
-    vi.advanceTimersByTime(20_000); // pinged
-    vi.advanceTimersByTime(4_999);
-    expect(socket.terminated).toBe(false);
-    vi.advanceTimersByTime(1); // no pong arrived within the five-second window
-
-    expect(socket.terminated).toBe(true);
-    heartbeat.stop();
-  });
-
   it('keeps a socket that answers its ping', () => {
     const socket = createFakeSocket();
     const heartbeat = startWebSocketHeartbeat({ clients: clientSet(socket) }, 20_000);
@@ -84,6 +73,80 @@ describe('startWebSocketHeartbeat', () => {
 
     expect(socket.terminated).toBe(false);
     expect(socket.pings).toBe(2);
+    heartbeat.stop();
+  });
+
+  it('keeps a socket that misses one pong window', () => {
+    const socket = createFakeSocket();
+    const heartbeat = startWebSocketHeartbeat({ clients: clientSet(socket) }, 20_000);
+    heartbeat.track(socket);
+
+    vi.advanceTimersByTime(20_000); // ping sent, no pong
+    vi.advanceTimersByTime(5_000); // first window missed
+    expect(socket.terminated).toBe(false);
+
+    // Next ping answered — strikes reset, socket lives on.
+    vi.advanceTimersByTime(15_000);
+    socket.pong();
+    vi.advanceTimersByTime(5_000);
+
+    expect(socket.terminated).toBe(false);
+    heartbeat.stop();
+  });
+
+  it('terminates a socket after two consecutive unanswered pings', () => {
+    const socket = createFakeSocket();
+    const heartbeat = startWebSocketHeartbeat({ clients: clientSet(socket) }, 20_000);
+    heartbeat.track(socket);
+
+    vi.advanceTimersByTime(20_000); // ping 1
+    vi.advanceTimersByTime(4_999);
+    expect(socket.terminated).toBe(false);
+    vi.advanceTimersByTime(1); // first window missed, no kill
+    expect(socket.terminated).toBe(false);
+
+    vi.advanceTimersByTime(20_000); // ping 2
+    vi.advanceTimersByTime(5_000); // second consecutive window missed
+    expect(socket.terminated).toBe(true);
+    heartbeat.stop();
+  });
+
+  it('counts any inbound message as liveness and resets the strike count', () => {
+    const socket = createFakeSocket();
+    const heartbeat = startWebSocketHeartbeat({ clients: clientSet(socket) }, 20_000);
+    heartbeat.track(socket);
+
+    vi.advanceTimersByTime(20_000); // ping 1
+    vi.advanceTimersByTime(5_000); // missed — one strike
+    socket.message(); // client proved life: a resync request, any command
+
+    vi.advanceTimersByTime(15_000); // ping 2
+    vi.advanceTimersByTime(5_000); // missed — only one strike since the reset
+    expect(socket.terminated).toBe(false);
+
+    vi.advanceTimersByTime(20_000); // ping 3
+    vi.advanceTimersByTime(5_000); // consecutive miss with no inbound since
+    expect(socket.terminated).toBe(true);
+    heartbeat.stop();
+  });
+
+  it('keeps a message-only client that never pongs', () => {
+    const socket = createFakeSocket();
+    const heartbeat = startWebSocketHeartbeat({ clients: clientSet(socket) }, 20_000);
+    heartbeat.track(socket);
+
+    // A proxy on the path may answer pings itself, or swallow them; inbound
+    // application data is the honest liveness evidence.
+    vi.advanceTimersByTime(20_000);
+    vi.advanceTimersByTime(5_000); // missed
+    socket.message();
+    vi.advanceTimersByTime(20_000);
+    vi.advanceTimersByTime(5_000); // missed
+    socket.message();
+    vi.advanceTimersByTime(20_000);
+
+    expect(socket.terminated).toBe(false);
+    expect(socket.pings).toBe(3);
     heartbeat.stop();
   });
 
