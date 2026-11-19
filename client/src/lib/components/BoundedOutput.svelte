@@ -159,14 +159,15 @@
     position: relative;
   }
 
-  /* Reserve the corner strip so wrapped lines don't run under the button. */
+  /* Keep short output tall enough for the corner control and its text clear. */
   .bounded-output.copyable .bounded-output-text {
+    min-height: 28px;
     padding-right: 56px;
   }
 
   .output-copy-btn {
     position: absolute;
-    top: 6px;
+    top: 0;
     right: 6px;
     z-index: 1;
   }
