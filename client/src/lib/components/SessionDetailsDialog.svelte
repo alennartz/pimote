@@ -56,9 +56,9 @@
 
   let contextChipClass = $derived(
     contextTone === 'critical'
-      ? 'border-status-error/20 bg-status-error/10 text-status-error'
+      ? 'border-status-error/20 bg-status-error/10 text-foreground'
       : contextTone === 'warning'
-        ? 'border-warning/20 bg-warning/10 text-status-reconnecting'
+        ? 'border-warning/20 bg-warning/10 text-foreground'
         : 'border-border bg-muted text-muted-foreground',
   );
 </script>
@@ -180,15 +180,14 @@
             <span class="text-muted-foreground">Runtime</span>
             <div class="flex flex-wrap justify-end gap-1.5 text-xs">
               {#if session?.isStreaming}
-                <span class="border-status-streaming/20 bg-status-streaming/10 text-status-streaming inline-flex items-center rounded-full border px-2 py-0.5 font-medium"
-                  >Streaming</span
+                <span class="border-status-streaming/20 bg-status-streaming/10 text-foreground inline-flex items-center rounded-full border px-2 py-0.5 font-medium">Streaming</span
                 >
               {/if}
               {#if session?.isCompacting}
-                <span class="border-warning/20 bg-warning/10 text-status-reconnecting inline-flex items-center rounded-full border px-2 py-0.5 font-medium">Compacting…</span>
+                <span class="border-warning/20 bg-warning/10 text-foreground inline-flex items-center rounded-full border px-2 py-0.5 font-medium">Compacting…</span>
               {/if}
               {#if session?.isNavigatingTree}
-                <span class="border-status-active/20 bg-status-active/10 text-status-active inline-flex items-center rounded-full border px-2 py-0.5 font-medium"
+                <span class="border-status-active/20 bg-status-active/10 text-foreground inline-flex items-center rounded-full border px-2 py-0.5 font-medium"
                   >{session.treeNavigationSummarizing ? 'Summarizing…' : 'Navigating…'}</span
                 >
               {/if}

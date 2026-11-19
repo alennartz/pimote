@@ -176,7 +176,7 @@
       <div class="mb-2 text-sm font-semibold">User name</div>
       <Input aria-label="User name" autocomplete="off" spellcheck="false" bind:value={userName} class="sm:max-w-[22rem]" />
       {#if userDirty}
-        <p class="text-status-reconnecting mt-1.5 text-xs leading-normal">
+        <p class="text-foreground mt-1.5 text-xs leading-normal">
           Switches this device to user <b>{trimmedName}</b>.
           {#if adoptedProfileKnown}Its open-session list replaces the current one.{:else}That profile has no open sessions yet — this device's list starts empty.{/if}
         </p>

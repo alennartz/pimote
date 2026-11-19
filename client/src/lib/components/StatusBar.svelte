@@ -55,9 +55,7 @@
 
   let contextDisplay = $derived(getContextDisplay(sessionRegistry.viewedConversation));
 
-  let contextColor = $derived(
-    getContextTone(contextPercent) === 'critical' ? 'text-status-error' : getContextTone(contextPercent) === 'warning' ? 'text-status-reconnecting' : 'text-muted-foreground',
-  );
+  let contextColor = $derived(getContextTone(contextPercent) === 'normal' ? 'text-muted-foreground' : 'text-foreground');
 
   let sessionDisplayName = $derived(activeNode ? activeNode.path.join('/') : getSessionDisplayName(sessionRegistry.viewedConversation));
   let hasHierarchy = $derived(Boolean(sessionRegistry.viewedSessionId && (sessionRegistry.subagentRoots?.[sessionRegistry.viewedSessionId]?.nodes.length ?? 0) > 0));

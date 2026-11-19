@@ -266,9 +266,9 @@
 
   let mobileContextChipClass = $derived(
     mobileContextTone === 'critical'
-      ? 'border-status-error/20 bg-status-error/10 text-status-error'
+      ? 'border-status-error/20 bg-status-error/10 text-foreground'
       : mobileContextTone === 'warning'
-        ? 'border-warning/20 bg-warning/10 text-status-reconnecting'
+        ? 'border-warning/20 bg-warning/10 text-foreground'
         : 'border-border bg-muted text-muted-foreground',
   );
 

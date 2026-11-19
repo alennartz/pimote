@@ -59,7 +59,8 @@
     "pack:dry-run": "npm pack --dry-run",
     "test:patches": "node --test scripts/patch-dependencies.test.mjs",
     "version": "node ./scripts/sync-versions.mjs && npm install --package-lock-only",
-    "test:versions": "node --test scripts/sync-versions.test.mjs"
+    "test:versions": "node --test scripts/sync-versions.test.mjs",
+    "audit:themes": "npm run audit:themes --workspace=@pimote/server"
   },
   "lint-staged": {
     "*.{ts,js,svelte,css,html,json,md,yaml}": "prettier --write",

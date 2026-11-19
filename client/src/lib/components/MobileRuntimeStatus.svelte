@@ -23,14 +23,14 @@
     if (session?.isCompacting) {
       next.push({
         label: 'Compacting…',
-        className: 'border-warning/20 bg-warning/10 text-status-reconnecting',
+        className: 'border-warning/20 bg-warning/10 text-foreground',
       });
     }
 
     if (navigationIndicator.visible) {
       next.push({
         label: session?.treeNavigationSummarizing ? 'Summarizing…' : 'Navigating…',
-        className: 'border-status-active/20 bg-status-active/10 text-status-active',
+        className: 'border-status-active/20 bg-status-active/10 text-foreground',
       });
     }
 
@@ -39,18 +39,18 @@
       if (restoreLabel) {
         next.push({
           label: restoreLabel,
-          className: 'border-status-active/20 bg-status-active/10 text-status-active',
+          className: 'border-status-active/20 bg-status-active/10 text-foreground',
         });
       }
     } else if (connection.phase === 'connecting' || connection.phase === 'backoff') {
       next.push({
         label: connection.phaseLabel,
-        className: 'border-warning/20 bg-warning/10 text-status-reconnecting',
+        className: 'border-warning/20 bg-warning/10 text-foreground',
       });
     } else if (connection.phase === 'idle') {
       next.push({
         label: 'Disconnected',
-        className: 'border-status-error/20 bg-status-error/10 text-status-error',
+        className: 'border-status-error/20 bg-status-error/10 text-foreground',
       });
     }
 

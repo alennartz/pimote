@@ -137,9 +137,9 @@
       <button
         class="pointer-events-auto flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm shadow-lg transition-opacity
 					{notif.notificationType === 'error'
-          ? 'border-destructive/30 bg-destructive/10 text-destructive'
+          ? 'border-destructive/30 bg-destructive/10 text-foreground'
           : notif.notificationType === 'warning'
-            ? 'border-warning/30 bg-warning/10 text-status-reconnecting'
+            ? 'border-warning/30 bg-warning/10 text-foreground'
             : 'border-border bg-background text-foreground'}"
         onclick={() => dismissNotification(notif.id)}
       >

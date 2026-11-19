@@ -134,7 +134,7 @@
 >
   <div class="text-destructive flex flex-col items-center gap-0.5" style:transform="translateY({chevronOffset}px)">
     <ChevronUp class="-mb-1 size-5 animate-pulse" aria-hidden="true" />
-    <div class="border-destructive/40 bg-destructive/10 flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium tracking-wide">
+    <div class="border-destructive/40 bg-destructive/10 text-foreground flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium tracking-wide">
       <PhoneOff class="size-3.5" aria-hidden="true" />
       <span>Swipe up to hang up</span>
     </div>
@@ -155,7 +155,7 @@
   </div>
 
   <div class="text-status-reconnecting flex flex-col items-center gap-0.5" style:transform="translateY({chevronOffset}px)">
-    <div class="border-status-reconnecting/40 bg-status-reconnecting/10 flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium tracking-wide">
+    <div class="border-status-reconnecting/40 bg-status-reconnecting/10 text-foreground flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium tracking-wide">
       <OctagonX class="size-3.5" aria-hidden="true" />
       <span>Swipe down to abort</span>
     </div>
