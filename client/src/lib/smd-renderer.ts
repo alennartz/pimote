@@ -1,11 +1,13 @@
 /**
- * Custom streaming-markdown renderer with highlight.js syntax highlighting.
+ * Custom streaming-markdown renderer with code highlighting and math rendering.
  *
  * Wraps smd's default_renderer to highlight fenced code _while it streams_:
  * each `add_text` into a <code> element (re)schedules a throttled re-highlight
  * over the full buffer, and `end_token` forces a final synchronous flush. The
  * language class is set by smd's set_attr(LANG) call; we read the hljs language
  * id from that `language-<id>` class rather than threading separate state.
+ * Completed equation nodes are handed to the lazy KaTeX renderer at the same
+ * token-closing seam; open equations remain source text while they stream.
  *
  * Safe because smd holds references to elements only (never text nodes) and
  * inside a fence only ever appends text: replacing the <code> element's
@@ -15,6 +17,7 @@
  */
 import * as smd from 'streaming-markdown';
 import { createIncrementalHighlighter } from './code-highlight.js';
+import { createMathRenderer } from './math-renderer.js';
 import { setCopyIcon } from './copy-icon.js';
 
 /**
@@ -98,6 +101,7 @@ function attachCopyButton(preEl: HTMLElement, codeEl: HTMLElement): void {
 export function createRenderer(container: HTMLElement): smd.Default_Renderer & { dispose: () => void } {
   const base = smd.default_renderer(container);
   const highlighter = createIncrementalHighlighter();
+  const mathRenderer = createMathRenderer();
 
   return {
     ...base,
@@ -106,6 +110,7 @@ export function createRenderer(container: HTMLElement): smd.Default_Renderer & {
     // fire into a detached node after the component is destroyed.
     dispose() {
       highlighter.dispose();
+      mathRenderer.dispose();
     },
     set_attr(data: smd.Default_Renderer_Data, type: smd.Attr, value: string) {
       // Sanitize href/src to prevent javascript: and other dangerous URL schemes
@@ -134,6 +139,9 @@ export function createRenderer(container: HTMLElement): smd.Default_Renderer & {
     },
     end_token(data: smd.Default_Renderer_Data) {
       const node = data.nodes[data.index];
+      if (node?.localName === 'equation-inline' || node?.localName === 'equation-block') {
+        mathRenderer.render(node, node.localName === 'equation-block');
+      }
       // CODE_FENCE and CODE_BLOCK both create <pre><code> — force the final
       // highlight pass when the <code> closes.
       if (node?.tagName === 'CODE' && node.parentElement?.tagName === 'PRE') {

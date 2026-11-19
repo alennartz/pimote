@@ -278,6 +278,43 @@ describe('createRenderer', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Equations
+  // ---------------------------------------------------------------------------
+  describe('equation rendering', () => {
+    it.each([
+      ['inline dollar delimiters', 'Inline $x^2$ here', 'equation-inline'],
+      ['inline slash delimiters', String.raw`Inline \(x^2\) here`, 'equation-inline'],
+      ['block dollar delimiters', '$$\nE = mc^2\n$$', 'equation-block'],
+      ['block slash delimiters', '\\[\nE = mc^2\n\\]', 'equation-block'],
+    ])('renders %s with KaTeX', async (_name, markdown, selector) => {
+      const container = renderComplete(markdown);
+      await vi.waitFor(() => expect(container.querySelector(`${selector} .katex`)).not.toBeNull());
+    });
+
+    it('keeps an open equation as source text until its delimiter closes', async () => {
+      const container = document.createElement('div');
+      const renderer = createRenderer(container);
+      const p = smd.parser(renderer);
+
+      smd.parser_write(p, 'Before $x^2');
+      const equation = container.querySelector('equation-inline');
+      expect(equation?.textContent).toContain('x^');
+      expect(equation?.querySelector('.katex')).toBeNull();
+
+      smd.parser_write(p, '$');
+      smd.parser_end(p);
+      await vi.waitFor(() => expect(equation?.querySelector('.katex')).not.toBeNull());
+      renderer.dispose();
+    });
+
+    it('does not parse dollar delimiters inside fenced code', () => {
+      const container = renderComplete('```text\n$x^2$\n```');
+      expect(container.querySelector('equation-inline')).toBeNull();
+      expect(container.querySelector('pre code')?.textContent).toContain('$x^2$');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Edge cases
   // ---------------------------------------------------------------------------
   describe('edge cases', () => {

@@ -134,6 +134,25 @@
     font-variant-ligatures: none;
   }
 
+  /* Math blocks — smd emits custom equation elements while they stream. */
+  .markdown-content :global(equation-inline) {
+    display: inline-block;
+    max-width: 100%;
+    overflow-x: auto;
+    vertical-align: middle;
+  }
+
+  .markdown-content :global(equation-block) {
+    display: block;
+    max-width: 100%;
+    margin: 0.75em 0;
+    overflow-x: auto;
+  }
+
+  .markdown-content :global(equation-block .katex-display) {
+    margin: 0;
+  }
+
   /* Code blocks — smd renders <pre><code>...</code></pre> */
   .markdown-content :global(pre) {
     margin: 0.75em 0;

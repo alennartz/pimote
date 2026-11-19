@@ -34,6 +34,7 @@
     "clsx": "^2.1.1",
     "codemirror": "^6.0.2",
     "highlight.js": "^11.11.1",
+    "katex": "^0.19.1",
     "streaming-markdown": "^0.2.15",
     "tailwind-merge": "^3.5.0",
     "tailwind-variants": "^3.2.2",
