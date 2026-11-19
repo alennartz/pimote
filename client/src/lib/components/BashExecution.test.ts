@@ -134,7 +134,9 @@ describe('BashExecution presentation contract', () => {
     const view = render(runningExecution({ output }));
     const pre = view.target.querySelector('pre.bounded-output-text');
 
-    expect(pre?.innerHTML).toContain('<span style="color:#0A0">ok</span>');
+    const colored = pre?.querySelector('span[style*="color"]');
+    expect(colored?.textContent).toBe('ok');
+    expect(colored?.getAttribute('style')).toContain('color:');
     expect(pre?.innerHTML).toContain('&lt;img src=x');
     expect(view.target.querySelector('img')).toBeNull();
 

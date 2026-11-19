@@ -206,7 +206,9 @@ describe('tool results', () => {
     await tick();
 
     const pre = target.querySelector('.tool-content pre.bounded-output-text');
-    expect(pre?.innerHTML).toContain('<span style="color:#A00">red</span>');
+    const colored = pre?.querySelector('span[style*="color"]');
+    expect(colored?.textContent).toBe('red');
+    expect(colored?.getAttribute('style')).toContain('color:');
     expect(pre?.innerHTML).toContain('&lt;img src=x');
     expect(target.querySelector('.tool-content img')).toBeNull();
   });

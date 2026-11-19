@@ -125,7 +125,7 @@
       {/if}
     </button>
   {/if}
-  <!-- ansiToHtml escapes input text before creating fixed style spans. -->
+  <!-- ansiToHtml escapes input and applies theme-aware ANSI color variables. -->
   <CollapsibleText
     bind:expanded
     bind:bodyEl

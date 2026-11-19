@@ -28,6 +28,8 @@ The example is intentionally abbreviated. It is not a loadable standalone theme.
 
 A standalone `ui` map defines `background`, `foreground`, `card`, `card-foreground`, `popover`, `popover-foreground`, `primary`, `primary-foreground`, `secondary`, `secondary-foreground`, `muted`, `muted-foreground`, `accent`, `accent-foreground`, `destructive`, `warning`, `warning-foreground`, `border`, `input`, `ring`, `chart-1`, `chart-2`, `chart-3`, `chart-4`, `chart-5`, `sidebar`, `sidebar-foreground`, `sidebar-primary`, `sidebar-primary-foreground`, `sidebar-accent`, `sidebar-accent-foreground`, `sidebar-border`, `sidebar-ring`, `status-active`, `status-streaming`, `status-connected`, `status-error`, `status-reconnecting`, `surface-sunken`, `surface-raised`, `surface-subtle`, `surface-hover`, `error-accent`, `error-surface`, `error-foreground`, `error-avatar-fg`, `skill-accent`, `skill-surface`, `skill-foreground`, `skill-foreground-hover`, `bash-accent`, `custom-accent`, `custom-surface`, `custom-foreground`, `custom-foreground-hover`, `link`, `link-hover`, `avatar-bg`, `avatar-fg`, and `shadow-color`.
 
+Use `status-connected` and `status-streaming` for success, `status-reconnecting` and `warning` for attention, `status-error` and `destructive` for errors, and `status-active` for the active accent. These UI roles are separate from the editor's ANSI palette. Themes can reuse palette swatches across them.
+
 ### Editor roles
 
 The `editor.surface` map defines `background`, `foreground`, `selection`, `cursor`, `active-line`, `gutter-background`, `gutter-foreground`, `line-number`, `active-line-number`, `matching-bracket`, and `search-match`.
@@ -40,7 +42,7 @@ The `editor.terminal` map defines `black`, `red`, `green`, `yellow`, `blue`, `ma
 
 Pimote loads built-ins, extension files in deterministic discovery order, then `$XDG_CONFIG_HOME/pimote/themes.json` (normally `~/.config/pimote/themes.json`). The first valid definition for an ID wins. Extension and user definitions cannot replace a built-in ID. Invalid entries produce diagnostics and do not block other sources. An invalid user edit leaves its last valid contribution active. Cycles, missing inheritance bases, unknown palette swatches, missing roles, and invalid CSS colors reject only the affected theme. Contrast is not checked.
 
-The eight built-ins are `pimote/light`, `pimote/dark`, `dracula/dracula`, `tokyo-night/tokyo-night`, `nord/nord`, `gruvbox/dark`, `solarized/light`, and `catppuccin/mocha`. IDs use the stable `publisher/theme-name` form.
+The nine built-ins are `pimote/light`, `pimote/dark`, `dracula/dracula`, `tokyo-night/tokyo-night`, `nord/nord`, `gruvbox/dark`, `solarized/light`, `catppuccin/mocha`, and `catppuccin/latte`. IDs use the stable `publisher/theme-name` form.
 
 ## Defaults and profiles
 

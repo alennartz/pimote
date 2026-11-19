@@ -56,7 +56,9 @@ describe('BoundedOutput', () => {
     await tick();
 
     const pre = target.querySelector('pre');
-    expect(pre?.innerHTML).toContain('<span style="color:#A00">red</span>');
+    const colored = pre?.querySelector('span[style*="color"]');
+    expect(colored?.textContent).toBe('red');
+    expect(colored?.getAttribute('style')).toContain('color:');
     expect(pre?.innerHTML).toContain('&lt;img src=x');
     expect(pre?.textContent).toBe('red <img src=x onerror=alert(1)>');
     expect(target.querySelector('img')).toBeNull();

@@ -228,8 +228,13 @@ describe('ANSI theme rendering', () => {
         '#ffffff',
       ];
       const cube = [0, 95, 135, 175, 215, 255];
+      const sampleFor = (index: number) => index.toString().padStart(3, '0');
       for (const theme of [terminalLight, terminalDark]) {
         installThemeVariables(theme);
+        const samples = Array.from({ length: 256 }, (_, index) => sampleFor(index));
+        parent.innerHTML = ansiToHtml(samples.map((sample, index) => `\u001b[${code};5;${index}m${sample}\u001b[0m`).join(''));
+        expect(parent.textContent).toBe(samples.join(''));
+
         for (let index = 0; index < 256; index++) {
           let expected: string;
           if (index < 16) expected = originalBase[index];
@@ -240,7 +245,7 @@ describe('ANSI theme rendering', () => {
             const level = 8 + (index - 232) * 10;
             expected = `rgb(${level}, ${level}, ${level})`;
           }
-          const element = ansiElement(parent, `\u001b[${code};5;${index}m`);
+          const element = tokenElement(parent, sampleFor(index));
           expect(renderedColor(element, property), `index ${index} in ${theme.id}`).toBe(cssColor(expected));
         }
       }

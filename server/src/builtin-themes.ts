@@ -4,12 +4,15 @@ import type { AnsiColorName, EditorSurfaceRole, EditorSyntaxRole, ThemeDefinitio
  * Palette provenance:
  * - Pimote Light/Dark use the project UI tokens in client/src/routes/layout.css.
  * - Dracula: https://github.com/dracula/dracula-theme (MIT).
- * - Tokyo Night: https://github.com/enkia/tokyo-night-vscode-theme (MIT).
+ * - Tokyo Night: https://github.com/tokyo-night/tokyo-night-vscode-theme (MIT).
  * - Nord: https://www.nordtheme.com/ (MIT).
  * - Gruvbox: https://github.com/morhetz/gruvbox (MIT).
  * - Solarized: https://ethanschoonover.com/solarized/ (MIT).
- * - Catppuccin: https://github.com/catppuccin/catppuccin (MIT).
+ * - Catppuccin colors: https://github.com/catppuccin/palette/blob/main/palette.json (MIT).
+ * - Catppuccin terminal palettes: https://github.com/catppuccin/windows-terminal; Latte: https://github.com/catppuccin/windows-terminal/blob/main/latte.json (MIT).
  *
+ * UI status colors use the themes' semantic success, warning, and error colors;
+ * terminal ANSI slots remain a separate palette.
  * These are kept as source literals. The server validates them with colorjs.io
  * and never converts or derives colors while loading a catalog.
  */
@@ -446,6 +449,7 @@ function thirdParty(
     string: string;
     number: string;
     keyword: string;
+    status: { connected: string; warning: string; error: string };
     terminal: Partial<Record<AnsiColorName, string>>;
     surface: string;
     raised: string;
@@ -458,7 +462,6 @@ function thirdParty(
     errorSurface: string;
   },
 ): ThemeDefinition {
-  const red = colors.terminal.red ?? colors.accent;
   const green = colors.terminal.green ?? colors.accent;
   const yellow = colors.terminal.yellow ?? colors.accent;
   const blue = colors.terminal.blue ?? colors.accent;
@@ -479,8 +482,8 @@ function thirdParty(
     'muted-foreground': colors.comment,
     accent: colors.muted,
     'accent-foreground': colors.foreground,
-    destructive: red,
-    warning: yellow,
+    destructive: colors.status.error,
+    warning: colors.status.warning,
     'warning-foreground': colors.background,
     border: colors.border,
     input: colors.border,
@@ -499,17 +502,17 @@ function thirdParty(
     'sidebar-border': colors.border,
     'sidebar-ring': colors.accent,
     'status-active': colors.accent,
-    'status-streaming': green,
-    'status-connected': green,
-    'status-error': red,
-    'status-reconnecting': yellow,
+    'status-streaming': colors.status.connected,
+    'status-connected': colors.status.connected,
+    'status-error': colors.status.error,
+    'status-reconnecting': colors.status.warning,
     'surface-sunken': colors.surface,
     'surface-raised': colors.raised,
     'surface-subtle': colors.muted,
     'surface-hover': colors.hover,
-    'error-accent': red,
+    'error-accent': colors.status.error,
     'error-surface': colors.errorSurface,
-    'error-foreground': red,
+    'error-foreground': colors.status.error,
     'error-avatar-fg': colors.foreground,
     'skill-accent': cyan,
     'skill-surface': colors.surface,
@@ -582,6 +585,7 @@ export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
     string: '#f1fa8c',
     number: '#bd93f9',
     keyword: '#ff79c6',
+    status: { connected: '#50fa7b', warning: '#ffb86c', error: '#ff5555' },
     terminal: {
       black: '#21222c',
       red: '#ff5555',
@@ -620,10 +624,11 @@ export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
     string: '#9ece6a',
     number: '#ff9e64',
     keyword: '#bb9af7',
+    status: { connected: '#9ece6a', warning: '#e0af68', error: '#f7768e' },
     terminal: {
       black: '#15161e',
       red: '#f7768e',
-      green: '#41a6b5',
+      green: '#73daca',
       yellow: '#e0af68',
       blue: '#7aa2f7',
       magenta: '#bb9af7',
@@ -658,6 +663,7 @@ export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
     string: '#a3be8c',
     number: '#b48ead',
     keyword: '#81a1c1',
+    status: { connected: '#a3be8c', warning: '#ebcb8b', error: '#bf616a' },
     terminal: {
       black: '#3b4252',
       red: '#bf616a',
@@ -696,6 +702,7 @@ export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
     string: '#b8bb26',
     number: '#d3869b',
     keyword: '#fb4934',
+    status: { connected: '#b8bb26', warning: '#fe8019', error: '#fb4934' },
     terminal: {
       black: '#282828',
       red: '#cc241d',
@@ -734,6 +741,7 @@ export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
     string: '#2aa198',
     number: '#d33682',
     keyword: '#859900',
+    status: { connected: '#859900', warning: '#cb4b16', error: '#dc322f' },
     terminal: {
       black: '#073642',
       red: '#dc322f',
@@ -772,6 +780,7 @@ export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
     string: '#a6e3a1',
     number: '#fab387',
     keyword: '#f38ba8',
+    status: { connected: '#a6e3a1', warning: '#fab387', error: '#f38ba8' },
     terminal: {
       black: '#45475a',
       red: '#f38ba8',
@@ -799,6 +808,45 @@ export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
     matchingBracket: '#cba6f7',
     searchMatch: '#f9e2af',
     errorSurface: '#3a222d',
+  }),
+  thirdParty('catppuccin/latte', 'Catppuccin Latte', 'light', {
+    background: '#eff1f5',
+    foreground: '#4c4f69',
+    accent: '#8839ef',
+    muted: '#e6e9ef',
+    border: '#bcc0cc',
+    comment: '#9ca0b0',
+    string: '#40a02b',
+    number: '#fe640b',
+    keyword: '#d20f39',
+    status: { connected: '#40a02b', warning: '#fe640b', error: '#d20f39' },
+    terminal: {
+      black: '#5c5f77',
+      red: '#d20f39',
+      green: '#40a02b',
+      yellow: '#df8e1d',
+      blue: '#1e66f5',
+      magenta: '#ea76cb',
+      cyan: '#179299',
+      white: '#acb0be',
+      'bright-black': '#acb0be',
+      'bright-red': '#d20f39',
+      'bright-green': '#40a02b',
+      'bright-yellow': '#df8e1d',
+      'bright-blue': '#1e66f5',
+      'bright-magenta': '#ea76cb',
+      'bright-cyan': '#179299',
+      'bright-white': '#bcc0cc',
+    },
+    surface: '#e6e9ef',
+    raised: '#ccd0da',
+    hover: '#bcc0cc',
+    selection: '#acb0be',
+    cursor: '#4c4f69',
+    lineNumber: '#8c8fa1',
+    matchingBracket: '#df8e1d',
+    searchMatch: '#fe640b',
+    errorSurface: '#e6e9ef',
   }),
 ];
 

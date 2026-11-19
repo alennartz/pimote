@@ -479,12 +479,12 @@
   }
 
   :global(.subagent-state-icon.failed) {
-    color: var(--error-accent);
+    color: var(--status-error);
   }
 
   :global(.subagent-state-icon.spinning) {
     animation: subagent-spin 1s linear infinite;
-    color: var(--custom-accent);
+    color: var(--status-active);
   }
 
   @keyframes subagent-spin {
@@ -536,7 +536,7 @@
   }
 
   .subagent-status.active {
-    color: var(--custom-foreground);
+    color: var(--status-active);
   }
 
   .subagent-body {

@@ -16,13 +16,23 @@ function catalog(overrides: Partial<ThemeCatalogOptions> = {}): ThemeCatalog {
 }
 
 describe('ThemeCatalog', () => {
-  it('ships all eight named built-in themes as complete, valid palettes', async () => {
+  it('ships all nine named built-in themes as complete, valid palettes', async () => {
     const service = catalog({ builtinThemes: builtinThemeDefinitions() });
     const snapshot = await service.load();
     expect(snapshot.themes.map((entry) => entry.id)).toEqual(
-      expect.arrayContaining(['pimote/light', 'pimote/dark', 'dracula/dracula', 'tokyo-night/tokyo-night', 'nord/nord', 'gruvbox/dark', 'solarized/light', 'catppuccin/mocha']),
+      expect.arrayContaining([
+        'pimote/light',
+        'pimote/dark',
+        'dracula/dracula',
+        'tokyo-night/tokyo-night',
+        'nord/nord',
+        'gruvbox/dark',
+        'solarized/light',
+        'catppuccin/mocha',
+        'catppuccin/latte',
+      ]),
     );
-    expect(snapshot.themes.filter((entry) => entry.source === 'builtin')).toHaveLength(8);
+    expect(snapshot.themes.filter((entry) => entry.source === 'builtin')).toHaveLength(9);
     const required = theme('fixture/theme');
     for (const entry of snapshot.themes) {
       expect(Object.keys(entry.ui)).toEqual(expect.arrayContaining(Object.keys(required.ui)));
@@ -30,6 +40,27 @@ describe('ThemeCatalog', () => {
       expect(Object.keys(entry.editor.syntax)).toEqual(expect.arrayContaining(Object.keys(required.editor.syntax)));
       expect(Object.keys(entry.editor.terminal)).toEqual(expect.arrayContaining(Object.keys(required.editor.terminal)));
     }
+  });
+
+  it.each([
+    ['dracula/dracula', '#50fa7b', '#ffb86c', '#ff5555', '#50fa7b'],
+    ['tokyo-night/tokyo-night', '#9ece6a', '#e0af68', '#f7768e', '#73daca'],
+    ['nord/nord', '#a3be8c', '#ebcb8b', '#bf616a', '#a3be8c'],
+    ['gruvbox/dark', '#b8bb26', '#fe8019', '#fb4934', '#98971a'],
+    ['solarized/light', '#859900', '#cb4b16', '#dc322f', '#859900'],
+    ['catppuccin/mocha', '#a6e3a1', '#fab387', '#f38ba8', '#a6e3a1'],
+    ['catppuccin/latte', '#40a02b', '#fe640b', '#d20f39', '#40a02b'],
+  ] as const)('uses palette-aligned semantic statuses and ANSI green for %s', (id, success, warning, error, ansiGreen) => {
+    const theme = builtinThemeDefinitions().find((entry) => entry.id === id);
+    expect(theme?.ui).toMatchObject({
+      'status-connected': success,
+      'status-streaming': success,
+      warning,
+      'status-reconnecting': warning,
+      destructive: error,
+      'status-error': error,
+    });
+    expect(theme?.editor.terminal.green).toBe(ansiGreen);
   });
 
   it('publishes built-ins, extensions, and user themes in source order', async () => {

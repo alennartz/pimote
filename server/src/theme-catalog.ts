@@ -188,7 +188,17 @@ const TERMINAL_ROLES: readonly AnsiColorName[] = [
   'bright-cyan',
   'bright-white',
 ];
-const BUILTIN_IDS = new Set(['pimote/light', 'pimote/dark', 'dracula/dracula', 'tokyo-night/tokyo-night', 'nord/nord', 'gruvbox/dark', 'solarized/light', 'catppuccin/mocha']);
+const BUILTIN_IDS = new Set([
+  'pimote/light',
+  'pimote/dark',
+  'dracula/dracula',
+  'tokyo-night/tokyo-night',
+  'nord/nord',
+  'gruvbox/dark',
+  'solarized/light',
+  'catppuccin/mocha',
+  'catppuccin/latte',
+]);
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 /** The complete set of shipped theme definitions. */

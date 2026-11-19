@@ -143,7 +143,7 @@
   }
 
   .agent-chip[data-agent-state='running'] .agent-chip-status:not(.agent-chip-persona) {
-    background: var(--status-connected);
+    background: var(--status-streaming);
   }
 
   .agent-chip[data-agent-state='waiting'] .agent-chip-status:not(.agent-chip-persona) {
@@ -151,12 +151,12 @@
   }
 
   .agent-chip[data-agent-state='idle'] .agent-chip-status:not(.agent-chip-persona) {
-    background: var(--custom-accent);
+    background: var(--muted-foreground);
   }
 
   .agent-chip[data-agent-state='errored'] .agent-chip-status:not(.agent-chip-persona),
   .agent-chip[data-agent-state='dead'] .agent-chip-status:not(.agent-chip-persona) {
-    background: var(--error-accent);
+    background: var(--status-error);
   }
 
   .agent-chip[data-agent-state='stopped'] .agent-chip-status:not(.agent-chip-persona) {
@@ -165,7 +165,7 @@
   }
 
   .agent-chip[data-agent-state='running'] .agent-chip-persona {
-    color: var(--status-connected);
+    color: var(--status-streaming);
   }
 
   .agent-chip[data-agent-state='waiting'] .agent-chip-persona {
@@ -173,12 +173,12 @@
   }
 
   .agent-chip[data-agent-state='idle'] .agent-chip-persona {
-    color: var(--custom-accent);
+    color: var(--muted-foreground);
   }
 
   .agent-chip[data-agent-state='errored'] .agent-chip-persona,
   .agent-chip[data-agent-state='dead'] .agent-chip-persona {
-    color: var(--error-accent);
+    color: var(--status-error);
   }
 
   .agent-chip-persona-name {
