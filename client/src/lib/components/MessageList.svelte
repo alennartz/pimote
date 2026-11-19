@@ -206,15 +206,23 @@
     };
   }
 
-  /** A row that ends above the sticky band moves every row below it; a row
-   *  that starts below it (the streaming row growing at the bottom) moves
-   *  nothing the sticky targets depend on. Recompute only for the former, so
-   *  steady streaming costs one rect read per frame instead of one per row. */
+  /** A row that ends above the sticky band moves every row below it. The active
+   *  streaming row also invalidates targets because a pinned follow can move
+   *  the viewport without a native scroll event. Keep both paths to one
+   *  refresh per frame. */
   function onRowsResized(entries: ResizeObserverEntry[]): void {
     const sc = scrollContainer;
     if (!sc) return;
     const fold = sc.getBoundingClientRect().top + 40;
+    const streamingRow = session?.streamingKey ? rowElements.get(session.streamingKey) : undefined;
     for (const entry of entries) {
+      // A pinned stream can move the viewport while its row grows below the
+      // sticky band, without producing a native scroll event. Recompute the
+      // target for that row even though its own top cannot cross the fold.
+      if (streamingRow && entry.target === streamingRow) {
+        updateStickyTargets();
+        return;
+      }
       if ((entry.target as HTMLElement).getBoundingClientRect().top < fold) {
         updateStickyTargets();
         return;

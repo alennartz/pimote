@@ -63,7 +63,7 @@ it('bounds streaming transcript geometry work to one refresh per display frame',
   sessionRegistry.switchTo('s1');
   const session = sessionRegistry.viewed!;
   session.messages = Array.from({ length: 100 }, (_, index) => ({
-    role: index % 10 === 0 ? ('user' as const) : ('assistant' as const),
+    role: index >= 50 && index % 10 === 0 ? ('user' as const) : ('assistant' as const),
     entryId: `entry-${index}`,
     content: [{ type: 'text' as const, text: `message ${index}` }],
   }));
@@ -80,7 +80,7 @@ it('bounds streaming transcript geometry work to one refresh per display frame',
   paint();
   const rows = [...target.querySelectorAll<HTMLElement>('.transcript-row')];
   let measurements = 0;
-  let firstVisibleRow = 50;
+  let firstVisibleRow = 0;
   for (const [index, row] of rows.entries()) {
     row.getBoundingClientRect = () => {
       measurements++;
@@ -88,6 +88,21 @@ it('bounds streaming transcript geometry work to one refresh per display frame',
     };
   }
   const container = target.querySelector<HTMLElement>('.message-list')!;
+  container.dispatchEvent(new Event('scroll'));
+  paint();
+  expect(target.querySelector('.sticky-preview')).toBeNull();
+
+  measurements = 0;
+  firstVisibleRow = 50;
+  for (const observer of observers) {
+    if (observer.targets.has(rows.at(-1)!)) {
+      observer.callback([{ target: rows.at(-1)! } as unknown as ResizeObserverEntry], observer as unknown as ResizeObserver);
+    }
+  }
+  paint();
+  expect(target.querySelector('.sticky-preview')?.textContent).toContain('message 90');
+
+  measurements = 0;
   for (let delta = 0; delta < 20; delta++) {
     session.streamingMessage.content[0].text += '.';
     flushSync();
