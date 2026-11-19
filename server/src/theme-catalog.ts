@@ -328,6 +328,7 @@ function resolveDefinitions(entries: readonly SourceEntry[], diagnostics: ThemeD
     candidates.set(entry.definition.id, list);
   });
   const resolved = new Map<string, ResolvedTheme>();
+  const resolvedCandidateIndexes = new Map<string, number>();
   const resolvedPalettes = new Map<string, Record<string, string>>();
   const resolving: string[] = [];
   const failed = new Set<number>();
@@ -365,6 +366,7 @@ function resolveDefinitions(entries: readonly SourceEntry[], diagnostics: ThemeD
             editor: { surface, syntax, terminal },
           };
           resolved.set(id, theme);
+          resolvedCandidateIndexes.set(id, candidate.index);
           resolvedPalettes.set(id, palette);
           return theme;
         } catch (error) {
@@ -383,13 +385,14 @@ function resolveDefinitions(entries: readonly SourceEntry[], diagnostics: ThemeD
       for (const candidate of options.filter((entry) => entry.source !== 'builtin'))
         diagnostics.push({ path: candidate.path, message: 'reserved built-in theme id', themeId: id, source: candidate.source });
     }
-    if (options.length > 1) {
-      for (const duplicate of options.slice(1)) {
+    resolveId(id);
+    const chosenIndex = resolvedCandidateIndexes.get(id);
+    if (options.length > 1 && chosenIndex !== undefined) {
+      for (const duplicate of options.filter((candidate) => candidate.index > chosenIndex)) {
         if (!BUILTIN_IDS.has(id) || duplicate.source === 'builtin')
           diagnostics.push({ path: duplicate.path, message: 'duplicate theme id; first valid definition wins', themeId: id, source: duplicate.source });
       }
     }
-    resolveId(id);
   }
   void failed;
   return entries
