@@ -4,6 +4,13 @@ import type { EditorSyntaxRole, ResolvedTheme, UiColorToken } from '../../shared
 export type ThemeAuditSeverity = 'warning' | 'error';
 export type ThemeAuditRelation = 'pair' | 'triple';
 
+export interface ThemeMappingFinding {
+  rule: string;
+  path: string;
+  message: string;
+  severity: ThemeAuditSeverity;
+}
+
 export interface ThemeAuditFinding {
   themeId: string;
   themeName: string;
@@ -24,6 +31,7 @@ export interface ThemeAuditReport {
   errorCount: number;
 }
 
+// These rules describe current component pairings. A token name alone does not create a contrast contract.
 const UI_PAIR_RULES: ReadonlyArray<{
   rule: string;
   relationship: string;
@@ -38,7 +46,6 @@ const UI_PAIR_RULES: ReadonlyArray<{
   { rule: 'ui.secondary', relationship: 'secondary-foreground on secondary', foreground: 'secondary-foreground', background: 'secondary', minimum: 4.5 },
   { rule: 'ui.muted', relationship: 'muted-foreground on muted', foreground: 'muted-foreground', background: 'muted', minimum: 3 },
   { rule: 'ui.accent', relationship: 'accent-foreground on accent', foreground: 'accent-foreground', background: 'accent', minimum: 4.5 },
-  { rule: 'ui.warning', relationship: 'warning-foreground on warning', foreground: 'warning-foreground', background: 'warning', minimum: 4.5 },
   { rule: 'ui.sidebar', relationship: 'sidebar-foreground on sidebar', foreground: 'sidebar-foreground', background: 'sidebar', minimum: 4.5 },
   {
     rule: 'ui.sidebar-primary',
@@ -48,11 +55,9 @@ const UI_PAIR_RULES: ReadonlyArray<{
     minimum: 4.5,
   },
   { rule: 'ui.sidebar-accent', relationship: 'sidebar-accent-foreground on sidebar-accent', foreground: 'sidebar-accent-foreground', background: 'sidebar-accent', minimum: 4.5 },
-  { rule: 'ui.error', relationship: 'error-foreground on error-surface', foreground: 'error-foreground', background: 'error-surface', minimum: 4.5 },
-  { rule: 'ui.skill', relationship: 'skill-foreground on skill-surface', foreground: 'skill-foreground', background: 'skill-surface', minimum: 4.5 },
-  { rule: 'ui.custom', relationship: 'custom-foreground on custom-surface', foreground: 'custom-foreground', background: 'custom-surface', minimum: 4.5 },
   { rule: 'ui.avatar', relationship: 'avatar-fg on avatar-bg', foreground: 'avatar-fg', background: 'avatar-bg', minimum: 3 },
-  { rule: 'ui.link', relationship: 'link on background', foreground: 'link', background: 'background', minimum: 4.5 },
+  { rule: 'ui.link-background', relationship: 'link on background', foreground: 'link', background: 'background', minimum: 4.5 },
+  { rule: 'ui.link-sunken', relationship: 'link on surface-sunken', foreground: 'link', background: 'surface-sunken', minimum: 4.5 },
 ];
 
 const STATUS_TEXT_ROLES: ReadonlyArray<{ role: UiColorToken; label: string }> = [
@@ -71,6 +76,20 @@ const DIFF_ROLES: ReadonlyArray<{ role: EditorSyntaxRole; label: string; backgro
 
 const COLOR_SPACE = 'oklch';
 const DIFF_TINT_AMOUNT = 0.1;
+
+const DIFF_MAPPING_CONTRACTS = [
+  { rule: 'mapping.editor.diff.addition-background', token: '--pimote-editor-diff-addition-background' },
+  { rule: 'mapping.editor.diff.deletion-background', token: '--pimote-editor-diff-deletion-background' },
+] as const;
+
+export function auditClientMappings(highlightThemeCss: string): ThemeMappingFinding[] {
+  return DIFF_MAPPING_CONTRACTS.filter(({ token }) => !highlightThemeCss.includes(token)).map(({ rule, token }) => ({
+    rule,
+    path: 'client/src/lib/highlight-theme.css',
+    message: `diff background must use the dedicated ${token} role`,
+    severity: 'error' as const,
+  }));
+}
 
 type ThreeCoordinates = [number, number, number];
 
@@ -169,10 +188,13 @@ function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
 
   auditPair(findings, theme, 'editor.body', 'editor foreground on background', surface.foreground, surface.background, 4.5, surface.background);
   auditPair(findings, theme, 'editor.selection', 'editor foreground on selection', surface.foreground, surface.selection, 4.5, surface.background);
-  auditPair(findings, theme, 'editor.matching-bracket', 'editor foreground on matching bracket', surface.foreground, surface['matching-bracket'], 3, surface.background);
+  auditPair(findings, theme, 'editor.matching-bracket', 'bracket syntax on matching bracket', syntax.bracket, surface['matching-bracket'], 3, surface.background);
   auditPair(findings, theme, 'editor.search-match', 'editor foreground on search match', surface.foreground, surface['search-match'], 3, surface.background);
 
-  for (const role of Object.keys(syntax) as EditorSyntaxRole[]) auditSyntaxTriple(findings, theme, role);
+  for (const role of Object.keys(syntax) as EditorSyntaxRole[]) {
+    auditSyntaxTriple(findings, theme, role);
+    auditPair(findings, theme, `editor.syntax.${role}.search-match`, `${role} syntax on search match`, syntax[role], surface['search-match'], 3, surface.background);
+  }
 
   for (const { role, label, background } of DIFF_ROLES) {
     const foreground = syntax[role];
@@ -185,7 +207,38 @@ function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
     auditPair(findings, theme, rule.rule, rule.relationship, ui[rule.foreground], ui[rule.background], rule.minimum, ui.background);
   }
 
-  auditPair(findings, theme, 'ui.destructive', 'destructive on background', ui.destructive, ui.background, 4.5, ui.background);
+  auditPair(
+    findings,
+    theme,
+    'ui.error-callout',
+    'error-foreground on assistant error surface',
+    ui['error-foreground'],
+    mixOklch(ui.background, ui['error-surface'], 0.55),
+    4.5,
+    ui.background,
+  );
+  auditPair(
+    findings,
+    theme,
+    'ui.skill-callout',
+    'skill-foreground on skill surface',
+    ui['skill-foreground'],
+    mixOklch(ui.background, ui['skill-surface'], 0.5),
+    4.5,
+    ui.background,
+  );
+  auditPair(
+    findings,
+    theme,
+    'ui.custom-callout',
+    'custom-foreground on custom surface',
+    ui['custom-foreground'],
+    mixOklch(ui.background, ui['custom-surface'], 0.5),
+    4.5,
+    ui.background,
+  );
+  auditPair(findings, theme, 'ui.link-skill', 'link on skill surface', ui.link, mixOklch(ui.background, ui['skill-surface'], 0.5), 4.5, ui.background);
+  auditPair(findings, theme, 'ui.link-custom', 'link on custom surface', ui.link, mixOklch(ui.background, ui['custom-surface'], 0.5), 4.5, ui.background);
   for (const { role, label } of STATUS_TEXT_ROLES) {
     const tintedSurface = mixOklch(ui.background, ui[role], DIFF_TINT_AMOUNT);
     auditPair(findings, theme, `ui.status.${label}`, `foreground on ${label} status tint`, ui.foreground, tintedSurface, 4.5, ui.background);

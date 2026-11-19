@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { builtinThemeDefinitions } from './builtin-themes.js';
 import { ThemeCatalog, type ThemeCatalogOptions } from './theme-catalog.js';
-import { auditThemes, formatThemeAudit } from './theme-audit.js';
+import { auditClientMappings, auditThemes, formatThemeAudit } from './theme-audit.js';
 
 interface CliOptions {
   files: string[];
@@ -80,17 +81,30 @@ async function main(): Promise<void> {
 
   const snapshot = await loadThemes(options.files);
   const report = auditThemes(snapshot.themes);
+  const repositoryRoot = process.cwd().endsWith('/server') ? join(process.cwd(), '..') : process.cwd();
+  const highlightThemeCss = await readFile(join(repositoryRoot, 'client/src/lib/highlight-theme.css'), 'utf8');
+  const mappingFindings = auditClientMappings(highlightThemeCss);
   if (options.json) {
-    console.log(JSON.stringify({ report, diagnostics: snapshot.diagnostics }, null, 2));
+    console.log(JSON.stringify({ report, mappingFindings, diagnostics: snapshot.diagnostics }, null, 2));
   } else {
     console.log(formatThemeAudit(report));
+    if (mappingFindings.length > 0) {
+      console.log('', 'Mapping violations:');
+      for (const finding of mappingFindings) console.log(`  ${finding.severity.toUpperCase()} ${finding.rule}: ${finding.message} (${finding.path})`);
+    }
     if (snapshot.diagnostics.length > 0) {
       console.log('', 'Catalog diagnostics:');
       for (const diagnostic of snapshot.diagnostics) console.log(`  ${diagnostic.path}: ${diagnostic.message}`);
     }
   }
 
-  if (snapshot.diagnostics.length > 0 || report.errorCount > 0 || (options.warningsAsErrors && report.warningCount > 0)) process.exitCode = 1;
+  if (
+    snapshot.diagnostics.length > 0 ||
+    mappingFindings.some((finding) => finding.severity === 'error') ||
+    report.errorCount > 0 ||
+    (options.warningsAsErrors && report.warningCount > 0)
+  )
+    process.exitCode = 1;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) void main();

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolvedTheme } from '../../shared/test/theme-fixtures.js';
-import { auditThemes, formatThemeAudit } from './theme-audit.js';
+import { auditClientMappings, auditThemes, formatThemeAudit } from './theme-audit.js';
 
 describe('theme audit', () => {
   it('reports pair and highlighted-background violations with their relationships', () => {
@@ -34,5 +34,26 @@ describe('theme audit', () => {
     const report = auditThemes([theme]);
 
     expect(report.findings.some((finding) => finding.rule === 'editor.syntax.variable')).toBe(false);
+  });
+
+  it('does not invent text contracts for accent tokens without a paired consumer', () => {
+    const theme = resolvedTheme('test/light');
+    theme.ui.background = '#ffffff';
+    theme.ui.destructive = '#ffffff';
+    theme.ui.warning = '#ffffff';
+    theme.ui['warning-foreground'] = '#ffffff';
+
+    const report = auditThemes([theme]);
+
+    expect(report.findings.some((finding) => finding.rule === 'ui.destructive')).toBe(false);
+    expect(report.findings.some((finding) => finding.rule === 'ui.warning')).toBe(false);
+  });
+
+  it('flags diff CSS without dedicated diff background roles', () => {
+    expect(auditClientMappings('.hljs-addition { background: var(--pimote-editor-active-line); }')).toEqual([
+      expect.objectContaining({ rule: 'mapping.editor.diff.addition-background' }),
+      expect.objectContaining({ rule: 'mapping.editor.diff.deletion-background' }),
+    ]);
+    expect(auditClientMappings('--pimote-editor-diff-addition-background: #dafbe1; --pimote-editor-diff-deletion-background: #ffebe9;')).toEqual([]);
   });
 });
