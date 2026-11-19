@@ -1,6 +1,6 @@
 # Settings and configuration
 
-Pimote has two configuration surfaces. The **native config** is Pimote's own JSON file. The **global Settings catalog** is the set of instruction and settings files the dashboard edits. This page describes both, plus what each native field changes and when it applies.
+Pimote's **native config** is its own JSON file. The dashboard's **Settings** dialog contains Appearance and User tabs plus the **global Settings catalog** of instruction and settings files. This page describes the native config and file catalog, plus what each native field changes and when it applies. See [Themes](themes.md) for Appearance and theme files.
 
 Project-scoped pi settings never appear in the catalog. Use pi's own `.pi` files for those.
 

@@ -1,6 +1,6 @@
 # Authoring a Pimote extension
 
-A Pimote extension is a process-global module. It adds folder sources and Settings files to the whole server, so it runs once for every session. Use one when the folders or instruction files you want in the dashboard no scan root can reach.
+A Pimote extension is a process-global module. It adds folder sources, Settings files, and themes to the whole server. Use one when the folders or instruction files you want in the dashboard no scan root can reach, or when you want to contribute a theme.
 
 A Pimote extension has no session and no UI. For session behaviour, write a pi extension with `@pimote/sdk/panels`, `/activity`, or `/subagents`.
 
@@ -73,7 +73,7 @@ A default export that is not a function fails the entry.
 
 ## Factory context
 
-The context has three members and nothing else:
+The context has four members and nothing else:
 
 | Member                           | Contract                                                                                           |
 | -------------------------------- | -------------------------------------------------------------------------------------------------- |

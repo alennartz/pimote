@@ -47,9 +47,9 @@ sequenceDiagram
 
 ### Protocol
 
-Defines the TypeScript wire contract for the server and web client.
+Defines the TypeScript wire contract for the server and web client, including the PWA theme catalog and selection protocol.
 
-**Responsibilities:** commands and typed responses, session and folder contracts, lifecycle and live events, replay and resync envelopes, transcript, usage and image data, subagent views, extension UI, panels and downloads, voice, login, push, settings and update vocabulary
+**Responsibilities:** commands and typed responses, session and folder contracts, lifecycle and live events, replay and resync envelopes, transcript, usage and image data, subagent views, extension UI, panels and downloads, voice, login, push, settings and update vocabulary, theme definitions and resolved catalogs, catalog revision events and profile selection
 
 **Dependencies:** SDK for canonical subagent, panel and folder types. Android mirrors its consumed wire subset by hand and skips unknown event types.
 
@@ -59,9 +59,9 @@ Defines the TypeScript wire contract for the server and web client.
 
 ### Server
 
-Hosts pi `AgentSession` instances and exposes the HTTP and WebSocket API.
+Hosts pi `AgentSession` instances and exposes the HTTP and WebSocket API, including theme catalog and preference services.
 
-**Responsibilities:** CLI and startup, validated runtime configuration, Pimote extension host and Settings catalog, HTTP/PWA and WebSocket APIs, pi session lifecycle and wire projection, observer delivery and replay/resync, subagent views, folder discovery/indexing/listing/curation, guarded hub/worktree management, manager tools, session records and metadata, image/file delivery, provider login, web push and update checks
+**Responsibilities:** CLI and startup, validated runtime configuration, Pimote extension host and Settings catalog, HTTP/PWA and WebSocket APIs, pi session lifecycle and wire projection, observer delivery and replay/resync, subagent views, folder discovery/indexing/listing/curation, guarded hub/worktree management, manager tools, session records and metadata, image/file delivery, provider login, web push and update checks, built-in/extension/user theme catalog validation and resolution, theme source watching and revision notifications, live default configuration and per-user theme persistence
 
 The server has no client-auth layer; deployment supplies access control.
 
@@ -77,9 +77,9 @@ The server has no client-auth layer; deployment supplies access control.
 
 ### Agent Extensions
 
-Pi session extensions for voice, static hosting and one-shot downloads.
+Pi session and process-global extensions for voice, static hosting, one-shot downloads and registered theme files.
 
-**Responsibilities:** voice-call orchestration and speech bridge, static-host publishing, file-download offers, extension prompts, panel and EventBus integration
+**Responsibilities:** voice-call orchestration and speech bridge, static-host publishing, file-download offers, extension prompts, panel and EventBus integration, ordered theme-file registration through the global extension host
 
 The server-root voice orchestrator and shared JSON store bridge these extensions to server lifecycle and persistence.
 
@@ -99,7 +99,7 @@ The server-root voice orchestrator and shared JSON store bridge these extensions
 
 Installable SvelteKit PWA for browsing, controlling and rendering remote pi sessions.
 
-**Responsibilities:** WebSocket connection and session registry, transcript streaming and resync, root and child views, composer and command dispatch, dashboard and manager workflows, settings and file editors, conversation and tree navigation, cost and usage views, extension UI and panels, voice calls, downloads and push, provider login, PWA updates and offline behavior
+**Responsibilities:** WebSocket connection and session registry, transcript streaming and resync, root and child views, composer and command dispatch, dashboard and manager workflows, settings and file editors, conversation and tree navigation, cost and usage views, extension UI and panels, voice calls, downloads and push, provider login, PWA updates and offline behavior, paired UI/editor/terminal palettes, Appearance preview/save/cancel and user-scoped theme cache, early theme bootstrap and static-report bridge
 
 **Dependencies:** Protocol for wire types, Server's HTTP and WebSocket API
 
@@ -111,7 +111,7 @@ Installable SvelteKit PWA for browsing, controlling and rendering remote pi sess
 
 Published `@pimote/sdk` package for session and process-global extensions.
 
-**Responsibilities:** panel card types and handles, background-activity polling, subagent provider/topology/lease contracts, folder-source types, process-global Pimote extension context
+**Responsibilities:** panel card types and handles, background-activity polling, subagent provider/topology/lease contracts, folder-source types, process-global Pimote extension context, `context.themes.registerFile` contract for packaged theme JSON
 
 **Dependencies:** pi coding-agent SDK types
 
@@ -135,7 +135,7 @@ Native Kotlin client for voice-first access and Android Auto.
 
 Builds, packages, tests, installs and manually exercises Pimote's npm and Android workspaces.
 
-**Responsibilities:** npm build/package/release and dependency-patch workflows, install and service scripts, test configuration, manual browser/API smoke drivers, Docker-based Android builds and device tools
+**Responsibilities:** npm build/package/release and dependency-patch workflows, install and service scripts, test configuration, manual browser/API smoke drivers including the client-themes Appearance and static-report bridge smoke, Docker-based Android builds and device tools
 
 **Dependencies:** Server, Web Client, Agent Extensions, SDK and Android Client
 

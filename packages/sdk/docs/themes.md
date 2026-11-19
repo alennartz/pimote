@@ -30,7 +30,7 @@ The `editor.terminal` map requires `black`, `red`, `green`, `yellow`, `blue`, `m
 
 ## IDs, sources, and validation
 
-Use IDs such as `publisher/theme-name`. Built-in IDs are reserved. Pimote loads built-ins first, then extension files in host discovery order, then the user's `~/.config/pimote/themes.json`. The first valid duplicate wins. Invalid files or themes produce diagnostics and do not stop other extensions. Cycles, missing bases, unknown palette swatches, missing roles, and invalid CSS colors reject only the affected theme. Color contrast is not enforced.
+Use IDs such as `publisher/theme-name`. Built-in IDs are reserved. Pimote loads built-ins first, then extension files in host discovery order, then the user's `$XDG_CONFIG_HOME/pimote/themes.json` (normally `~/.config/pimote/themes.json`). The first valid duplicate wins. Invalid files or themes produce diagnostics and do not stop other extensions. Cycles, missing bases, unknown palette swatches, missing roles, and invalid CSS colors reject only the affected theme. Color contrast is not enforced.
 
 ## User defaults and PWA behavior
 
