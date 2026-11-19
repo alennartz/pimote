@@ -27,6 +27,17 @@ describe('pimote-docs prompt section', () => {
     expect(event.systemPromptOptions.sections[PIMOTE_DOCS_SECTION]).toBe(pimoteDocsSection());
   });
 
+  it.each(['docs/shipped/themes.md', 'packages/sdk/docs/themes.md'])('makes the %s guide available to every session', (guide) => {
+    const { handlers } = setup();
+    const event = { systemPromptOptions: { sections: {} as Record<string, string> } };
+
+    handlers.get('before_agent_start')?.[0](event, {});
+
+    const section = event.systemPromptOptions.sections[PIMOTE_DOCS_SECTION];
+    const packageRoot = fileURLToPath(new URL('../../../', import.meta.url));
+    expect(section).toContain(join(packageRoot, guide));
+  });
+
   it('lists every shipped file by absolute path with its purpose', () => {
     const section = pimoteDocsSection('/install/root');
     const lines = section.split('\n').slice(1);

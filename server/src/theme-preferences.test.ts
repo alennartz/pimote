@@ -1,23 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import type { ResolvedTheme, ThemeCatalogSnapshot } from '../../shared/dist/index.js';
+import type { ThemeCatalogSnapshot } from '../../shared/dist/index.js';
+import { resolvedTheme } from '../../shared/test/theme-fixtures.js';
 import { ThemePreferences } from './theme-preferences.js';
 
-function resolved(id: string, colorScheme: 'light' | 'dark' = 'dark'): ResolvedTheme {
-  return { id, name: id, source: id.startsWith('pimote/') ? 'builtin' : 'user', colorScheme, ui: {}, editor: { surface: {}, syntax: {}, terminal: {} } } as ResolvedTheme;
-}
-
-function service(selectedThemeId: string | null = null): ThemePreferences {
+function service(selectedThemeId: string | null = null, defaultThemeId = 'pimote/light'): ThemePreferences {
   const snapshot: ThemeCatalogSnapshot = {
     revision: 1,
-    defaultThemeId: 'pimote/light',
-    themes: [resolved('pimote/light', 'light'), resolved('pimote/dark'), resolved('alice/custom')],
+    defaultThemeId,
+    themes: [resolvedTheme('pimote/light'), resolvedTheme('pimote/dark'), resolvedTheme('alice/custom', 'Alice Custom', 'user')],
     diagnostics: [],
   };
   return new ThemePreferences({
     catalog: { snapshot: () => snapshot },
     profiles: {
       selectedTheme: () => selectedThemeId,
-      setSelectedTheme: async () => true,
+      setSelectedTheme: async (_user, themeId) => {
+        selectedThemeId = themeId;
+        return true;
+      },
     },
   });
 }
@@ -28,7 +28,9 @@ describe('ThemePreferences', () => {
   });
 
   it('persists a valid theme ID and resolves it as the active theme', async () => {
-    await expect(service().setTheme('alice', 'pimote/dark')).resolves.toMatchObject({ selectedThemeId: 'pimote/dark', activeThemeId: 'pimote/dark' });
+    const prefs = service();
+    await expect(prefs.setTheme('alice', 'pimote/dark')).resolves.toMatchObject({ selectedThemeId: 'pimote/dark', activeThemeId: 'pimote/dark' });
+    expect(prefs.resolve('alice')).toMatchObject({ selectedThemeId: 'pimote/dark', activeThemeId: 'pimote/dark' });
   });
 
   it('accepts null to follow the configured server default', async () => {
@@ -36,15 +38,46 @@ describe('ThemePreferences', () => {
   });
 
   it('rejects IDs that are not in the current catalog', async () => {
-    await expect(service().setTheme('alice', 'missing/theme')).rejects.toThrow(/theme/i);
+    const prefs = service('pimote/dark');
+    await expect(prefs.setTheme('alice', 'missing/theme')).rejects.toThrow();
+    expect(prefs.resolve('alice').selectedThemeId).toBe('pimote/dark');
   });
 
   it('falls back to the server default when a saved theme disappears but keeps the saved ID', () => {
     expect(service('missing/theme').resolve('alice')).toMatchObject({ selectedThemeId: 'missing/theme', activeThemeId: 'pimote/light' });
   });
 
+  it('updates followers when the default changes without replacing saved overrides', () => {
+    let defaultThemeId = 'pimote/light';
+    const selections = new Map<string, string | null>([
+      ['alice', null],
+      ['bob', 'alice/custom'],
+    ]);
+    const prefs = new ThemePreferences({
+      catalog: {
+        snapshot: () => ({
+          revision: 1,
+          defaultThemeId,
+          themes: [resolvedTheme('pimote/light'), resolvedTheme('pimote/dark'), resolvedTheme('alice/custom', 'Alice Custom', 'user')],
+          diagnostics: [],
+        }),
+      },
+      profiles: {
+        selectedTheme: (user) => selections.get(user) ?? null,
+        setSelectedTheme: async (user, themeId) => {
+          selections.set(user, themeId);
+          return true;
+        },
+      },
+    });
+    expect(prefs.resolve('alice').activeThemeId).toBe('pimote/light');
+    defaultThemeId = 'pimote/dark';
+    expect(prefs.resolve('alice').activeThemeId).toBe('pimote/dark');
+    expect(prefs.resolve('bob')).toMatchObject({ selectedThemeId: 'alice/custom', activeThemeId: 'alice/custom' });
+  });
+
   it('falls back to Pimote Light when the configured server default is unavailable', () => {
-    const prefs = service();
+    const prefs = service(null, 'missing/default');
     expect(prefs.resolve('alice')).toMatchObject({ activeThemeId: 'pimote/light', theme: expect.objectContaining({ id: 'pimote/light' }) });
   });
 });

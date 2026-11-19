@@ -81,6 +81,24 @@ describe('serveStaticHostRoute', () => {
     expect(r.body).toBe('<h1>hi</h1>');
   });
 
+  it('serves report HTML and styles verbatim with or without the optional theme helper', async () => {
+    const custom = '<!doctype html>\n<html><head><link rel="stylesheet" href="style.css"></head><body>Résumé</body></html>\n';
+    const themed = '<!doctype html>\n<html><head><script src="/pwa/theme-bridge.js"></script></head><body>Résumé</body></html>\n';
+    const css = ':root { --pimote-ui-background: #abcdef; }\nbody { color: rebeccapurple; }\n';
+    const folder = await bundle('reports', { 'index.html': custom, 'themed.html': themed, 'style.css': css });
+    registry.register({ slug: 'reports', folderPath: folder, sessionId: 's', cardMetadata: { title: 'Reports' } });
+
+    for (const [path, expected] of [
+      ['/', custom],
+      ['/themed.html', themed],
+      ['/style.css', css],
+    ]) {
+      const result = await get(`/s/reports${path}`);
+      expect(result.status).toBe(200);
+      expect(result.body).toBe(expected);
+    }
+  });
+
   it('serves a nested asset and infers content-type from the extension', async () => {
     const folder = await bundle('demo', {
       'index.html': 'x',

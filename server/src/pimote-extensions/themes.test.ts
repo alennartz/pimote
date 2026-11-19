@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { createPimoteExtensionHost } from './index.js';
 
 let extensionDirectory: string;
@@ -21,7 +21,7 @@ async function writeExtension(path: string, source: string): Promise<void> {
 
 describe('Pimote extension theme registration', () => {
   it('resolves registered theme files relative to the registering entry', async () => {
-    const entry = join(extensionDirectory, 'publisher', 'entry.mjs');
+    const entry = join(extensionDirectory, 'publisher', 'index.mjs');
     await writeExtension(
       entry,
       ['export default (context) => {', "  context.themes.registerFile('./themes/night.json');", "  context.themes.registerFile('~/shared/day.json');", '};'].join('\n'),
@@ -29,7 +29,7 @@ describe('Pimote extension theme registration', () => {
 
     const host = createPimoteExtensionHost({ extensionDirectory });
     await expect(host.start()).resolves.toMatchObject({
-      themeFiles: [resolve(dirname(entry), 'themes/night.json'), expect.stringMatching(/shared[\\/]day\.json$/)],
+      themeFiles: [resolve(dirname(entry), 'themes/night.json'), join(homedir(), 'shared/day.json')],
     });
     await host.shutdown();
   });

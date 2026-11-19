@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { UserProfiles } from './user-profiles.js';
@@ -43,9 +43,12 @@ describe('UserProfiles — theme selection', () => {
     const profiles = new UserProfiles(storePath());
     await profiles.load();
 
+    await profiles.link('alice', { sessionId: 'one', folderPath: '/workspace' });
     await profiles.setSelectedTheme('alice', 'pimote/dark');
     await expect(profiles.setSelectedTheme('alice', null)).resolves.toBe(true);
     expect(profiles.selectedTheme('alice')).toBeNull();
+    expect(profiles.get('alice')).toEqual([{ sessionId: 'one', folderPath: '/workspace' }]);
+    expect(profiles.isFresh('alice')).toBe(false);
   });
 
   it('does not change another user when one profile changes theme', async () => {
@@ -59,18 +62,16 @@ describe('UserProfiles — theme selection', () => {
     expect(profiles.selectedTheme('bob')).toBe('nord/nord');
   });
 
-  it('keeps theme selections in the existing profile document shape', async () => {
+  it('loads existing profiles without theme fields and preserves their sessions', async () => {
     const path = storePath();
+    await writeFile(path, JSON.stringify({ version: 1, users: { alice: { sessions: [{ sessionId: 'one', folderPath: '/workspace' }] } } }), 'utf8');
     const profiles = new UserProfiles(path);
     await profiles.load();
+    expect(profiles.selectedTheme('alice')).toBeNull();
     await profiles.setSelectedTheme('alice', 'pimote/dark');
-
-    const raw = JSON.parse(await readFile(path, 'utf8')) as { users: { alice: { selectedThemeId: string } } };
-    expect(raw.users.alice.selectedThemeId).toBe('pimote/dark');
-
-    await writeFile(path, JSON.stringify({ version: 1, users: { alice: { sessions: [], selectedThemeId: null } } }), 'utf8');
     const reloaded = new UserProfiles(path);
     await reloaded.load();
-    expect(reloaded.selectedTheme('alice')).toBeNull();
+    expect(reloaded.selectedTheme('alice')).toBe('pimote/dark');
+    expect(reloaded.get('alice')).toEqual([{ sessionId: 'one', folderPath: '/workspace' }]);
   });
 });

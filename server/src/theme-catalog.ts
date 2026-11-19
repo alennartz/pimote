@@ -3,6 +3,8 @@ import type { ThemeCatalogSnapshot, ThemeDefinition } from '../../shared/dist/in
 /** Read boundary used by the catalog for extension and user JSON files. */
 export interface ThemeCatalogReader {
   read(path: string): Promise<string>;
+  /** Subscribe to changes at the user catalog path. */
+  watch?(path: string, onChange: () => void): () => void;
 }
 
 /** Inputs owned by the host that builds one server theme catalog. */
@@ -20,6 +22,11 @@ export interface ThemeCatalogOptions {
 }
 
 export type ThemeCatalogListener = (snapshot: ThemeCatalogSnapshot) => void;
+
+/** The complete set of shipped theme definitions. */
+export function builtinThemeDefinitions(): readonly ThemeDefinition[] {
+  throw new Error('not implemented');
+}
 
 /** Server boundary for built-in, extension, and user theme sources. */
 export class ThemeCatalog {

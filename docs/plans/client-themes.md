@@ -52,7 +52,7 @@ interface ThemeDefinition {
 type ThemeColorValue = string | { palette: string };
 ```
 
-A standalone theme must define every required UI, editor-surface, syntax, and terminal role. A theme that extends another may override selected values. An `extends` reference can name any available theme, with cycle detection. A theme's optional palette defines reusable named colors for its UI, editor, and terminal slots. Validate file structure, IDs, references, and color syntax. Do not enforce contrast.
+A standalone theme must define every required UI, editor-surface, syntax, and terminal role. A theme that extends another may override selected values. An `extends` reference can name any available theme, with cycle detection. A theme's optional palette defines reusable named colors for its UI, editor, and terminal slots. Child themes inherit parent swatches and can override them. Validate file structure, IDs, references, and color syntax. Do not enforce contrast.
 
 `UiColorToken` is the stable UI design-token contract. It contains `background`, `foreground`, `card`, `card-foreground`, `popover`, `popover-foreground`, `primary`, `primary-foreground`, `secondary`, `secondary-foreground`, `muted`, `muted-foreground`, `accent`, `accent-foreground`, `destructive`, `warning`, `warning-foreground`, `border`, `input`, and `ring`; `chart-1` through `chart-5`; `sidebar`, `sidebar-foreground`, `sidebar-primary`, `sidebar-primary-foreground`, `sidebar-accent`, `sidebar-accent-foreground`, `sidebar-border`, and `sidebar-ring`; `status-active`, `status-streaming`, `status-connected`, `status-error`, and `status-reconnecting`; `surface-sunken`, `surface-raised`, `surface-subtle`, and `surface-hover`; `error-accent`, `error-surface`, `error-foreground`, `error-avatar-fg`, `skill-accent`, `skill-surface`, `skill-foreground`, `skill-foreground-hover`, `bash-accent`, `custom-accent`, `custom-surface`, `custom-foreground`, and `custom-foreground-hover`; `link`, `link-hover`, `avatar-bg`, `avatar-fg`, and `shadow-color`. These preserve the color-valued design tokens in `layout.css`. Fonts and radii stay outside the color theme.
 
@@ -62,7 +62,7 @@ The extension context adds `themes.registerFile(path)`. It resolves relative pat
 
 Theme IDs are global and stable. The eight built-in IDs are `pimote/light`, `pimote/dark`, `dracula/dracula`, `tokyo-night/tokyo-night`, `nord/nord`, `gruvbox/dark`, `solarized/light`, and `catppuccin/mocha`. Load built-ins first. If an extension or user theme reuses a reserved built-in ID, drop that definition. For other duplicate IDs, retain the first valid definition in deterministic source order and reject later definitions. Extension authors use stable IDs such as `publisher/theme-name`.
 
-The catalog source order is built-ins, extension files in the host's deterministic discovery order, then the user file. A malformed or invalid user file leaves its last valid contribution active. Invalid extension files do not block other extensions or built-ins. The catalog logs diagnostics for invalid entries. Its revision changes when the user file, extension registry, or `defaultTheme` changes. Low contrast is never a loading error and does not produce a warning.
+The catalog source order is built-ins, extension files in the host's deterministic discovery order, then the user file. A malformed or invalid user file leaves its last valid contribution active. Invalid extension files do not block other extensions or built-ins. The catalog logs diagnostics for invalid entries. Its revision changes when the user file, extension registry, or `defaultTheme` changes. Low contrast is never a loading error and does not produce a warning. The catalog reader exposes a watch subscription so tests can deliver file changes without timing assumptions.
 
 #### Catalog, default, and user preference
 
@@ -87,13 +87,13 @@ If a saved user theme is missing, including one whose `extends` base disappeared
 
 #### PWA application and report helper
 
-ThemeStore resolves the selected theme against the catalog, applies a local preview, saves it through `set_theme`, and restores the last saved theme on Cancel. The Appearance tab shows `Follow server default` and built-in, extension, and user themes. Theme cards preview both UI and code palettes. Save applies the choice to all devices using the same Pimote username.
+ThemeStore resolves the selected theme against the catalog, applies a local preview, saves it through `set_theme`, and restores the last saved theme on Cancel. Closing mobile Settings also cancels an unsaved preview. The Appearance tab shows `Follow server default` and built-in, extension, and user themes. Theme cards preview both UI and code palettes. Save applies the choice to all devices using the same Pimote username.
 
 Cache the resolved active theme under a user-scoped local-storage key. A small early bootstrap applies a matching cached theme before the PWA renders, then server state replaces that cache when it arrives. ThemeStore writes `--pimote-ui-*`, `--pimote-editor-*`, and `--pimote-terminal-*` custom properties. `layout.css` maps its Tailwind and component variables to these same slots, which the static-report helper also applies. Theme application sets the root `dark` class and `color-scheme`, and updates browser theme-color metadata. The manifest color remains the installation fallback. Component colors must use theme tokens rather than fixed palette utilities.
 
-CodeMirror tags and Highlight.js classes map to the same Pimote syntax roles. CodeMirror's theme compartment updates surface colors and light/dark mode on preview and save. Highlight.js CSS reads the corresponding custom properties. `ansi-to-html` maps its 16 standard colors to the theme's terminal slots; its extended 256-color output remains standard.
+CodeMirror tags and Highlight.js classes map to the same Pimote syntax roles. `createCodeMirrorTheme(theme)` supplies an extension for a reconfigurable compartment, which updates surface colors and light/dark mode on preview and save. Highlight.js CSS reads the corresponding custom properties. `ansi-to-html` maps its 16 standard colors to the theme's terminal slots; its extended 256-color output remains standard.
 
-Static reports can load the shared same-origin helper from `/pwa/theme-bridge.js`. It reads the current user's cached resolved theme, applies `--pimote-ui-*`, `--pimote-editor-*`, and `--pimote-terminal-*` variables, and updates on cross-tab storage events. If no cached theme exists, the helper does not override the report's own fallback styles. The report guide presents the helper as the preferred default for general reports, not as a requirement; user-directed styles take precedence. The helper does not rewrite HTML or alter the static-host route.
+Static reports can load the shared same-origin helper from `/pwa/theme-bridge.js`. Its `startReportThemeBridge()` entry reads the current user from `pimote:user`, applies that user's cached `--pimote-ui-*`, `--pimote-editor-*`, and `--pimote-terminal-*` variables, and updates on cross-tab storage events, including user changes. If no cached theme exists, the helper does not override the report's own fallback styles. The report guide presents the helper as the preferred default for general reports, not as a requirement; user-directed styles take precedence. The helper does not rewrite HTML or alter the static-host route.
 
 ### Interaction Mocks
 
@@ -109,7 +109,8 @@ Static reports can load the shared same-origin helper from `/pwa/theme-bridge.js
 - `shared/src/index.ts` — Shared theme type exports.
 - `shared/src/protocol.ts` — Theme catalog request, selection command, catalog-change event, and user-profile selection fields.
 - `server/src/config.ts` — Native `defaultTheme` configuration field.
-- `server/src/theme-catalog.ts` — Server catalog lifecycle, source reader, snapshot, revision, and listener boundary.
+- `server/src/theme-catalog.ts` — Server catalog lifecycle, built-in definitions, source reader and watcher, snapshot, revision, and listener boundary.
+- `server/src/server.ts` — WebSocket transport and catalog subscription boundary.
 - `server/src/theme-preferences.ts` — Server catalog and per-user selection command boundary.
 - `server/src/user-profiles.ts` — Persisted theme selection interface on user profiles.
 - `server/src/pimote-extensions/types.ts` — Extension theme-file registration in the host registry.
@@ -118,7 +119,8 @@ Static reports can load the shared same-origin helper from `/pwa/theme-bridge.js
 - `client/src/lib/stores/theme-store.svelte.ts` — PWA catalog, profile reconciliation, preview, save, cancel, and cache boundary.
 - `client/src/lib/theme-application.ts` — Root palette, mode, and browser metadata application boundary.
 - `client/src/lib/theme-bootstrap.ts` — Early cached-theme bootstrap boundary.
-- `client/src/lib/theme-bridge.ts` — Static-report cache bridge lifecycle and cache-key boundary.
+- `client/src/lib/theme-bridge.ts` — Static-report cache bridge entry, lifecycle, and cache-key boundary.
+- `client/src/lib/codemirror-theme.ts` — Reconfigurable CodeMirror theme extension.
 - `client/src/lib/components/AppearanceSettings.svelte` — Appearance tab component surface.
 
 ### Test Files
@@ -128,23 +130,30 @@ Static reports can load the shared same-origin helper from `/pwa/theme-bridge.js
 - `server/src/user-profiles-themes.test.ts` — Per-user theme override persistence, clearing, isolation, and document compatibility.
 - `server/src/config-themes.test.ts` — Native default parsing and live runtime updates.
 - `server/src/theme-preferences.test.ts` — Catalog reads, valid and null selection, invalid IDs, and unavailable-theme fallbacks.
+- `server/src/ws-themes.test.ts` — Catalog transport, revision notifications, and per-user propagation.
+- `server/src/pimote-docs/index.test.ts` — Theme guide registration.
+- `server/src/static-host/http-handler.test.ts` — Verbatim report serving.
 - `client/src/lib/stores/theme-store.svelte.test.ts` — PWA catalog refresh, profile adoption, local preview, save gating, cancel, and default selection.
 - `client/src/lib/theme-application.test.ts` — CSS custom properties, root mode, color-scheme, browser metadata, and manifest fallback behavior.
 - `client/src/lib/theme-bootstrap.test.ts` — Early user-scoped cache application and invalid-cache fallback.
 - `client/src/lib/theme-bridge.test.ts` — User-scoped cache, no-cache fallback, and cross-tab lifecycle.
-- `client/src/lib/components/AppearanceSettings.test.ts` — Desktop/mobile Appearance tab, paired previews, default choice, and preview/save/cancel affordances.
+- `client/src/lib/theme-report-entry.test.ts` — Report entry user discovery and storage updates.
+- `client/src/lib/theme-rendering.test.ts` — CodeMirror, Highlight.js, and ANSI palette rendering.
+- `client/src/lib/components/AppearanceSettings.test.ts` — Appearance choices, preview, Save, Cancel, and mobile Close.
+- `shared/test/theme-fixtures.ts` — Complete test palettes for server and client boundaries.
 
 ### Behaviors Covered
 
 #### Theme catalog
 
-- Built-in, extension, and user files resolve in deterministic source order.
+- All eight built-ins have complete palettes, and built-in, extension, and user files resolve in deterministic source order.
 - Malformed files isolate their diagnostics and do not block valid sources.
 - Reserved built-in IDs and later duplicate IDs do not shadow the first valid definition.
-- Palette references and inheritance resolve into complete paired UI, editor, and terminal tokens.
+- Palette references and inheritance resolve into complete paired UI, editor, and terminal tokens; children inherit and can override swatches.
+- Invalid structure, missing roles, invalid colors, and missing swatches are rejected; low-contrast colors load without warnings.
 - Cycles and missing inheritance bases reject only the affected themes.
 - Invalid user edits retain the last valid user contribution.
-- Valid source changes and native default changes publish incremented revisions.
+- Valid watched user-file changes and native default changes publish incremented revisions.
 
 #### Extension registration
 
@@ -158,7 +167,9 @@ Static reports can load the shared same-origin helper from `/pwa/theme-bridge.js
 - A theme override never changes another user's profile.
 - Native configuration defaults to `pimote/light`, accepts a configured ID, and applies live updates.
 - Catalog requests return the PWA snapshot, valid IDs save, `null` follows the server default, and unknown IDs fail.
-- Missing saved themes use the configured default while retaining the saved ID; an unavailable default uses `pimote/light`.
+- Missing saved themes, including themes with a missing parent, use the configured default while retaining the saved ID; an unavailable default uses `pimote/light`.
+- A default change affects followers without replacing saved overrides.
+- WebSocket catalog requests and revision notifications carry theme data only on the PWA-specific path; selection propagates to same-user connections but not other users.
 
 #### PWA ThemeStore and Appearance
 
@@ -166,11 +177,14 @@ Static reports can load the shared same-origin helper from `/pwa/theme-bridge.js
 - Profile reconciliation adopts the shared selection before Save becomes available.
 - Theme selection previews paired UI and code palettes locally; Cancel restores the saved selection.
 - Save remains disabled until profile reconciliation and session adoption finish, then sends `set_theme` for a theme or `null`.
-- Desktop and mobile Appearance surfaces show Follow server default and built-in, extension, and user choices with paired previews.
+- Appearance shows Follow server default and built-in, extension, and user choices. Mobile Close cancels a preview.
 
 #### Palette application and static reports
 
 - Theme application writes UI, editor, and terminal custom properties and updates root mode and browser theme metadata.
-- Manifest installation fallback remains unchanged by runtime theme application.
+- CodeMirror and Highlight.js render common syntax roles from the active palette; ANSI standard slots follow the theme and indexed colors retain their standard mapping.
 - The PWA applies a valid user-scoped cached theme before its first render and leaves fallback styles untouched for invalid or absent cache data.
-- Static reports use a user-scoped cached resolved theme, leave fallback styles untouched without a cache, and react to cross-tab updates until stopped.
+- Static reports discover the current user, use the user-scoped cached resolved theme, leave fallback styles untouched without a cache, and react to cross-tab updates until stopped.
+- Static-host serves report bundles verbatim, and the session documentation lists both theme guides.
+
+**Review status:** approved

@@ -18,6 +18,7 @@ import { serveStaticHostRoute, type StaticHostRegistry } from './static-host/ind
 import { applyAppNameToHtml, applyAppNameToManifest, resolveAppName } from './branding.js';
 import { serveFileDownloadRoute, type DownloadManager } from './file-download/index.js';
 import type { UserProfiles } from './user-profiles.js';
+import type { ThemeCatalog } from './theme-catalog.js';
 import crypto from 'node:crypto';
 import type { UpdateAvailableEvent, VersionMismatchEvent, ServerCapabilitiesEvent } from '../../shared/dist/index.js';
 import type { UpdateChecker } from './update-check.js';
@@ -150,6 +151,7 @@ export async function createServer(
   folderListing?: FolderListingService,
   globalSettings?: WsGlobalSettingsDependencies,
   userProfiles?: UserProfiles,
+  _themeCatalog?: Pick<ThemeCatalog, 'snapshot' | 'onChange'>,
 ): Promise<PimoteServer> {
   const appName = resolveAppName(config);
   const clientVersion = await loadClientVersion();

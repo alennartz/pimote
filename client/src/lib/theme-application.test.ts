@@ -1,54 +1,41 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
-import type { ResolvedTheme } from '@pimote/shared';
-import { applyResolvedTheme, type ThemeApplicationTarget } from './theme-application.js';
-
-function theme(colorScheme: 'light' | 'dark' = 'dark'): ResolvedTheme {
-  return { id: 'publisher/theme', name: 'Publisher Theme', source: 'extension', colorScheme, ui: {}, editor: { surface: {}, syntax: {}, terminal: {} } } as ResolvedTheme;
-}
-
-function target(): ThemeApplicationTarget {
-  return {
-    root: {
-      classList: { toggle: () => {}, add: () => {}, remove: () => {} },
-      style: { setProperty: () => {} },
-    } as unknown as HTMLElement,
-    themeColorMeta: { content: '#ffffff' } as HTMLMetaElement,
-  };
-}
+import { resolvedTheme } from '../../../shared/test/theme-fixtures.js';
+import { applyResolvedTheme } from './theme-application.js';
 
 describe('applyResolvedTheme', () => {
-  it('writes UI, editor, and terminal custom properties to the root', () => {
-    const properties = new Map<string, string>();
-    const root = {
-      classList: { toggle: () => {} },
-      style: { setProperty: (name: string, value: string) => properties.set(name, value) },
-    } as unknown as HTMLElement;
+  it('applies the UI, editor, and terminal palette to the root', () => {
+    const root = document.createElement('div');
+    const theme = resolvedTheme('publisher/theme');
+    theme.ui.background = '#123456';
+    theme.editor.surface.background = '#234567';
+    theme.editor.syntax.keyword = '#345678';
+    theme.editor.terminal.black = '#456789';
 
-    applyResolvedTheme(theme(), { root, themeColorMeta: { content: '#ffffff' } as HTMLMetaElement });
+    applyResolvedTheme(theme, { root });
 
-    expect(properties.get('--pimote-ui-background')).toBeDefined();
-    expect(properties.get('--pimote-editor-background')).toBeDefined();
-    expect(properties.get('--pimote-terminal-black')).toBeDefined();
+    expect(root.style.getPropertyValue('--pimote-ui-background')).toBe('#123456');
+    expect(root.style.getPropertyValue('--pimote-editor-background')).toBe('#234567');
+    expect(root.style.getPropertyValue('--pimote-editor-keyword')).toBe('#345678');
+    expect(root.style.getPropertyValue('--pimote-terminal-black')).toBe('#456789');
   });
 
-  it('sets dark mode, color-scheme, and browser theme-color metadata from the palette', () => {
-    let dark = false;
-    const root = {
-      classList: { toggle: (_name: string, enabled: boolean) => (dark = enabled) },
-      style: { setProperty: () => {} },
-    } as unknown as HTMLElement;
-    const meta = { content: '#ffffff' } as HTMLMetaElement;
+  it('updates the root mode and browser metadata when themes change', () => {
+    const root = document.createElement('div');
+    const meta = document.createElement('meta');
+    const dark = resolvedTheme('publisher/dark');
+    for (const token of Object.keys(dark.ui) as Array<keyof typeof dark.ui>) dark.ui[token] = '#123456';
+    const light = resolvedTheme('publisher/light');
+    for (const token of Object.keys(light.ui) as Array<keyof typeof light.ui>) light.ui[token] = '#abcdef';
 
-    applyResolvedTheme(theme('dark'), { root, themeColorMeta: meta });
-
-    expect(dark).toBe(true);
+    applyResolvedTheme(dark, { root, themeColorMeta: meta });
+    expect(root.classList.contains('dark')).toBe(true);
     expect(root.style.getPropertyValue('color-scheme')).toBe('dark');
-    expect(meta.content).not.toBe('#ffffff');
-  });
+    expect(meta.content).toBe('#123456');
 
-  it('does not change the installation manifest color fallback', () => {
-    const meta = { content: '#ffffff' } as HTMLMetaElement;
-    applyResolvedTheme(theme('light'), target());
-    expect(meta.content).toBe('#ffffff');
+    applyResolvedTheme(light, { root, themeColorMeta: meta });
+    expect(root.classList.contains('dark')).toBe(false);
+    expect(root.style.getPropertyValue('color-scheme')).toBe('light');
+    expect(meta.content).toBe('#abcdef');
   });
 });

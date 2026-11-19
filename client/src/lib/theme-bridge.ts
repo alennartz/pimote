@@ -35,6 +35,11 @@ export class ThemeBridge {
   }
 }
 
+/** Start the browser entry point used by static reports. Returns a cleanup function. */
+export function startReportThemeBridge(): () => void {
+  throw new Error('not implemented');
+}
+
 /** Stable cache key shared by the PWA and static reports. */
 export function themeCacheKey(_user: string): string {
   throw new Error('not implemented');

@@ -1,93 +1,108 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
-import type { ResolvedTheme, ThemeCatalogSnapshot } from '@pimote/shared';
+import type { PimoteCommand, PimoteResponse, ThemeCatalogSnapshot, UserSessionsChangedEvent } from '@pimote/shared';
+import { resolvedTheme } from '../../../../shared/test/theme-fixtures.js';
 import AppearanceSettings from './AppearanceSettings.svelte';
 import { ThemeStore } from '../stores/theme-store.svelte.js';
 
 let component: ReturnType<typeof mount> | undefined;
-
 afterEach(async () => {
   if (component) await unmount(component);
   component = undefined;
   document.body.innerHTML = '';
 });
 
-function theme(id: string): ResolvedTheme {
-  return {
-    id,
-    name: id,
-    source: id.startsWith('pimote/') ? 'builtin' : 'user',
-    colorScheme: id.includes('light') ? 'light' : 'dark',
-    ui: {},
-    editor: { surface: {}, syntax: {}, terminal: {} },
-  } as ResolvedTheme;
+const snapshot: ThemeCatalogSnapshot = {
+  revision: 1,
+  defaultThemeId: 'pimote/light',
+  themes: [
+    resolvedTheme('pimote/light', 'Pimote Light'),
+    resolvedTheme('pimote/dark', 'Pimote Dark'),
+    resolvedTheme('publisher/night', 'Publisher Night', 'extension'),
+    resolvedTheme('alice/custom', 'Alice Custom', 'user'),
+  ],
+  diagnostics: [],
+};
+
+function button(name: RegExp): HTMLButtonElement {
+  const found = [...document.querySelectorAll<HTMLButtonElement>('button')].find((entry) => name.test(entry.getAttribute('aria-label') ?? entry.textContent ?? ''));
+  if (!found) throw new Error(`Missing button: ${name}`);
+  return found;
 }
 
-function store(): ThemeStore {
-  const snapshot: ThemeCatalogSnapshot = {
-    revision: 1,
-    defaultThemeId: 'pimote/light',
-    themes: [theme('pimote/light'), theme('pimote/dark'), theme('alice/custom')],
-    diagnostics: [],
-  };
-  return new ThemeStore({
-    user: 'alice',
-    send: async () => ({ id: '1', success: true, data: snapshot }),
-    storage: { getItem: () => null, setItem: vi.fn() },
-    apply: vi.fn(),
-  });
-}
-
-async function render(viewport: 'desktop' | 'mobile') {
+async function render(viewport: 'desktop' | 'mobile' = 'desktop') {
+  const send = vi.fn(async (command: PimoteCommand): Promise<PimoteResponse> => ({ id: '1', success: true, data: command.type === 'get_theme_catalog' ? snapshot : undefined }));
+  const apply = vi.fn();
+  const store = new ThemeStore({ user: 'alice', send, storage: { getItem: () => null, setItem: () => {} }, apply });
+  await store.loadCatalog();
   const target = document.createElement('div');
   document.body.appendChild(target);
-  const themeStore = store();
-  component = mount(AppearanceSettings, { target, props: { store: themeStore, viewport } });
+  component = mount(AppearanceSettings, { target, props: { store, viewport } });
   await tick();
-  return themeStore;
+  return { store, send, apply };
+}
+
+function profile(selectedThemeId: string | null): UserSessionsChangedEvent {
+  return { type: 'user_sessions_changed', sessions: [], views: [], order: [], selectedSessionId: null, orderVersion: 0, selectedThemeId, fresh: false };
 }
 
 describe('Appearance settings', () => {
-  it.each(['desktop', 'mobile'] as const)('shows the Appearance tab and paired UI/code previews on %s', async (viewport) => {
-    await render(viewport);
-    const panel = document.querySelector('[role="tabpanel"][aria-label="Appearance"]');
-    expect(panel).not.toBeNull();
-    expect(panel?.textContent).toMatch(/Color theme|interface|code/i);
-    expect(panel?.querySelectorAll('button').length).toBeGreaterThanOrEqual(3);
+  it('offers the default and all available theme sources', async () => {
+    await render();
+    expect(button(/Follow server default/i)).toBeTruthy();
+    expect(button(/Pimote Light/i)).toBeTruthy();
+    expect(button(/Publisher Night/i)).toBeTruthy();
+    expect(button(/Alice Custom/i)).toBeTruthy();
   });
 
-  it('offers Follow server default alongside built-in, extension, and user themes', async () => {
-    await render('desktop');
-    const labels = [...document.querySelectorAll('[role="tabpanel"][aria-label="Appearance"] button')].map((node) => node.textContent ?? '');
-    expect(labels.join(' ')).toMatch(/Follow server default/);
-    expect(labels.join(' ')).toMatch(/Pimote Light|Pimote Dark/);
-    expect(labels.join(' ')).toMatch(/Alice Custom/);
-  });
-
-  it('previews locally, disables Save until reconciliation, and restores on Cancel', async () => {
-    const themeStore = await render('desktop');
-    const custom = [...document.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.includes('Alice Custom'));
-    if (!custom) throw new Error('Missing custom theme button');
-    custom.click();
+  it('previews on this device, gates Save, and restores the saved palette on Cancel', async () => {
+    const { store, send, apply } = await render();
+    button(/Alice Custom/i).click();
     await tick();
-    expect(themeStore.previewThemeId).toBe('alice/custom');
-    const save = [...document.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.includes('Save theme'));
-    if (!save) throw new Error('Missing Save theme button');
-    expect(save.disabled).toBe(false);
-    const cancel = [...document.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.trim() === 'Cancel');
-    if (!cancel) throw new Error('Missing Cancel button');
-    cancel.click();
-    expect(themeStore.previewThemeId).toBe(themeStore.selectedThemeId);
+    expect(button(/Save theme/i).disabled).toBe(true);
+    store.handleProfile(profile('pimote/light'));
+    store.sessionAdoptionComplete = true;
+    button(/Alice Custom/i).click();
+    await tick();
+    const status = document.querySelector('[role="status"]');
+    expect(status?.textContent).toMatch(/preview/i);
+    expect(status?.textContent).toMatch(/Alice Custom/i);
+    expect(status?.textContent).toMatch(/other devices/i);
+    expect(apply).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'alice/custom' }));
+    expect(button(/Save theme/i).disabled).toBe(false);
+    expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'set_theme' }));
+    button(/^Cancel$/i).click();
+    await tick();
+    expect(apply).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'pimote/light' }));
   });
 
-  it('saves the selected preview to the shared user and places mobile Save in the header', async () => {
-    const themeStore = await render('mobile');
-    const save = [...document.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.includes('Save theme'));
-    if (!save) throw new Error('Missing Save theme button');
-    save.click();
+  it('saves the chosen theme and can clear the override', async () => {
+    const { store, send } = await render();
+    store.handleProfile(profile('pimote/light'));
+    store.sessionAdoptionComplete = true;
+    button(/Alice Custom/i).click();
     await tick();
-    expect(themeStore.selectedThemeId).toBe('alice/custom');
-    expect(save.closest('header')).not.toBeNull();
+    button(/Save theme/i).click();
+    await tick();
+    expect(send).toHaveBeenCalledWith({ type: 'set_theme', themeId: 'alice/custom' });
+    store.handleProfile(profile('alice/custom'));
+    button(/Follow server default/i).click();
+    await tick();
+    button(/Save theme/i).click();
+    await tick();
+    expect(send).toHaveBeenCalledWith({ type: 'set_theme', themeId: null });
+  });
+
+  it('cancels a preview when mobile settings close', async () => {
+    const { store, send, apply } = await render('mobile');
+    store.handleProfile(profile('pimote/light'));
+    store.sessionAdoptionComplete = true;
+    button(/Alice Custom/i).click();
+    await tick();
+    button(/Close/i).click();
+    await tick();
+    expect(apply).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'pimote/light' }));
+    expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'set_theme' }));
   });
 });
