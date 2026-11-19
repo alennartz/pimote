@@ -40,6 +40,8 @@
     'active-line-number',
     'matching-bracket',
     'search-match',
+    'diff-addition-background',
+    'diff-deletion-background',
   ] as const;
   const syntaxRoles = [
     'comment',

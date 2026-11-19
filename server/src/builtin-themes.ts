@@ -92,6 +92,8 @@ const SURFACE_ROLES: readonly EditorSurfaceRole[] = [
   'active-line-number',
   'matching-bracket',
   'search-match',
+  'diff-addition-background',
+  'diff-deletion-background',
 ];
 
 const SYNTAX_ROLES: readonly EditorSyntaxRole[] = [
@@ -281,9 +283,9 @@ const darkUi: Partial<Record<UiColorToken, string>> = {
   'muted-foreground': 'oklch(0.711 0.035 256.8)',
   accent: 'oklch(0.28 0.037 260)',
   'accent-foreground': 'oklch(0.984 0.003 247.9)',
-  destructive: 'oklch(0.64 0.19 24)',
+  destructive: 'oklch(0.396 0.133 25.7)',
   warning: 'oklch(0.72 0.17 55.934)',
-  'warning-foreground': 'oklch(0.208 0.04 265.7)',
+  'warning-foreground': 'oklch(0.16 0.02 55)',
   border: 'oklch(0.28 0.037 260)',
   input: 'oklch(0.28 0.037 260)',
   ring: 'oklch(0.869 0.02 252.8)',
@@ -345,8 +347,8 @@ const lightSyntax: Partial<Record<EditorSyntaxRole, string>> = {
   operator: '#d73a49',
   punctuation: '#24292e',
   bracket: '#24292e',
-  inserted: '#24292e',
-  deleted: '#24292e',
+  inserted: '#116329',
+  deleted: '#82071e',
   changed: '#24292e',
 };
 const darkSyntax: Partial<Record<EditorSyntaxRole, string>> = {
@@ -365,8 +367,8 @@ const darkSyntax: Partial<Record<EditorSyntaxRole, string>> = {
   operator: '#ff7b72',
   punctuation: '#c9d1d9',
   bracket: '#c9d1d9',
-  inserted: '#c9d1d9',
-  deleted: '#c9d1d9',
+  inserted: '#b4f1b4',
+  deleted: '#ffd8d3',
   changed: '#c9d1d9',
 };
 const lightTerminal: Partial<Record<AnsiColorName, string>> = {
@@ -419,6 +421,8 @@ const lightEditor = {
     'active-line-number': '#24292e',
     'matching-bracket': '#b6e3ff',
     'search-match': '#ffdf5d',
+    'diff-addition-background': '#dafbe1',
+    'diff-deletion-background': '#ffebe9',
   },
   syntax: lightSyntax,
   terminal: lightTerminal,
@@ -436,6 +440,8 @@ const darkEditor = {
     'active-line-number': '#c9d1d9',
     'matching-bracket': '#3b434b',
     'search-match': '#634d18',
+    'diff-addition-background': '#1b4721',
+    'diff-deletion-background': '#78191b',
   },
   syntax: darkSyntax,
   terminal: darkTerminal,
@@ -574,6 +580,8 @@ function thirdParty(
         'active-line-number': colors.foreground,
         'matching-bracket': colors.matchingBracket,
         'search-match': colors.searchMatch,
+        'diff-addition-background': colors.surface,
+        'diff-deletion-background': colors.surface,
       },
       syntax,
       terminal: colors.terminal,

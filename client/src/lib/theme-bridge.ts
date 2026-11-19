@@ -90,6 +90,8 @@ const SURFACE_KEYS = [
   'active-line-number',
   'matching-bracket',
   'search-match',
+  'diff-addition-background',
+  'diff-deletion-background',
 ];
 const SYNTAX_KEYS = [
   'comment',

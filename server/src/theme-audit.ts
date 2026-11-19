@@ -75,7 +75,7 @@ const DIFF_ROLES: ReadonlyArray<{ role: EditorSyntaxRole; label: string; backgro
 ];
 
 const COLOR_SPACE = 'oklch';
-const DIFF_TINT_AMOUNT = 0.1;
+const STATUS_TINT_AMOUNT = 0.1;
 
 const DIFF_MAPPING_CONTRACTS = [
   { rule: 'mapping.editor.diff.addition-background', token: '--pimote-editor-diff-addition-background' },
@@ -120,11 +120,6 @@ function mixOklch(base: string, overlay: string, amount: number): string {
   const baseCoords = coordinates(baseColor);
   const overlayCoords = coordinates(overlayColor);
   return new Color(COLOR_SPACE, baseCoords.map((channel, index) => channel * (1 - amount) + overlayCoords[index] * amount) as ThreeCoordinates).toString();
-}
-
-function diffSurface(theme: ResolvedTheme, kind: 'addition' | 'deletion'): string {
-  const status = kind === 'addition' ? theme.ui['status-connected'] : theme.ui['status-error'];
-  return mixOklch(theme.ui['surface-sunken'], status, DIFF_TINT_AMOUNT);
 }
 
 function severityFor(ratio: number, minimum: number): ThemeAuditSeverity {
@@ -199,8 +194,10 @@ function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
   for (const { role, label, background } of DIFF_ROLES) {
     const foreground = syntax[role];
     auditPair(findings, theme, `editor.diff.${label}`, `${label} on editor background`, foreground, surface.background, 4.5, surface.background);
-    if (background)
-      auditPair(findings, theme, `editor.diff.${label}`, `${label} on ${background} diff surface`, foreground, diffSurface(theme, background), 4.5, surface.background);
+    if (background) {
+      const diffBackground = background === 'addition' ? surface['diff-addition-background'] : surface['diff-deletion-background'];
+      auditPair(findings, theme, `editor.diff.${label}`, `${label} on ${background} diff surface`, foreground, diffBackground, 4.5, surface.background);
+    }
   }
 
   for (const rule of UI_PAIR_RULES) {
@@ -240,7 +237,7 @@ function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
   auditPair(findings, theme, 'ui.link-skill', 'link on skill surface', ui.link, mixOklch(ui.background, ui['skill-surface'], 0.5), 4.5, ui.background);
   auditPair(findings, theme, 'ui.link-custom', 'link on custom surface', ui.link, mixOklch(ui.background, ui['custom-surface'], 0.5), 4.5, ui.background);
   for (const { role, label } of STATUS_TEXT_ROLES) {
-    const tintedSurface = mixOklch(ui.background, ui[role], DIFF_TINT_AMOUNT);
+    const tintedSurface = mixOklch(ui.background, ui[role], STATUS_TINT_AMOUNT);
     auditPair(findings, theme, `ui.status.${label}`, `foreground on ${label} status tint`, ui.foreground, tintedSurface, 4.5, ui.background);
   }
 

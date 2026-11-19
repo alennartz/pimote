@@ -75,6 +75,8 @@ const surfaceRoles: EditorSurfaceRole[] = [
   'active-line-number',
   'matching-bracket',
   'search-match',
+  'diff-addition-background',
+  'diff-deletion-background',
 ];
 
 const syntaxRoles: EditorSyntaxRole[] = [

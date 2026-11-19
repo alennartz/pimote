@@ -113,6 +113,8 @@ const SURFACE_ROLES: readonly EditorSurfaceRole[] = [
   'active-line-number',
   'matching-bracket',
   'search-match',
+  'diff-addition-background',
+  'diff-deletion-background',
 ];
 const SYNTAX_ROLES: readonly EditorSyntaxRole[] = [
   'comment',

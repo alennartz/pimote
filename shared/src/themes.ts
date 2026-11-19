@@ -100,7 +100,9 @@ export type EditorSurfaceRole =
   | 'line-number'
   | 'active-line-number'
   | 'matching-bracket'
-  | 'search-match';
+  | 'search-match'
+  | 'diff-addition-background'
+  | 'diff-deletion-background';
 
 /** Theme-independent syntax roles shared by CodeMirror and Highlight.js. */
 export type EditorSyntaxRole =

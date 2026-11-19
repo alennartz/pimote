@@ -19,7 +19,13 @@ describe('built-in theme mappings', () => {
       for (const role of DIFF_ROLES) {
         const foreground = theme.editor.syntax[role];
         expect(contrast(foreground, theme.editor.surface.background), `${theme.id} ${role} on editor background`).toBeGreaterThanOrEqual(4.5);
-        expect(contrast(foreground, theme.ui['surface-sunken']), `${theme.id} ${role} on diff surface`).toBeGreaterThanOrEqual(4.5);
+        const diffBackground =
+          role === 'inserted'
+            ? theme.editor.surface['diff-addition-background']
+            : role === 'deleted'
+              ? theme.editor.surface['diff-deletion-background']
+              : theme.editor.surface.background;
+        expect(contrast(foreground, diffBackground), `${theme.id} ${role} on diff surface`).toBeGreaterThanOrEqual(4.5);
       }
     }
   });
