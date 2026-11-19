@@ -165,8 +165,9 @@ describe('tool results', () => {
     target.querySelector<HTMLButtonElement>('.tool-header')?.click();
     await tick();
 
-    expect(target.querySelector('.tool-content')?.textContent).toContain('Arguments');
-    expect(target.querySelector('.tool-content')?.textContent).toContain('Result');
+    expect(target.querySelectorAll('.tool-content .tool-section-label')).toHaveLength(0);
+    expect(target.querySelector('.tool-content')?.textContent).toContain('notes.txt');
+    expect(target.querySelector('.tool-content')?.textContent).toContain('Text file contents');
     expect(target.querySelector('.tool-image-indicator')).toBeNull();
   });
 

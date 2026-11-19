@@ -383,14 +383,12 @@
           </div>
         {:else if argsText}
           <div class="tool-section">
-            <div class="tool-section-label">Arguments</div>
             <BoundedOutput text={argsText} streaming={streaming && !isCompleted} copyable />
           </div>
         {/if}
 
         {#if resultText}
           <div class="tool-section">
-            <div class="tool-section-label">{inProgress ? 'Output (streaming)' : 'Result'}</div>
             <BoundedOutput text={resultText} streaming={inProgress} bounded renderAnsi={isBash} copyable />
           </div>
         {/if}
@@ -469,15 +467,6 @@
 
   .tool-section + .tool-section {
     border-top: 1px solid var(--border);
-  }
-
-  .tool-section-label {
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--muted-foreground);
-    margin-bottom: 4px;
-    font-weight: 500;
   }
 
   :global(.tool-image-indicator) {

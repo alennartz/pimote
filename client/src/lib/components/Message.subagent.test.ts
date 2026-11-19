@@ -249,6 +249,7 @@ describe('subagent transcript cards', () => {
     const completed = operation({ operation: 'await', parameters, result: { statuses: [{ path: ['team', 'worker'], state: 'idle', output }] } });
     const { target: completedTarget } = await render(completed);
     const completedCard = card(completedTarget, 'await');
+    expect(completedCard.querySelector('.tool-section-label')).toBeNull();
     expect(completedCard.querySelector('.subagent-status')?.textContent).toContain('completed');
     expect(section(completedCard, 'Output').querySelector('strong')?.textContent).toBe('healthy');
     expect(section(completedCard, 'Output').querySelectorAll('li')).toHaveLength(2);
@@ -280,6 +281,7 @@ describe('subagent transcript cards', () => {
     );
     const { target, update } = await render(send);
     const sendCard = card(target, 'send');
+    expect(sendCard.querySelector('.tool-section-label')).toBeNull();
     expect(section(sendCard, 'Message').querySelector('strong')?.textContent).toBe('settings');
     expect(section(sendCard, 'Response').querySelector('code')?.textContent).toBe('valid');
     await update(operation({ operation: 'send', parameters: { to: ['team', 'worker'], message: 'Final **request**.' }, result: { response: 'Final *reply*.' } }));
@@ -291,6 +293,7 @@ describe('subagent transcript cards', () => {
     const respond = operation({ operation: 'respond', parameters: { message: 'All **clear**.' }, result: { message: 'Delivered.' } });
     const { target } = await render(respond);
     const respondCard = card(target, 'respond');
+    expect(respondCard.querySelector('.tool-section-label')).toBeNull();
     expect(respondCard.querySelector('[data-agent-path="team"]')).not.toBeNull();
     expect(respondCard.querySelector('.subagent-status')?.textContent).toContain('replied');
     expect(section(respondCard, 'Reply').querySelector('strong')?.textContent).toBe('clear');
@@ -305,6 +308,7 @@ describe('subagent transcript cards', () => {
     );
     const { target } = await render(incoming, { custom: true, rootSessionId: 'root-session' });
     const messageCard = card(target, 'message_received');
+    expect(messageCard.querySelector('.tool-section-label')).toBeNull();
     expect(messageCard.querySelector('[data-agent-path="team/worker"]')).not.toBeNull();
     expect(section(messageCard, 'Message').querySelector('strong')?.textContent).toBe('check');
     expect(section(messageCard, 'Message').querySelector('code')?.textContent).toBe('config');
@@ -402,6 +406,7 @@ describe('subagent transcript cards', () => {
     });
     const { target } = await render(resurrect, { custom: true, rootSessionId: 'root-session' });
     const resurrectCard = card(target, 'resurrect');
+    expect(resurrectCard.querySelector('.tool-section-label')).toBeNull();
     expect(resurrectCard.querySelector('.subagent-view-button')?.getAttribute('aria-label')).toBe('Open team/worker view');
     expect(resurrectCard.textContent).toContain('saved-session');
     expect(section(resurrectCard, 'Output').querySelector('code')?.textContent).toBe('review');
@@ -483,6 +488,7 @@ describe('subagent transcript cards', () => {
     });
     const { target } = await render(interrupt, { custom: true, rootSessionId: 'root-session' });
     const interruptCard = card(target, 'interrupt');
+    expect(interruptCard.querySelector('.tool-section-label')).toBeNull();
     expect(interruptCard.querySelector('[data-agent-path="team/worker"]')).not.toBeNull();
     expect(section(interruptCard, 'Output').querySelector('strong')?.textContent).toBe('checkpoint');
     expect(section(interruptCard, 'Error').querySelector('strong')?.textContent).toBe('Missing runtime');
