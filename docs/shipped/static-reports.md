@@ -11,7 +11,7 @@ Design a report for comfortable reading at 360px and at 1440px. A report opens i
 - Vendor a library into the bundle instead of loading it from a content delivery network. The report must render offline and appear at once.
 - Use the system font stack. A webfont is a download the reader does not need.
 - A report cannot open a WebSocket. It can fetch over HTTP and HTTPS.
-- Reports that want the Pimote palette can load `/pwa/theme-bridge.js` from the same origin. The bridge reads the current user's cached resolved theme, follows cross-tab storage updates, and leaves report fallback styles untouched when no cache exists. User-directed report styles take precedence.
+- Use the Pimote palette by default. Load `/pwa/theme-bridge.js` from the same origin for informational reports without deliberate style constraints. Omit it for mock-ups, design explorations, and other reports with an intentionally independent visual language. The bridge reads the current user's cached resolved theme, follows cross-tab storage updates, and leaves report fallback styles untouched when no cache exists. User-directed report styles take precedence.
 
 ## Page structure
 
@@ -46,7 +46,7 @@ Confirm there is no horizontal page scroll at either width, and no text below 14
 
 ## Shared theme bridge
 
-Load the optional helper after the report's fallback CSS:
+Load the theme helper after the report's fallback CSS by default. Omit it only when the report's visual design is intentional and independent of the Pimote theme:
 
 ```html
 <script type="module" src="/pwa/theme-bridge.js"></script>
