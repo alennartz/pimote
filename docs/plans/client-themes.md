@@ -52,7 +52,7 @@ interface ThemeDefinition {
 type ThemeColorValue = string | { palette: string };
 ```
 
-A standalone theme must define every required UI, editor-surface, syntax, and terminal role. A theme that extends another may override selected values. An `extends` reference can name any available theme, with cycle detection. A theme's optional palette defines reusable named colors for its UI, editor, and terminal slots. Child themes inherit parent swatches and can override them. Validate file structure, IDs, references, and color syntax. Do not enforce contrast.
+A standalone theme must define every required UI, editor-surface, syntax, and terminal role. A theme that extends another may override selected values. An `extends` reference can name any available theme, with cycle detection. A theme's optional palette defines reusable named colors for its UI, editor, and terminal slots. Child themes inherit parent swatches and can override them. Validate file structure, IDs, references, and CSS Color 4 syntax. Use `colorjs.io` for server-side color parsing and retain the original color strings. Do not enforce contrast.
 
 `UiColorToken` is the stable UI design-token contract. It contains `background`, `foreground`, `card`, `card-foreground`, `popover`, `popover-foreground`, `primary`, `primary-foreground`, `secondary`, `secondary-foreground`, `muted`, `muted-foreground`, `accent`, `accent-foreground`, `destructive`, `warning`, `warning-foreground`, `border`, `input`, and `ring`; `chart-1` through `chart-5`; `sidebar`, `sidebar-foreground`, `sidebar-primary`, `sidebar-primary-foreground`, `sidebar-accent`, `sidebar-accent-foreground`, `sidebar-border`, and `sidebar-ring`; `status-active`, `status-streaming`, `status-connected`, `status-error`, and `status-reconnecting`; `surface-sunken`, `surface-raised`, `surface-subtle`, and `surface-hover`; `error-accent`, `error-surface`, `error-foreground`, `error-avatar-fg`, `skill-accent`, `skill-surface`, `skill-foreground`, `skill-foreground-hover`, `bash-accent`, `custom-accent`, `custom-surface`, `custom-foreground`, and `custom-foreground-hover`; `link`, `link-hover`, `avatar-bg`, `avatar-fg`, and `shadow-color`. These preserve the color-valued design tokens in `layout.css`. Fonts and radii stay outside the color theme.
 
@@ -188,3 +188,123 @@ Static reports can load the shared same-origin helper from `/pwa/theme-bridge.js
 - Static-host serves report bundles verbatim, and the session documentation lists both theme guides.
 
 **Review status:** approved
+
+## Steps
+
+### Step 1: Install the color parser
+
+Use npm to add `colorjs.io` as a runtime dependency of both `@pimote/server` and the published root package. The packaged server runs from the root package, not the workspace manifest. Use the parser to validate CSS Color 4 literals without converting them or checking contrast.
+
+**Verify:** `npm ls colorjs.io` lists the dependency, and both runtime manifests include it.
+**Status:** not started
+
+### Step 2: Ship the built-in palettes
+
+Create `server/src/builtin-themes.ts` and implement `builtinThemeDefinitions()` in `server/src/theme-catalog.ts`. Supply the eight IDs from the architecture, with every role from `shared/src/themes.ts`. Use the existing Pimote UI assets and official theme repositories or IDE assets for colors. Record source URLs and licenses alongside the palette data. Preserve the existing light and dark fallback appearance; do not infer third-party palettes from the mock.
+
+**Verify:** After Step 3, the built-in palette case in `server/src/theme-catalog.test.ts` passes and each palette's provenance is present beside its data.
+**Status:** not started
+
+### Step 3: Implement catalog resolution
+
+Implement `ThemeCatalog` in `server/src/theme-catalog.ts` using its existing `ThemeCatalogOptions`, `ThemeCatalogReader`, `ThemeCatalogListener`, and snapshot methods. Validate versioned files, theme IDs, role maps, literal colors with `colorjs.io`, palette references, and inheritance. Resolve cross-source parents and inherited swatches, reject cycles and missing bases, and produce complete `ResolvedTheme` values. Enforce reserved IDs and first-valid duplicate precedence in built-in, extension, then user order. Keep invalid sources isolated, retain the last valid user contribution after an invalid edit, and log diagnostics without contrast warnings.
+
+Implement `load`, `reload`, `snapshot`, `onChange`, `setDefaultTheme`, and `close`. Use the reader's watch seam for user-file changes. Add a catalog operation that replaces the extension-file list and reloads it when the host registry changes. Publish incremented revisions for source, registry, and default changes, and stop the watcher on close.
+
+**Verify:** `npm run build:shared` followed by `npm test -w @pimote/server -- --run src/theme-catalog.test.ts` passes.
+**Status:** not started
+
+### Step 4: Register extension theme files
+
+In `server/src/pimote-extensions/index.ts`, implement `themes.registerFile` using the same path expansion, staged-entry isolation, and runtime invalidation as `settings.registerFile`. Carry theme paths through `Runtime.commit` and `snapshot` in discovery order. Return an empty list before startup and after reload when no files register. Keep `PimoteExtensionRegistry` in `server/src/pimote-extensions/types.ts` and `PimoteExtensionContext` in `packages/sdk/src/pimote/index.ts` consistent with this contract.
+
+**Verify:** `npm test -w @pimote/server -- --run src/pimote-extensions/themes.test.ts src/pimote-extensions/host.test.ts` passes.
+**Status:** not started
+
+### Step 5: Persist selections and native defaults
+
+In `server/src/config.ts`, parse `defaultTheme` and default it to `pimote/light`. In `server/src/config-runtime.ts`, carry the candidate default into the live snapshot on `apply`. In `server/src/user-profiles.ts`, implement `selectedTheme` and `setSelectedTheme` using the existing serialized persistence path. Load old documents without the field as `null`, preserve sessions and other profile facts, and keep users isolated. A selection must not be saved before the existing session-adoption gate completes.
+
+Implement `ThemePreferences.getCatalog`, `setTheme`, and `resolve` in `server/src/theme-preferences.ts`. Reject unknown non-null IDs, persist valid IDs and `null`, and resolve a missing saved ID through the configured default and then `pimote/light` without erasing the saved ID.
+
+**Verify:** `npm test -w @pimote/server -- --run src/config-themes.test.ts src/user-profiles-themes.test.ts src/theme-preferences.test.ts` passes.
+**Status:** not started
+
+### Step 6: Wire the server lifecycle and protocol
+
+In `server/src/paths.ts` and `server/src/index.ts`, use `$XDG_CONFIG_HOME/pimote/themes.json` for the user file. Construct and load the catalog from built-ins, the initial extension registry, and the runtime default before accepting connections. Supply a filesystem reader and watcher that notices creation, replacement, and edits of the user file. On extension-host reload, replace catalog registrations. On native config save, apply the new default to the catalog. Close the catalog watcher on shutdown.
+
+In `server/src/server.ts` and `server/src/ws-handler.ts`, use the existing catalog parameter to handle `get_theme_catalog` and `set_theme` through `ThemePreferences`. Add `selectedThemeId` to `WsHandler.userSessionsEvent`; broadcast selection changes to the acting user's connections. Subscribe to catalog changes and send only `theme_catalog_changed` with its revision. Unsubscribe when the server closes. Keep the full catalog out of `server_capabilities` and connect snapshots. Use the command and event types already declared in `shared/src/protocol.ts` and exported by `shared/src/index.ts`.
+
+**Verify:** `npm test -w @pimote/server -- --run src/ws-themes.test.ts src/theme-catalog.test.ts` passes. Catalog changes carry no palette payload until requested.
+**Status:** not started
+
+### Step 7: Apply and cache resolved palettes
+
+Implement `applyResolvedTheme` in `client/src/lib/theme-application.ts`. Write all `--pimote-ui-*`, `--pimote-editor-*`, and `--pimote-terminal-*` slots, set the root dark class and `color-scheme`, and update the theme-color meta element when present. Leave the manifest unchanged.
+
+In `client/src/lib/theme-bridge.ts`, implement the shared user-scoped `themeCacheKey` and safe cached-theme reading. Implement `bootstrapCachedTheme` in `client/src/lib/theme-bootstrap.ts` so missing, malformed, or incomplete cached data leaves fallback styles untouched. Storage access must tolerate browser storage failures.
+
+In `client/src/routes/layout.css`, map existing UI variables and Tailwind colors to the shared UI slots with light fallback values. Do not let `.dark` overwrite a resolved palette. Keep fonts and radii outside the theme.
+
+**Verify:** `npm test -w client -- --run src/lib/theme-application.test.ts src/lib/theme-bootstrap.test.ts` passes. The manifest theme color remains the installation fallback.
+**Status:** not started
+
+### Step 8: Build the ThemeStore and connect it
+
+Implement the reactive `ThemeStore` in `client/src/lib/stores/theme-store.svelte.ts` behind its existing interface. Request the catalog, refresh on revision events, reconcile profile selections, resolve missing IDs through the default and Pimote Light, and apply and cache the active resolved palette. Preview stays local; Cancel restores the saved selection. Save sends `set_theme` only after profile reconciliation and session adoption finish. Handle `null` as Follow server default, and retain a missing saved ID.
+
+Wire the store into `client/src/lib/stores/connection.svelte.ts` and `client/src/routes/+layout.svelte`. The connection currently consumes `user_sessions_changed` without emitting it, so deliver that event after its reconciliation plan. Use `connection.ready` after restore completion for the adoption gate. Load the catalog for each connection, reset the gate on disconnect, and refresh on catalog revisions. Follow `userIdentity` changes and reconnects so another user's cache, profile, and in-flight responses cannot become the new user's state.
+
+**Verify:** `npm test -w client -- --run src/lib/stores/theme-store.svelte.test.ts src/lib/stores/user-sessions-reconcile.test.ts` passes. Switching usernames loads that user's profile and theme.
+**Status:** not started
+
+### Step 9: Bootstrap before rendering
+
+Create a browser entry for `bootstrapCachedTheme` and configure `client/vite.config.ts` to emit a stable, synchronous browser asset. Load it from `client/src/app.html` before the app renders. Discover the current user from `pimote:user`, using the server's `default` identity when no name is stored. Use the same cache key and application code as ThemeStore. Preserve the CSS fallback when storage or cache data is unavailable.
+
+**Verify:** `npm run build -w client` produces the referenced asset in `client/build`. Loading the built PWA with a valid cached dark theme applies it before the first app render; an absent or invalid cache keeps the fallback.
+**Status:** not started
+
+### Step 10: Theme code and terminal surfaces
+
+Implement `createCodeMirrorTheme(theme)` in `client/src/lib/codemirror-theme.ts`, mapping editor surface roles and Lezer tags to Pimote syntax roles. In `client/src/lib/components/ExtensionCodeEditor.svelte`, replace the fixed GitHub theme with a theme compartment and reconfigure it when the active theme changes, without replacing the editor document or its language compartment.
+
+Replace fixed Highlight.js colors in `client/src/lib/highlight-theme.css` with the matching editor variables and role fallbacks. Update `client/src/lib/ansi-to-html.ts` so standard 16-color foreground and background codes use terminal slots. Preserve the existing 256-color indexed mapping, including indices 0–15, and retain escaping and reset behavior.
+
+**Verify:** `npm test -w client -- --run src/lib/theme-rendering.test.ts src/lib/code-highlight.test.ts` passes, including live editor reconfiguration and all indexed ANSI colors.
+**Status:** not started
+
+### Step 11: Add the Appearance tab
+
+Implement `client/src/lib/components/AppearanceSettings.svelte` with the existing `store` and `viewport` props. Follow `docs/mocks/client-themes/index.html`: show Follow server default with the current default name, and a selectable card for each built-in, extension, and user theme. Each card previews UI and code colors, identifies its source and light or dark scheme, and marks the server default. Show the selected state and an accessible preview status that distinguishes unsaved local preview from saved selection.
+
+Integrate the pane into `client/src/lib/components/GlobalSettingsDialog.svelte` and its existing `CodeEditorDialog.svelte` shell. Desktop uses Cancel and Save theme; mobile uses Close and Save theme in the header. Do not duplicate the shell's controls. Save obeys the store gate, Cancel restores the saved theme, and every mobile Close path cancels an unsaved preview. Preserve User and file tabs, file drafts, and their discard confirmation.
+
+**Verify:** `npm test -w client -- --run src/lib/components/AppearanceSettings.test.ts src/lib/components/GlobalSettingsDialog.test.ts` passes. Compare the desktop and mobile flows with the approved mock.
+**Status:** not started
+
+### Step 12: Replace fixed component colors
+
+Audit color-valued styles under `client/src/lib/components/` and `client/src/routes/`, including fixed Tailwind palette utilities and dark-only branches. Map component colors to the existing semantic UI tokens or theme-derived color mixes. Preserve transparent overlays and non-color layout rules. Do not introduce new theme roles or change fonts and radii.
+
+**Verify:** `npm test -w client -- --run src/lib/color-token-guard.test.ts` passes. Preview a light and a dark theme across settings, dashboard, transcript, dialogs, and status surfaces without fixed palette colors overriding the selected theme.
+**Status:** not started
+
+### Step 13: Publish the report bridge
+
+Implement `ThemeBridge` and `startReportThemeBridge()` in `client/src/lib/theme-bridge.ts`. Apply the current user's cached palette, react to cross-tab cache and `pimote:user` changes, and stop listening when the returned cleanup runs. Without a valid cache, leave the report's fallback styles untouched.
+
+Create a browser entry that starts the bridge and configure `client/vite.config.ts` to emit it at `/pwa/theme-bridge.js`. Keep it same-origin and usable by an ordinary report script tag. Do not rewrite reports or alter `server/src/static-host/http-handler.ts`.
+
+**Verify:** `npm test -w client -- --run src/lib/theme-bridge.test.ts src/lib/theme-report-entry.test.ts` and `npm test -w @pimote/server -- --run src/static-host/http-handler.test.ts` pass. The built asset is served at `/pwa/theme-bridge.js`.
+**Status:** not started
+
+### Step 14: Ship theme guides and verify the feature
+
+Create `docs/shipped/themes.md` for session agents and `packages/sdk/docs/themes.md` for extension authors. Document the versioned JSON shape, all required roles, palette references, inheritance, IDs, source precedence, validation, user path, default and override behavior, and extension registration. Add the registration cross-reference in `packages/sdk/docs/authoring.md`. Register both guides in `server/src/pimote-docs/index.ts`. Update `docs/shipped/settings.md` for the live native default and `docs/shipped/static-reports.md` for the optional same-origin bridge, its fallback, and user-directed style precedence.
+
+Run the existing theme tests without changing them, then run the project build, checks, and relevant server and client suites. Verify that the published package includes the guides and the runtime parser dependency.
+
+**Verify:** `npm test -w @pimote/server -- --run src/pimote-docs/index.test.ts` passes. `npm run build`, `npm run check`, and `npm run lint` pass; `npm pack --dry-run` includes the built bridge and both guides.
+**Status:** not started
