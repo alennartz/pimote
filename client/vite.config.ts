@@ -1,4 +1,5 @@
 import { resolve } from 'node:path';
+import { build as bundleWithEsbuild } from 'esbuild';
 import tailwindcss from '@tailwindcss/vite';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { VitePWA } from 'vite-plugin-pwa';
@@ -9,11 +10,29 @@ const themeEntries = {
   '/pwa/theme-bridge.js': resolve('src/theme-bridge-entry.ts'),
 } as const;
 
+async function bundleBootstrap(): Promise<string> {
+  const result = await bundleWithEsbuild({
+    absWorkingDir: process.cwd(),
+    entryPoints: [themeEntries['/pwa/theme-bootstrap.js']],
+    bundle: true,
+    format: 'iife',
+    platform: 'browser',
+    target: 'es2020',
+    write: false,
+    alias: { '@pimote/shared': resolve('../shared/dist/index.js') },
+    define: { $state: 'identityState' },
+    banner: { js: 'const identityState = (value) => value;' },
+    logLevel: 'silent',
+  });
+  return result.outputFiles[0].text;
+}
+
 function themeAssetEntries(): Plugin {
   return {
     name: 'pimote-theme-asset-entries',
-    buildStart() {
-      for (const [fileName, id] of Object.entries(themeEntries)) this.emitFile({ type: 'chunk', id, fileName: fileName.slice(1) });
+    async buildStart() {
+      this.emitFile({ type: 'asset', fileName: 'pwa/theme-bootstrap.js', source: await bundleBootstrap() });
+      this.emitFile({ type: 'chunk', id: themeEntries['/pwa/theme-bridge.js'], fileName: 'pwa/theme-bridge.js' });
     },
     configureServer(server) {
       server.middlewares.use(async (request, response, next) => {
@@ -24,14 +43,14 @@ function themeAssetEntries(): Plugin {
           return;
         }
         try {
-          const transformed = await server.transformRequest(id);
-          if (!transformed) {
+          const code = pathname === '/pwa/theme-bootstrap.js' ? await bundleBootstrap() : (await server.transformRequest(id))?.code;
+          if (!code) {
             next();
             return;
           }
           response.statusCode = 200;
           response.setHeader('Content-Type', 'application/javascript');
-          response.end(transformed.code);
+          response.end(code);
         } catch (error) {
           next(error);
         }

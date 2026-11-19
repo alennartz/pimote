@@ -37,7 +37,7 @@ The fix series resolves 13 of the 17 prior findings. Four prior findings remain 
 - **Category:** plan deviation
 - **Severity:** critical
 - **Location:** `server/src/index.ts:116-127`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Watch the user-theme directory with `fs.watch`, match the configured basename, and debounce reloads.
 
 The plan requires creation, replacement, and edits of `$XDG_CONFIG_HOME/pimote/themes.json` to publish a new catalog revision. The callback still receives `Stats`, not a filename, so the guard cannot detect content edits. The catalog therefore keeps the previous user contribution until restart.
@@ -47,7 +47,7 @@ The plan requires creation, replacement, and edits of `$XDG_CONFIG_HOME/pimote/t
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `client/src/lib/ansi-to-html.ts:105-111`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Always use `themedConverter`, which supplies literal fallbacks, and remove `themeInstalled()`.
 
 The fix adds CSS-variable fallbacks to the themed converter, but `ansiToHtml()` still selects the fixed-color converter before theme installation. ANSI text rendered during startup can therefore keep fixed colors after a theme is installed or previewed.
@@ -57,7 +57,7 @@ The fix adds CSS-variable fallbacks to the themed converter, but `ansiToHtml()` 
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `client/src/lib/stores/theme-store.svelte.ts:55-58`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Preserve an active preview when an already-reconciled profile event arrives.
 
 Every `user_sessions_changed` event now clears the preview. Session opens, closes, or reorders from another device can discard an unsaved theme choice even when the user's profile selection did not change.
@@ -67,7 +67,7 @@ Every `user_sessions_changed` event now clears the preview. Session opens, close
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `client/src/lib/components/MobileRuntimeStatus.svelte:26,48`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Use `text-status-reconnecting` on translucent warning backgrounds.
 
 The new `bg-warning/10 text-warning-foreground` pairing has approximately 1.07:1 contrast in Pimote Dark. Warning text becomes unreadable on the translucent surface. The same pairing appears in the other changed warning surfaces.
@@ -77,7 +77,7 @@ The new `bg-warning/10 text-warning-foreground` pairing has approximately 1.07:1
 - **Category:** code correctness
 - **Severity:** warning
 - **Location:** `client/src/app.html:9`; `client/src/theme-bootstrap-entry.ts:1-13`; `client/vite.config.ts:7-16`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Emit a self-contained classic bootstrap bundle and retain a parser-blocking head script.
 
 The bootstrap is now an ESM module that imports a hashed chunk, so it runs asynchronously. Application startup can reconcile the server palette before the delayed bootstrap applies an older cached palette, briefly or permanently replacing the server-selected theme.
@@ -87,7 +87,7 @@ The bootstrap is now an ESM module that imports a hashed chunk, so it runs async
 - **Category:** code correctness
 - **Severity:** nit
 - **Location:** `client/src/lib/components/AppearanceSettings.svelte:24-26`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Treat `selectedId === null` as the selected Follow server default option.
 
 When the configured default theme disappears, the active palette falls back to Pimote Light. The component compares the active ID with the unavailable configured default ID, so Follow server default is not marked selected even though the profile follows the default.
@@ -97,7 +97,7 @@ When the configured default theme disappears, the active palette falls back to P
 - **Category:** plan deviation
 - **Severity:** nit
 - **Location:** `tools/manual-test/session-observers-smoke/session-observers-smoke.mjs:114-115,146-152`
-- **Status:** open
+- **Status:** resolved
 - **Fix:** Move the provider-discovery and test-config hunk to a separate change or revert it.
 
 The implementation range still contains provider/model discovery changes that are not part of the client-themes plan. They expand the feature diff without contributing to theme behavior.

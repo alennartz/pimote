@@ -23,7 +23,7 @@
     if (session?.isCompacting) {
       next.push({
         label: 'Compacting…',
-        className: 'border-warning/20 bg-warning/10 text-warning-foreground',
+        className: 'border-warning/20 bg-warning/10 text-status-reconnecting',
       });
     }
 
@@ -45,7 +45,7 @@
     } else if (connection.phase === 'connecting' || connection.phase === 'backoff') {
       next.push({
         label: connection.phaseLabel,
-        className: 'border-warning/20 bg-warning/10 text-warning-foreground',
+        className: 'border-warning/20 bg-warning/10 text-status-reconnecting',
       });
     } else if (connection.phase === 'idle') {
       next.push({

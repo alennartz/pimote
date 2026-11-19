@@ -537,7 +537,7 @@
                       {#each folder.repos as repo (repo.path)}
                         <span
                           class="bg-muted text-muted-foreground flex items-center gap-1 rounded-full px-1.5 py-px text-[10.5px] {repo.missing
-                            ? 'border-warning/20 bg-warning/10 text-warning-foreground border'
+                            ? 'border-warning/20 bg-warning/10 text-status-reconnecting border'
                             : ''}"
                           title={repo.missing ? `${repo.name} is missing on disk` : repo.path}
                         >
@@ -754,7 +754,7 @@
       <Dialog.Title>Disband {disbandHub ? displayName(disbandHub) : ''}?</Dialog.Title>
       <Dialog.Description>This removes the nested worktrees and the hub directory. It does not merge or delete branches.</Dialog.Description>
     </Dialog.Header>
-    <div class="border-warning/30 bg-warning/10 text-warning-foreground rounded-md border-l-4 px-3 py-2 text-sm">
+    <div class="border-warning/30 bg-warning/10 text-status-reconnecting rounded-md border-l-4 px-3 py-2 text-sm">
       Every worktree must have no staged, unstaged, or untracked changes. A detached <code class="bg-muted rounded px-1 py-0.5 text-xs">HEAD</code> must be reachable from a local or
       remote-tracking branch.
     </div>

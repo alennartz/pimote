@@ -1,6 +1,6 @@
 import { basename, dirname, resolve } from 'node:path';
 import { mkdir, readFile, realpath } from 'node:fs/promises';
-import { watch as watchFile } from 'node:fs';
+import { watch } from 'node:fs';
 import { homedir } from 'node:os';
 import { DefaultPackageManager, SettingsManager, getAgentDir } from '@earendil-works/pi-coding-agent';
 import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
@@ -115,7 +115,7 @@ export async function main(options: StartOptions = {}) {
       read: (path) => readFile(path, 'utf8'),
       watch: (path, listener) => {
         let timer: ReturnType<typeof setTimeout> | undefined;
-        const watcher = watchFile(dirname(path), { persistent: false }, (_event, filename) => {
+        const watcher = watch(dirname(path), { persistent: false }, (_event, filename) => {
           const changedName = filename === null || filename === undefined ? basename(path) : filename.toString();
           if (changedName !== basename(path)) return;
           clearTimeout(timer);

@@ -139,7 +139,7 @@
 					{notif.notificationType === 'error'
           ? 'border-destructive/30 bg-destructive/10 text-destructive'
           : notif.notificationType === 'warning'
-            ? 'border-warning/30 bg-warning/10 text-warning-foreground'
+            ? 'border-warning/30 bg-warning/10 text-status-reconnecting'
             : 'border-border bg-background text-foreground'}"
         onclick={() => dismissNotification(notif.id)}
       >

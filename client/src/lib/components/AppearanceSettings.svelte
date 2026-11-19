@@ -22,7 +22,7 @@
   }
 
   function isDefaultSelected(): boolean {
-    return selectedId === null && activeId === (defaultThemeId ?? 'pimote/light');
+    return selectedId === null;
   }
 
   function select(themeId: string | null): void {

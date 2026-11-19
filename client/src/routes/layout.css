@@ -91,7 +91,7 @@
   --accent-foreground: oklch(0.984 0.003 247.9);
   --destructive: oklch(0.396 0.133 25.7);
   --warning: oklch(0.72 0.17 55.934);
-  --warning-foreground: oklch(0.16 0.02 55);
+  --warning-foreground: oklch(0.77 0.165 70.6);
   --border: oklch(0.28 0.037 260);
   --input: oklch(0.28 0.037 260);
   --ring: oklch(0.869 0.02 252.8);
@@ -428,7 +428,7 @@
   --accent-foreground: var(--pimote-ui-accent-foreground, oklch(0.984 0.003 247.9));
   --destructive: var(--pimote-ui-destructive, oklch(0.396 0.133 25.7));
   --warning: var(--pimote-ui-warning, oklch(0.72 0.17 55.934));
-  --warning-foreground: var(--pimote-ui-warning-foreground, oklch(0.16 0.02 55));
+  --warning-foreground: var(--pimote-ui-warning-foreground, oklch(0.77 0.165 70.6));
   --border: var(--pimote-ui-border, oklch(0.28 0.037 260));
   --input: var(--pimote-ui-input, oklch(0.28 0.037 260));
   --ring: var(--pimote-ui-ring, oklch(0.869 0.02 252.8));

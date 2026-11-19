@@ -70,7 +70,6 @@ function ansiColors(useTheme: boolean): Record<number, string> {
   return colors;
 }
 
-const converter = new Convert({ fg: 'inherit', bg: 'transparent', escapeXML: true, newline: true, colors: ansiColors(false) });
 const themedConverter = new Convert({ fg: 'inherit', bg: 'transparent', escapeXML: true, newline: true, colors: ansiColors(true) });
 const indexedBase = [
   [0, 0, 0],
@@ -102,13 +101,8 @@ function preserveIndexedBase(text: string): string {
   });
 }
 
-function themeInstalled(): boolean {
-  if (typeof document === 'undefined') return false;
-  return document.documentElement.style.getPropertyValue('--pimote-terminal-black').trim() !== '';
-}
-
 export function ansiToHtml(text: string): string {
-  return (themeInstalled() ? themedConverter : converter).toHtml(preserveIndexedBase(text));
+  return themedConverter.toHtml(preserveIndexedBase(text));
 }
 
 // ECMA-48 CSI sequences: ESC [ parameters, intermediates, final byte.

@@ -58,7 +58,7 @@
     contextTone === 'critical'
       ? 'border-status-error/20 bg-status-error/10 text-status-error'
       : contextTone === 'warning'
-        ? 'border-warning/20 bg-warning/10 text-warning-foreground'
+        ? 'border-warning/20 bg-warning/10 text-status-reconnecting'
         : 'border-border bg-muted text-muted-foreground',
   );
 </script>
@@ -185,7 +185,7 @@
                 >
               {/if}
               {#if session?.isCompacting}
-                <span class="border-warning/20 bg-warning/10 text-warning-foreground inline-flex items-center rounded-full border px-2 py-0.5 font-medium">Compacting…</span>
+                <span class="border-warning/20 bg-warning/10 text-status-reconnecting inline-flex items-center rounded-full border px-2 py-0.5 font-medium">Compacting…</span>
               {/if}
               {#if session?.isNavigatingTree}
                 <span class="border-status-active/20 bg-status-active/10 text-status-active inline-flex items-center rounded-full border px-2 py-0.5 font-medium"

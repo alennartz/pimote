@@ -273,7 +273,7 @@
     mobileContextTone === 'critical'
       ? 'border-status-error/20 bg-status-error/10 text-status-error'
       : mobileContextTone === 'warning'
-        ? 'border-warning/20 bg-warning/10 text-warning-foreground'
+        ? 'border-warning/20 bg-warning/10 text-status-reconnecting'
         : 'border-border bg-muted text-muted-foreground',
   );
 

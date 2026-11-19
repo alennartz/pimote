@@ -53,9 +53,12 @@ export class ThemeStore {
 
   /** Reconcile the shared user selection from the profile event. */
   handleProfile(event: UserSessionsChangedEvent): void {
-    this.selectedThemeId = event.selectedThemeId ?? null;
-    this.previewThemeId = this.selectedThemeId;
-    this.previewing = false;
+    const wasReconciled = this.profileReconciled;
+    if (event.selectedThemeId !== undefined) this.selectedThemeId = event.selectedThemeId;
+    if (!wasReconciled || !this.previewing) {
+      this.previewThemeId = this.selectedThemeId;
+      this.previewing = false;
+    }
     this.profileReconciled = true;
     this.applyActive();
   }

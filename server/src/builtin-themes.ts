@@ -280,7 +280,7 @@ const darkUi: Partial<Record<UiColorToken, string>> = {
   'accent-foreground': 'oklch(0.984 0.003 247.9)',
   destructive: 'oklch(0.396 0.133 25.7)',
   warning: 'oklch(0.72 0.17 55.934)',
-  'warning-foreground': 'oklch(0.16 0.02 55)',
+  'warning-foreground': 'oklch(0.77 0.165 70.6)',
   border: 'oklch(0.28 0.037 260)',
   input: 'oklch(0.28 0.037 260)',
   ring: 'oklch(0.869 0.02 252.8)',
