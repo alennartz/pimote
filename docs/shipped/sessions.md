@@ -39,8 +39,6 @@ A persona folder runs the session rooted in itself. Its `AGENTS.md` is the promp
 
 `pimote_archive_sessions` hides records without deleting them. It closes the live runtime and its observers first, which stops a running turn. Outcomes are `archived`, `open_slot_evicted`, and `not_found`.
 
-`tools.md` lists the parameters and result shapes.
-
 ## Idle reaping
 
 Pimote closes sessions that hold no work. It checks every 60 seconds and closes a session whose idle time exceeds `idleTimeout`, which defaults to 30 minutes.
