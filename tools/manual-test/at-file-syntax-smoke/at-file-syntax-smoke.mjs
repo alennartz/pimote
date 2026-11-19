@@ -28,8 +28,7 @@
 //
 // No live LLM, speechmux, or network required. fd must be present for Phase A/B
 // (Phase A2 deliberately hides it). Tracks and kills only the child PID it
-// spawns. See README.md alongside this file and
-// docs/manual-tests/at-file-syntax-web.md.
+// spawns. See README.md alongside this file.
 
 import { spawn } from 'node:child_process';
 import { copyFile, mkdir, mkdtemp, rm, writeFile, appendFile, readFile } from 'node:fs/promises';

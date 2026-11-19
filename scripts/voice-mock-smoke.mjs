@@ -12,7 +12,7 @@
 //
 // The real-speechmux end-to-end run is unblocked by DR-015 (persistent
 // LLM-harness listener) and DR-016 (session watchdog). This script is the
-// runnable mock slice. See docs/manual-tests/voice-mode.md.
+// runnable mock slice.
 
 import { VoiceOrchestrator, CallBindError } from '../server/dist/voice-orchestrator.js';
 import { initialRuntimeState, reduceActivate, reduceDeactivate, reduceSpeechmuxFrame, reduceSpeechmuxOpened } from '../server/dist/voice/extension-runtime.js';

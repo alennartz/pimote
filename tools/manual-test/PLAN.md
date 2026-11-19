@@ -5,8 +5,8 @@ list — each autoflow topic's manual-test run smokes this suite plus
 whatever the topic adds on top.
 
 "Primary" = high-value happy path a real user walks, the kind of
-regression we do not ship. Edge cases and branch exploration live in the
-per-topic artifacts under `docs/manual-tests/<topic>.md`, not here.
+regression we do not ship. Keep edge cases with the relevant automated
+tests or the README beside their manual-test driver.
 
 Every journey names a **driver**: an automated tool under
 `tools/manual-test/` (or elsewhere, e.g. `scripts/`) when one exists, or

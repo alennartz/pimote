@@ -20,9 +20,8 @@
 //
 //     { "v": 1, "type": "...", "payload": { ... } }
 //
-// The scaffolding below is implemented against that contract but is not yet
-// exercised end-to-end against a live speechmux — see
-// `docs/manual-tests/voice-mode.md` for the blocked real-smoke checklist.
+// The scaffolding below follows that contract but has not been exercised
+// end-to-end against a live speechmux.
 
 import type { PimoteCommand, PimoteResponse } from '@pimote/shared';
 import type { VoiceCallSeams, VoicePeerConnection, VoiceSignalingSocket } from './voice-call.svelte.js';

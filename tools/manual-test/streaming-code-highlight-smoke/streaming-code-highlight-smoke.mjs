@@ -22,8 +22,7 @@
 // streaming / auto-collapse-on-completion, and mid-stream highlighting in the
 // write view) are NOT exercised here — they require a live token stream. The
 // streaming *logic* is covered by client unit tests (code-highlight.test.ts,
-// write-content.test.ts, smd-renderer.test.ts mid-stream case). See
-// docs/manual-tests/streaming-code-highlight.md → Harness Limitations.
+// write-content.test.ts, smd-renderer.test.ts mid-stream case).
 //
 // No live LLM is needed.
 

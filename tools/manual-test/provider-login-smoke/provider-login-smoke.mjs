@@ -30,7 +30,7 @@
 // github.com/login/device/code (unauthenticated device-flow start); if that is
 // unavailable, test 4 reports environment-bounded rather than failing.
 //
-// See README.md alongside this file and docs/manual-tests/provider-login.md.
+// See README.md alongside this file.
 
 import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile, appendFile, readFile } from 'node:fs/promises';

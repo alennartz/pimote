@@ -779,8 +779,7 @@ vendored into this repo. Installed globally as the `agent-browser` CLI.
 
 ```bash
 # 1. Build + start pimote with a sandboxed XDG_CONFIG_HOME and a stub
-#    voice block (see docs/manual-tests/voice-mode.md for the exact
-#    config and the getUserMedia shim).
+#    voice block and the getUserMedia shim.
 npm run build
 XDG_CONFIG_HOME=... XDG_STATE_HOME=... node bin/pimote.js --port <free>
 
