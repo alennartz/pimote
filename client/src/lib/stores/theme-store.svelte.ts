@@ -24,7 +24,7 @@ export class ThemeStore {
   previewThemeId: string | null = $state(null);
   profileReconciled = $state(false);
   sessionAdoptionComplete = $state(false);
-  private previewing = false;
+  private previewing = $state(false);
   private stopEvents: (() => void) | undefined;
 
   constructor(private readonly options: ThemeStoreOptions) {
@@ -54,6 +54,8 @@ export class ThemeStore {
   /** Reconcile the shared user selection from the profile event. */
   handleProfile(event: UserSessionsChangedEvent): void {
     this.selectedThemeId = event.selectedThemeId ?? null;
+    this.previewThemeId = this.selectedThemeId;
+    this.previewing = false;
     this.profileReconciled = true;
     this.applyActive();
   }
@@ -80,6 +82,7 @@ export class ThemeStore {
     const response = await this.options.send({ type: 'set_theme', themeId });
     if (!response.success) throw new Error(response.error ?? 'Failed to save theme');
     this.selectedThemeId = themeId;
+    this.previewThemeId = themeId;
     this.previewing = false;
     this.applyActive();
   }
@@ -96,6 +99,16 @@ export class ThemeStore {
   /** Save stays disabled until profile reconciliation and adoption complete. */
   get saveDisabled(): boolean {
     return !this.profileReconciled || !this.sessionAdoptionComplete || !this.previewing;
+  }
+
+  /** True when the active palette is an unsaved local preview. */
+  get isPreviewing(): boolean {
+    return this.previewing;
+  }
+
+  /** The selected ID, including a local preview but not fallback resolution. */
+  get effectiveSelectionId(): string | null {
+    return this.previewing ? this.previewThemeId : this.selectedThemeId;
   }
 
   /** Resolve the currently previewed or saved theme against the catalog. */
@@ -121,12 +134,11 @@ export class ThemeStore {
     const theme = this.activeTheme;
     if (!theme) return;
     this.options.apply(theme);
-    if (this.profileReconciled) {
-      try {
-        this.options.storage.setItem(this.cacheKey(), JSON.stringify(theme));
-      } catch {
-        // Storage is optional. The in-memory theme remains active.
-      }
+    if (!this.profileReconciled || this.previewing) return;
+    try {
+      this.options.storage.setItem(this.cacheKey(), JSON.stringify(theme));
+    } catch {
+      // Storage is optional. The in-memory theme remains active.
     }
   }
 

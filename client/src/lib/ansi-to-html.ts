@@ -53,7 +53,7 @@ const standardColors = standardRgb.map(rgbText);
 function ansiColors(useTheme: boolean): Record<number, string> {
   const colors: Record<number, string> = {};
   terminalRoles.forEach((role, index) => {
-    colors[index] = useTheme ? `var(--pimote-terminal-${role})` : standardColors[index];
+    colors[index] = useTheme ? `var(--pimote-terminal-${role}, ${standardColors[index]})` : standardColors[index];
   });
   const cube = [0, 95, 135, 175, 215, 255];
   for (let red = 0; red < 6; red += 1) {

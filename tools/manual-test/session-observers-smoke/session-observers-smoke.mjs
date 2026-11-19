@@ -93,17 +93,11 @@ async function main() {
   // session is seeded, so no LLM call is required — but pi's prompt preflight
   // (steer queue) and voice extension loading need a configured model.
   let modelAvailable;
-  let defaultProvider;
-  let defaultModel;
   try {
     const modelsPath = join(REAL_AGENT_DIR, 'models.json');
     const models = JSON.parse(await readFile(modelsPath, 'utf8'));
     const providerEntry = Object.entries(models.providers ?? {}).find(([, p]) => (p.models?.length ?? 0) > 0);
     modelAvailable = Boolean(providerEntry);
-    if (providerEntry) {
-      defaultProvider = providerEntry[0];
-      defaultModel = providerEntry[1].models[0]?.id;
-    }
     if (modelAvailable) {
       await copyFile(modelsPath, join(agentDir, 'models.json'));
     }
@@ -117,7 +111,8 @@ async function main() {
   if (modelAvailable) {
     try {
       const catalog = JSON.parse(await readFile(join(REAL_AGENT_DIR, 'models.json'), 'utf8'));
-      const endpoint = new URL(catalog.providers?.[defaultProvider]?.baseUrl ?? '');
+      const providerEntry = Object.entries(catalog.providers ?? {}).find(([, provider]) => provider?.baseUrl);
+      const endpoint = new URL(providerEntry?.[1]?.baseUrl ?? '');
       modelReachable = await new Promise((resolve) => {
         const socket = createConnection({
           host: endpoint.hostname,
@@ -153,7 +148,6 @@ async function main() {
     port,
     bufferSize: 100,
     updateCheck: false,
-    ...(modelAvailable ? { defaultProvider, defaultModel } : {}),
     ...(modelAvailable ? { voice: { speechmuxSignalUrl: `ws://127.0.0.1:${speechmuxPort}/signal`, speechmuxLlmWsUrl: `ws://127.0.0.1:${speechmuxPort}/llm` } } : {}),
   };
   await writeFile(configPath, JSON.stringify(config, null, 2));

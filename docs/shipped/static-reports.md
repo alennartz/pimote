@@ -49,7 +49,7 @@ Confirm there is no horizontal page scroll at either width, and no text below 14
 Load the optional helper after the report's fallback CSS:
 
 ```html
-<script src="/pwa/theme-bridge.js"></script>
+<script type="module" src="/pwa/theme-bridge.js"></script>
 ```
 
 The helper discovers `pimote:user` and applies the user-scoped cache. A report can override any resulting property after the helper runs. The helper does not rewrite report HTML or change the static-host route.

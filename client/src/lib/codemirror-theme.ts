@@ -11,7 +11,6 @@ const syntaxTagRoles: Array<[unknown, keyof ResolvedTheme['editor']['syntax']]> 
   [tags.variableName, 'variable'],
   [tags.definition(tags.variableName), 'variable'],
   [tags.local(tags.variableName), 'variable'],
-  [tags.variableName, 'parameter'],
   [tags.typeName, 'type'],
   [tags.tagName, 'tag'],
   [tags.propertyName, 'property'],

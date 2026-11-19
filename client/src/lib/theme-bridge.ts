@@ -178,9 +178,49 @@ function isResolvedTheme(value: unknown): value is ResolvedTheme {
   if (typeof candidate.id !== 'string' || !candidate.id || typeof candidate.name !== 'string' || !candidate.name) return false;
   if (candidate.source !== 'builtin' && candidate.source !== 'extension' && candidate.source !== 'user') return false;
   if (candidate.colorScheme !== 'light' && candidate.colorScheme !== 'dark') return false;
-  if (!candidate.editor || typeof candidate.editor !== 'object') return false;
+  if (!candidate.editor || typeof candidate.editor !== 'object' || Array.isArray(candidate.editor)) return false;
   const editor = candidate.editor as Record<string, unknown>;
   return completeMap(candidate.ui, UI_KEYS) && completeMap(editor.surface, SURFACE_KEYS) && completeMap(editor.syntax, SYNTAX_KEYS) && completeMap(editor.terminal, TERMINAL_KEYS);
+}
+
+const cacheProperties = [
+  ...UI_KEYS.map((key) => `--pimote-ui-${key}`),
+  ...SURFACE_KEYS.map((key) => `--pimote-editor-${key}`),
+  ...SYNTAX_KEYS.map((key) => `--pimote-editor-${key}`),
+  ...TERMINAL_KEYS.map((key) => `--pimote-terminal-${key}`),
+];
+
+interface CapturedFallback {
+  styles: ReadonlyArray<readonly [string, string, string]>;
+  dark: boolean;
+  colorScheme: string;
+  themeColor: string | null;
+}
+
+function captureFallback(target: ThemeApplicationTarget): CapturedFallback {
+  const styles = cacheProperties.map((property) => [property, target.root.style.getPropertyValue(property), target.root.style.getPropertyPriority(property)] as const);
+  const meta = target.themeColorMeta ?? target.root.ownerDocument?.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  return {
+    styles,
+    dark: target.root.classList.contains('dark'),
+    colorScheme: target.root.style.getPropertyValue('color-scheme'),
+    themeColor: meta?.getAttribute('content') ?? null,
+  };
+}
+
+function restoreFallback(target: ThemeApplicationTarget, fallback: CapturedFallback): void {
+  for (const [property, value, priority] of fallback.styles) {
+    if (value) target.root.style.setProperty(property, value, priority);
+    else target.root.style.removeProperty(property);
+  }
+  target.root.classList.toggle('dark', fallback.dark);
+  if (fallback.colorScheme) target.root.style.setProperty('color-scheme', fallback.colorScheme);
+  else target.root.style.removeProperty('color-scheme');
+  const meta = target.themeColorMeta ?? target.root.ownerDocument?.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  if (meta) {
+    if (fallback.themeColor === null) meta.removeAttribute('content');
+    else meta.setAttribute('content', fallback.themeColor);
+  }
 }
 
 /** Read one valid, complete cached theme without allowing storage failures out. */
@@ -198,12 +238,15 @@ export function readCachedTheme(user: string, storage: ThemeBridgeStorage): Reso
 /** Public lifecycle for reports that opt into the shared PWA palette. */
 export class ThemeBridge {
   private listening = false;
+  private readonly fallback: CapturedFallback;
   private readonly onStorage = (event: StorageEvent): void => {
     if (event.key !== themeCacheKey(this.options.user)) return;
     this.apply(event.newValue ? parseTheme(event.newValue) : null);
   };
 
-  constructor(private readonly options: ThemeBridgeOptions) {}
+  constructor(private readonly options: ThemeBridgeOptions) {
+    this.fallback = captureFallback(options.target);
+  }
 
   /** Read and apply the user-scoped cached resolved theme, if present. */
   start(): ResolvedTheme | null {
@@ -226,6 +269,7 @@ export class ThemeBridge {
   /** Apply one cache update received from another tab. */
   apply(theme: ResolvedTheme | null): void {
     if (theme) applyResolvedTheme(theme, this.options.target);
+    else restoreFallback(this.options.target, this.fallback);
   }
 }
 
@@ -257,6 +301,7 @@ export function startReportThemeBridge(): () => void {
     const nextUser = event.newValue?.trim() || 'default';
     if (nextUser === user) return;
     bridge.stop();
+    bridge.apply(null);
     user = nextUser;
     bridge = new ThemeBridge({ user, storage, target: { root, themeColorMeta: meta }, eventSource: window });
     bridge.start();

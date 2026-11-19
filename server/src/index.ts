@@ -1,4 +1,4 @@
-import { resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { mkdir, readFile, realpath } from 'node:fs/promises';
 import { watch as watchFile } from 'node:fs';
 import { homedir } from 'node:os';
@@ -115,8 +115,9 @@ export async function main(options: StartOptions = {}) {
       read: (path) => readFile(path, 'utf8'),
       watch: (path, listener) => {
         let timer: ReturnType<typeof setTimeout> | undefined;
-        const watcher = watchFile(resolve(path, '..'), { persistent: false }, (_event, filename) => {
-          if (!filename || filename.toString() !== path.split('/').pop()) return;
+        const watcher = watchFile(dirname(path), { persistent: false }, (_event, filename) => {
+          const changedName = filename === null || filename === undefined ? basename(path) : filename.toString();
+          if (changedName !== basename(path)) return;
           clearTimeout(timer);
           timer = setTimeout(listener, 25);
         });

@@ -503,13 +503,13 @@
                     >
                       <Star
                         class="size-3 transition-colors max-md:size-4 {folder.favorite
-                          ? 'fill-yellow-500 text-yellow-500'
+                          ? 'fill-warning text-warning'
                           : 'text-muted-foreground/40 group-hover/star:text-muted-foreground'}"
                       />
                     </button>
                     {#if folder.activeSessionCount > 0}
                       <span
-                        class="flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-px text-[10.5px] font-medium text-emerald-600 dark:text-emerald-400"
+                        class="border-status-connected/20 bg-status-connected/10 text-status-connected flex items-center gap-1 rounded-full border px-1.5 py-px text-[10.5px] font-medium"
                         title={`${folder.activeSessionCount} open session${folder.activeSessionCount !== 1 ? 's' : ''}`}
                       >
                         <span class="bg-status-connected size-1.5 rounded-full"></span>
@@ -537,13 +537,12 @@
                       {#each folder.repos as repo (repo.path)}
                         <span
                           class="bg-muted text-muted-foreground flex items-center gap-1 rounded-full px-1.5 py-px text-[10.5px] {repo.missing
-                            ? 'border border-yellow-500/20 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'
+                            ? 'border-warning/20 bg-warning/10 text-warning-foreground border'
                             : ''}"
                           title={repo.missing ? `${repo.name} is missing on disk` : repo.path}
                         >
                           {#if !repo.missing}
-                            <span class="size-1.5 rounded-full {repo.dirty ? 'bg-yellow-500' : 'bg-muted-foreground/40'}" title={repo.dirty ? 'Uncommitted changes' : 'Clean'}
-                            ></span>
+                            <span class="size-1.5 rounded-full {repo.dirty ? 'bg-warning' : 'bg-muted-foreground/40'}" title={repo.dirty ? 'Uncommitted changes' : 'Clean'}></span>
                           {/if}
                           <span class="max-w-28 truncate">{repo.name}</span>
                           {#if repo.missing}
@@ -557,7 +556,7 @@
                       {@const repo = folder.repo}
                       {#if repo && !repo.missing && repo.branch}
                         <span class="bg-muted text-muted-foreground flex items-center gap-1 rounded-full px-1.5 py-px text-[10.5px]" title={repo.path}>
-                          <span class="size-1.5 rounded-full {repo.dirty ? 'bg-yellow-500' : 'bg-muted-foreground/40'}" title={repo.dirty ? 'Uncommitted changes' : 'Clean'}></span>
+                          <span class="size-1.5 rounded-full {repo.dirty ? 'bg-warning' : 'bg-muted-foreground/40'}" title={repo.dirty ? 'Uncommitted changes' : 'Clean'}></span>
                           <span class="max-w-24 truncate">{repo.branch}</span>
                           {#if repo.ahead || repo.behind}
                             <span class="opacity-70">↑{repo.ahead}↓{repo.behind}</span>
@@ -755,7 +754,7 @@
       <Dialog.Title>Disband {disbandHub ? displayName(disbandHub) : ''}?</Dialog.Title>
       <Dialog.Description>This removes the nested worktrees and the hub directory. It does not merge or delete branches.</Dialog.Description>
     </Dialog.Header>
-    <div class="rounded-md border-l-4 border-yellow-500/30 bg-yellow-500/10 px-3 py-2 text-sm text-yellow-600 dark:text-yellow-400">
+    <div class="border-warning/30 bg-warning/10 text-warning-foreground rounded-md border-l-4 px-3 py-2 text-sm">
       Every worktree must have no staged, unstaged, or untracked changes. A detached <code class="bg-muted rounded px-1 py-0.5 text-xs">HEAD</code> must be reachable from a local or
       remote-tracking branch.
     </div>

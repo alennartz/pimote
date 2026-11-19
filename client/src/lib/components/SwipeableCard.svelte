@@ -313,9 +313,8 @@
   <div bind:this={cellEl} class="relative overflow-hidden" out:slide={{ duration: 150 }}>
     {#if actionLeft}
       <div
-        class="absolute inset-y-0 right-0 flex w-[80px] items-stretch justify-center rounded-r-xl {armedSide === 'left'
-          ? 'bg-red-700 dark:bg-red-600'
-          : 'bg-red-600 dark:bg-red-500'}"
+        class="bg-destructive absolute inset-y-0 right-0 flex w-[80px] items-stretch justify-center rounded-r-xl"
+        style={`background-color: color-mix(in oklab, var(--destructive) ${armedSide === 'left' ? '82%' : '100%'}, black)`}
         aria-hidden={!isOpen}
       >
         <button class="flex flex-col items-center justify-center gap-1 text-white" tabindex={isOpen ? 0 : -1} onclick={() => void fire('left')}>
@@ -329,9 +328,8 @@
     {/if}
     {#if actionRight}
       <div
-        class="absolute inset-y-0 left-0 flex w-[80px] items-stretch justify-center rounded-l-xl {armedSide === 'right'
-          ? 'bg-emerald-700 dark:bg-emerald-600'
-          : 'bg-emerald-600 dark:bg-emerald-500'}"
+        class="bg-status-connected absolute inset-y-0 left-0 flex w-[80px] items-stretch justify-center rounded-l-xl"
+        style={`background-color: color-mix(in oklab, var(--status-connected) ${armedSide === 'right' ? '82%' : '100%'}, black)`}
         aria-hidden={!isOpen}
       >
         <button class="flex flex-col items-center justify-center gap-1 text-white" tabindex={isOpen ? 0 : -1} onclick={() => void fire('right')}>

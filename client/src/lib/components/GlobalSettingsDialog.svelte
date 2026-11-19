@@ -44,6 +44,7 @@
   let persistedUser = $state(getUser() ?? '');
   let profiles = $state<UserSummary[]>([]);
   let chipsStale = $state(false);
+  let themeSaveError = $state<string | null>(null);
 
   let trimmedName = $derived(userName.trim());
   let userDirty = $derived(trimmedName !== '' && trimmedName !== persistedUser);
@@ -59,6 +60,7 @@
 
   $effect(() => {
     if (!store.open) {
+      cancelThemePreview();
       userTabActive = false;
       appearanceTabActive = false;
       userName = persistedUser;
@@ -73,7 +75,13 @@
     if (userTabActive && chipsStale && connection.ready) void fetchProfiles();
   });
 
+  function cancelThemePreview(): void {
+    themeStore?.cancel();
+    themeSaveError = null;
+  }
+
   function selectUserTab(): void {
+    cancelThemePreview();
     appearanceTabActive = false;
     userTabActive = true;
     void fetchProfiles();
@@ -83,6 +91,17 @@
     if (!themeStore) return;
     userTabActive = false;
     appearanceTabActive = true;
+    themeSaveError = null;
+  }
+
+  async function saveTheme(): Promise<void> {
+    if (!themeStore) return;
+    themeSaveError = null;
+    try {
+      await themeStore.save();
+    } catch (error) {
+      themeSaveError = error instanceof Error ? error.message : String(error);
+    }
   }
 
   async function fetchProfiles(): Promise<void> {
@@ -194,7 +213,7 @@
         : active?.dirty
           ? 'Unsaved changes'
           : null}
-  error={appearanceTabActive || userTabActive ? null : (store.error ?? active?.error ?? null)}
+  error={appearanceTabActive ? themeSaveError : userTabActive ? null : (store.error ?? active?.error ?? null)}
   saving={appearanceTabActive ? false : userTabActive ? false : (active?.saving ?? false)}
   saveDisabled={appearanceTabActive ? (themeStore?.saveDisabled ?? true) : userTabActive ? !userDirty : !presentation.actions.saveEnabled || !active?.loaded}
   saveLabel={appearanceTabActive ? 'Save theme' : 'Save'}
@@ -213,12 +232,12 @@
   bind:editorView
   {viewport}
   onclose={() => {
-    if (appearanceTabActive) themeStore?.cancel();
+    cancelThemePreview();
     store.close();
   }}
   onsave={() => {
     if (appearanceTabActive) {
-      void themeStore?.save();
+      void saveTheme();
       return;
     }
     if (userTabActive) {
@@ -246,6 +265,7 @@
           aria-selected={!userTabActive && !appearanceTabActive && file.path === store.activePath}
           class="shrink-0"
           onclick={() => {
+            cancelThemePreview();
             userTabActive = false;
             appearanceTabActive = false;
             void store.select(file.path);

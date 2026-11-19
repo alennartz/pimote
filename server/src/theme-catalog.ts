@@ -304,9 +304,10 @@ function parseFile(raw: string, path: string): { definitions: ThemeDefinition[];
 function resolveValue(value: ThemeColorValue | undefined, palette: Readonly<Record<string, string>>, role: string): string {
   if (typeof value === 'string') return value;
   if (!value) throw new Error(`missing color value for ${role}`);
-  const resolved = palette[value.palette];
-  if (!resolved) throw new Error(`missing palette swatch ${value.palette} for ${role}`);
-  return resolved;
+  if (!Object.prototype.hasOwnProperty.call(palette, value.palette) || typeof palette[value.palette] !== 'string') {
+    throw new Error(`missing palette swatch ${value.palette} for ${role}`);
+  }
+  return palette[value.palette];
 }
 
 function mergeRecord<K extends string>(
@@ -447,9 +448,7 @@ export class ThemeCatalog {
 
   /** Replace extension registrations after a host reload. */
   async replaceExtensionFiles(extensionFiles: readonly string[]): Promise<ThemeCatalogSnapshot> {
-    const next = [...extensionFiles];
-    if (next.length === this.extensionFiles.length && next.every((path, index) => path === this.extensionFiles[index])) return this.current;
-    this.extensionFiles = next;
+    this.extensionFiles = [...extensionFiles];
     return this.reload();
   }
 

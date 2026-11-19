@@ -46,19 +46,19 @@
 
   let connectionDotClass = $derived(
     connection.phase === 'ready'
-      ? 'bg-emerald-500'
+      ? 'bg-status-connected'
       : connection.phase === 'syncing'
-        ? 'bg-blue-500'
+        ? 'bg-status-active'
         : connection.phase === 'backoff' || connection.phase === 'connecting'
-          ? 'bg-amber-500'
-          : 'bg-red-500',
+          ? 'bg-status-reconnecting'
+          : 'bg-status-error',
   );
 
   let contextChipClass = $derived(
     contextTone === 'critical'
-      ? 'border-red-500/20 bg-red-500/10 text-red-600 dark:text-red-400'
+      ? 'border-status-error/20 bg-status-error/10 text-status-error'
       : contextTone === 'warning'
-        ? 'border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-400'
+        ? 'border-warning/20 bg-warning/10 text-warning-foreground'
         : 'border-border bg-muted text-muted-foreground',
   );
 </script>
@@ -180,17 +180,15 @@
             <span class="text-muted-foreground">Runtime</span>
             <div class="flex flex-wrap justify-end gap-1.5 text-xs">
               {#if session?.isStreaming}
-                <span class="inline-flex items-center rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 font-medium text-emerald-600 dark:text-emerald-400"
+                <span class="border-status-streaming/20 bg-status-streaming/10 text-status-streaming inline-flex items-center rounded-full border px-2 py-0.5 font-medium"
                   >Streaming</span
                 >
               {/if}
               {#if session?.isCompacting}
-                <span class="inline-flex items-center rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 font-medium text-amber-600 dark:text-amber-400"
-                  >Compacting…</span
-                >
+                <span class="border-warning/20 bg-warning/10 text-warning-foreground inline-flex items-center rounded-full border px-2 py-0.5 font-medium">Compacting…</span>
               {/if}
               {#if session?.isNavigatingTree}
-                <span class="inline-flex items-center rounded-full border border-violet-500/20 bg-violet-500/10 px-2 py-0.5 font-medium text-violet-600 dark:text-violet-400"
+                <span class="border-status-active/20 bg-status-active/10 text-status-active inline-flex items-center rounded-full border px-2 py-0.5 font-medium"
                   >{session.treeNavigationSummarizing ? 'Summarizing…' : 'Navigating…'}</span
                 >
               {/if}

@@ -23,14 +23,14 @@
     if (session?.isCompacting) {
       next.push({
         label: 'Compacting…',
-        className: 'border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+        className: 'border-warning/20 bg-warning/10 text-warning-foreground',
       });
     }
 
     if (navigationIndicator.visible) {
       next.push({
         label: session?.treeNavigationSummarizing ? 'Summarizing…' : 'Navigating…',
-        className: 'border-violet-500/20 bg-violet-500/10 text-violet-600 dark:text-violet-400',
+        className: 'border-status-active/20 bg-status-active/10 text-status-active',
       });
     }
 
@@ -39,18 +39,18 @@
       if (restoreLabel) {
         next.push({
           label: restoreLabel,
-          className: 'border-blue-500/20 bg-blue-500/10 text-blue-600 dark:text-blue-400',
+          className: 'border-status-active/20 bg-status-active/10 text-status-active',
         });
       }
     } else if (connection.phase === 'connecting' || connection.phase === 'backoff') {
       next.push({
         label: connection.phaseLabel,
-        className: 'border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+        className: 'border-warning/20 bg-warning/10 text-warning-foreground',
       });
     } else if (connection.phase === 'idle') {
       next.push({
         label: 'Disconnected',
-        className: 'border-red-500/20 bg-red-500/10 text-red-600 dark:text-red-400',
+        className: 'border-status-error/20 bg-status-error/10 text-status-error',
       });
     }
 

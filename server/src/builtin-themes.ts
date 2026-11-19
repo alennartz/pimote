@@ -447,14 +447,29 @@ function thirdParty(
     number: string;
     keyword: string;
     terminal: Partial<Record<AnsiColorName, string>>;
+    surface: string;
+    raised: string;
+    hover: string;
+    selection: string;
+    cursor: string;
+    lineNumber: string;
+    matchingBracket: string;
+    searchMatch: string;
+    errorSurface: string;
   },
 ): ThemeDefinition {
+  const red = colors.terminal.red ?? colors.accent;
+  const green = colors.terminal.green ?? colors.accent;
+  const yellow = colors.terminal.yellow ?? colors.accent;
+  const blue = colors.terminal.blue ?? colors.accent;
+  const magenta = colors.terminal.magenta ?? colors.accent;
+  const cyan = colors.terminal.cyan ?? colors.accent;
   const values: Partial<Record<UiColorToken, string>> = {
     background: colors.background,
     foreground: colors.foreground,
-    card: colors.background,
+    card: colors.surface,
     'card-foreground': colors.foreground,
-    popover: colors.background,
+    popover: colors.raised,
     'popover-foreground': colors.foreground,
     primary: colors.accent,
     'primary-foreground': colors.background,
@@ -464,10 +479,18 @@ function thirdParty(
     'muted-foreground': colors.comment,
     accent: colors.muted,
     'accent-foreground': colors.foreground,
+    destructive: red,
+    warning: yellow,
+    'warning-foreground': colors.background,
     border: colors.border,
     input: colors.border,
     ring: colors.accent,
-    sidebar: colors.background,
+    'chart-1': blue,
+    'chart-2': colors.accent,
+    'chart-3': green,
+    'chart-4': magenta,
+    'chart-5': yellow,
+    sidebar: colors.surface,
     'sidebar-foreground': colors.foreground,
     'sidebar-primary': colors.accent,
     'sidebar-primary-foreground': colors.background,
@@ -475,8 +498,32 @@ function thirdParty(
     'sidebar-accent-foreground': colors.foreground,
     'sidebar-border': colors.border,
     'sidebar-ring': colors.accent,
+    'status-active': colors.accent,
+    'status-streaming': green,
+    'status-connected': green,
+    'status-error': red,
+    'status-reconnecting': yellow,
+    'surface-sunken': colors.surface,
+    'surface-raised': colors.raised,
+    'surface-subtle': colors.muted,
+    'surface-hover': colors.hover,
+    'error-accent': red,
+    'error-surface': colors.errorSurface,
+    'error-foreground': red,
+    'error-avatar-fg': colors.foreground,
+    'skill-accent': cyan,
+    'skill-surface': colors.surface,
+    'skill-foreground': cyan,
+    'skill-foreground-hover': colors.foreground,
+    'bash-accent': green,
+    'custom-accent': magenta,
+    'custom-surface': colors.surface,
+    'custom-foreground': magenta,
+    'custom-foreground-hover': colors.foreground,
     link: colors.accent,
     'link-hover': colors.accent,
+    'avatar-bg': colors.accent,
+    'avatar-fg': colors.background,
     'shadow-color': 'rgba(0,0,0,0.3)',
   };
   const syntax: Partial<Record<EditorSyntaxRole, string>> = {
@@ -502,7 +549,19 @@ function thirdParty(
     scheme,
     values,
     {
-      surface: { background: colors.background, foreground: colors.foreground, 'gutter-background': colors.background, 'active-line': colors.muted },
+      surface: {
+        background: colors.background,
+        foreground: colors.foreground,
+        selection: colors.selection,
+        cursor: colors.cursor,
+        'active-line': colors.surface,
+        'gutter-background': colors.surface,
+        'gutter-foreground': colors.comment,
+        'line-number': colors.lineNumber,
+        'active-line-number': colors.foreground,
+        'matching-bracket': colors.matchingBracket,
+        'search-match': colors.searchMatch,
+      },
       syntax,
       terminal: colors.terminal,
     },
@@ -541,6 +600,15 @@ export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
       'bright-cyan': '#a4ffff',
       'bright-white': '#ffffff',
     },
+    surface: '#343746',
+    raised: '#424450',
+    hover: '#44475a',
+    selection: '#44475a',
+    cursor: '#f8f8f2',
+    lineNumber: '#6272a4',
+    matchingBracket: '#ff79c6',
+    searchMatch: '#f1fa8c',
+    errorSurface: '#343746',
   }),
   thirdParty('tokyo-night/tokyo-night', 'Tokyo Night', 'dark', {
     background: '#1a1b26',
@@ -570,6 +638,15 @@ export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
       'bright-cyan': '#a4ffff',
       'bright-white': '#acb0d0',
     },
+    surface: '#20222c',
+    raised: '#24283b',
+    hover: '#292e42',
+    selection: '#515c7e4d',
+    cursor: '#c0caf5',
+    lineNumber: '#363b54',
+    matchingBracket: '#16161e',
+    searchMatch: '#3d59a166',
+    errorSurface: '#16161e',
   }),
   thirdParty('nord/nord', 'Nord', 'dark', {
     background: '#2e3440',
@@ -599,6 +676,15 @@ export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
       'bright-cyan': '#8fbcbb',
       'bright-white': '#eceff4',
     },
+    surface: '#3b4252',
+    raised: '#434c5e',
+    hover: '#4c566a',
+    selection: '#434c5ecc',
+    cursor: '#d8dee9',
+    lineNumber: '#4c566a',
+    matchingBracket: '#434c5e',
+    searchMatch: '#88c0d066',
+    errorSurface: '#3b2d31',
   }),
   thirdParty('gruvbox/dark', 'Gruvbox Dark', 'dark', {
     background: '#282828',
@@ -628,6 +714,15 @@ export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
       'bright-cyan': '#8ec07c',
       'bright-white': '#ebdbb2',
     },
+    surface: '#32302f',
+    raised: '#3c3836',
+    hover: '#504945',
+    selection: '#504945',
+    cursor: '#ebdbb2',
+    lineNumber: '#928374',
+    matchingBracket: '#fabd2f',
+    searchMatch: '#fabd2f',
+    errorSurface: '#3c1f1e',
   }),
   thirdParty('solarized/light', 'Solarized Light', 'light', {
     background: '#fdf6e3',
@@ -657,6 +752,15 @@ export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
       'bright-cyan': '#93a1a1',
       'bright-white': '#fdf6e3',
     },
+    surface: '#eee8d5',
+    raised: '#e7dfc8',
+    hover: '#d8d0bb',
+    selection: '#eee8d5',
+    cursor: '#657b83',
+    lineNumber: '#93a1a1',
+    matchingBracket: '#b58900',
+    searchMatch: '#b58900',
+    errorSurface: '#eee8d5',
   }),
   thirdParty('catppuccin/mocha', 'Catppuccin Mocha', 'dark', {
     background: '#1e1e2e',
@@ -686,6 +790,15 @@ export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
       'bright-cyan': '#94e2d5',
       'bright-white': '#a6adc8',
     },
+    surface: '#242436',
+    raised: '#313244',
+    hover: '#3a3c50',
+    selection: '#45475a',
+    cursor: '#cdd6f4',
+    lineNumber: '#6c7086',
+    matchingBracket: '#cba6f7',
+    searchMatch: '#f9e2af',
+    errorSurface: '#3a222d',
   }),
 ];
 

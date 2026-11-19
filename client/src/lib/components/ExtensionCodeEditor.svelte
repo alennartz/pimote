@@ -137,39 +137,35 @@
 
   function buildExtensions(languageId: EditorLanguage | null, theme: ResolvedTheme): Extension[] {
     const languageExtension = getCodeMirrorLanguageExtension(languageId);
-    const dark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
-    const layoutTheme = EditorView.theme(
-      {
-        '&': {
-          height: '100%',
-        },
-        '.cm-editor': {
-          height: '100%',
-        },
-        '.cm-scroller': {
-          overflow: 'auto',
-          fontFamily: 'var(--font-mono)',
-          // JetBrains Mono Variable shapes `--` / `!!` as spacer+ligature pairs;
-          // renderers that clip ligature ink to its advance drop the first
-          // character visually. Command text must stay verbatim.
-          fontVariantLigatures: 'none',
-          lineHeight: '1.6',
-        },
-        '.cm-content': {
-          padding: '1rem 0',
-        },
-        '.cm-line': {
-          padding: '0 1rem',
-        },
-        '.cm-gutterElement': {
-          padding: '0 0.75rem 0 0.5rem',
-        },
-        '.cm-focused': {
-          outline: 'none',
-        },
+    const layoutTheme = EditorView.theme({
+      '&': {
+        height: '100%',
       },
-      { dark },
-    );
+      '.cm-editor': {
+        height: '100%',
+      },
+      '.cm-scroller': {
+        overflow: 'auto',
+        fontFamily: 'var(--font-mono)',
+        // JetBrains Mono Variable shapes `--` / `!!` as spacer+ligature pairs;
+        // renderers that clip ligature ink to its advance drop the first
+        // character visually. Command text must stay verbatim.
+        fontVariantLigatures: 'none',
+        lineHeight: '1.6',
+      },
+      '.cm-content': {
+        padding: '1rem 0',
+      },
+      '.cm-line': {
+        padding: '0 1rem',
+      },
+      '.cm-gutterElement': {
+        padding: '0 0.75rem 0 0.5rem',
+      },
+      '.cm-focused': {
+        outline: 'none',
+      },
+    });
     return [
       basicSetup,
       keymap.of([indentWithTab]),

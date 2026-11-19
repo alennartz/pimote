@@ -1,10 +1,48 @@
+import { resolve } from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { VitePWA } from 'vite-plugin-pwa';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
+
+const themeEntries = {
+  '/pwa/theme-bootstrap.js': resolve('src/theme-bootstrap-entry.ts'),
+  '/pwa/theme-bridge.js': resolve('src/theme-bridge-entry.ts'),
+} as const;
+
+function themeAssetEntries(): Plugin {
+  return {
+    name: 'pimote-theme-asset-entries',
+    buildStart() {
+      for (const [fileName, id] of Object.entries(themeEntries)) this.emitFile({ type: 'chunk', id, fileName: fileName.slice(1) });
+    },
+    configureServer(server) {
+      server.middlewares.use(async (request, response, next) => {
+        const pathname = request.url?.split('?', 1)[0];
+        const id = pathname ? themeEntries[pathname as keyof typeof themeEntries] : undefined;
+        if (!id) {
+          next();
+          return;
+        }
+        try {
+          const transformed = await server.transformRequest(id);
+          if (!transformed) {
+            next();
+            return;
+          }
+          response.statusCode = 200;
+          response.setHeader('Content-Type', 'application/javascript');
+          response.end(transformed.code);
+        } catch (error) {
+          next(error);
+        }
+      });
+    },
+  };
+}
 
 export default defineConfig({
   plugins: [
+    themeAssetEntries(),
     tailwindcss(),
     sveltekit(),
     VitePWA({
