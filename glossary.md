@@ -60,6 +60,10 @@ _Avoid_: session settings, agent instructions
 A user-level file Pimote exposes as one tab in the Global settings experience. Settings files can be built-in, named in Pimote configuration, or contributed by a Pimote extension.
 _Avoid_: settings document, configuration file (when referring to the tabbed settings surface)
 
+**Web theme**:
+A named appearance preset for the Pimote PWA. It pairs Pimote UI color tokens with code-editor syntax colors; selecting it applies both palettes.
+_Avoid_: UI theme, editor theme (when referring to the complete preset)
+
 **Pimote extension**:
 A trusted module loaded by the global Pimote extension host from its XDG directory or a user-level Pi package's `pimote.extensions` entries. The host loads it at startup and server-wide reload; it does not receive Pi's `ExtensionAPI`.
 _Avoid_: Pi extension, folder-source module (when referring to the generic host)
@@ -250,6 +254,7 @@ _Avoid_: session restore (Pi owns general session reload), semantic replay (prov
 - A **persona folder** persists by leaving artifacts in its own folder; persona conferrals are ephemeral, **manager sessions** are not
 - The **manager root** is distinct from scan roots; when nested inside one, its entry is excluded from the sparse tree
 - A **manager session** is an ordinary persisted session rooted at the **manager root**
+- A **Pimote user** uses its saved **web theme** across devices; the server's default theme applies when no choice is saved
 - A **session** can have multiple **session observers**, but at most one **voice call holder**
 - Each **session observer** keeps its own **replay cursor** into the session's shared event buffer
 - One **assistant message row** renders one assistant message; matching tool results contribute to that row's cost, while the later assistant response has its own row
