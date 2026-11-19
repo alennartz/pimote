@@ -12,6 +12,7 @@ const harness = vi.hoisted(() => {
   let nextBind: (() => Promise<void>) | undefined;
   let nextServiceGate: (() => Promise<void>) | undefined;
   let activeServiceCreations = 0;
+  let activeStartupSteps = 0;
   let nextBindAction: ((bindings: any) => Promise<void>) | undefined;
 
   const makeSession = (sessionId: string, sessionManager: any): any => {
@@ -32,15 +33,22 @@ const harness = vi.hoisted(() => {
       reload: vi.fn(async () => {}),
       bindExtensions: vi.fn(async (bindings: unknown) => {
         bindCalls.push({ session, bindings });
-        if (nextBind) {
-          const gate = nextBind;
-          nextBind = undefined;
-          await gate();
-        }
-        if (nextBindAction) {
-          const action = nextBindAction;
-          nextBindAction = undefined;
-          await action(bindings);
+        activeStartupSteps++;
+        harness.modelRuntime.ready = false;
+        try {
+          if (nextBind) {
+            const gate = nextBind;
+            nextBind = undefined;
+            await gate();
+          }
+          if (nextBindAction) {
+            const action = nextBindAction;
+            nextBindAction = undefined;
+            await action(bindings);
+          }
+        } finally {
+          activeStartupSteps--;
+          if (activeStartupSteps === 0) harness.modelRuntime.ready = true;
         }
       }),
       createReplacedSessionContext: () => ({ session }),
@@ -74,6 +82,8 @@ const harness = vi.hoisted(() => {
       nextBindAction = undefined;
       nextServiceGate = undefined;
       activeServiceCreations = 0;
+      activeStartupSteps = 0;
+      harness.modelRuntime.ready = true;
     },
     createAgentSessionRuntime: vi.fn(async (factory: CreateAgentSessionRuntimeFactory, options: any) => {
       const created = await factory({ ...options, agentDir: '/agent', sessionStartEvent: { type: 'session_start', reason: 'startup' } });
@@ -112,6 +122,7 @@ const harness = vi.hoisted(() => {
     }),
     createAgentSessionServices: vi.fn(async (args: any) => {
       activeServiceCreations++;
+      activeStartupSteps++;
       args.modelRuntime.ready = false;
       try {
         const gate = nextServiceGate;
@@ -120,7 +131,8 @@ const harness = vi.hoisted(() => {
         return { ...args, diagnostics: [] };
       } finally {
         activeServiceCreations--;
-        if (activeServiceCreations === 0) args.modelRuntime.ready = true;
+        activeStartupSteps--;
+        if (activeStartupSteps === 0) args.modelRuntime.ready = true;
       }
     }),
     createAgentSessionFromServices: vi.fn(async ({ services, sessionManager }: any) => {
@@ -191,6 +203,31 @@ describe('manager-owned extension startup', () => {
 
     release();
     const [firstId, secondId] = await Promise.all([first, second]);
+    expect(manager.getSlot(firstId)?.session.model?.provider).toBe('genetec');
+    expect(manager.getSlot(secondId)?.session.model?.provider).toBe('genetec');
+    await manager.dispose();
+  });
+
+  it('keeps shared model-runtime startup serialized through extension binding', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    harness.gateNextBind(async () => gate);
+    const manager = await PimoteSessionManager.create(config, push);
+    const first = manager.openSession('/project', '/tmp/first-bind.jsonl');
+    await vi.waitFor(() => expect(harness.bindCalls).toHaveLength(1));
+
+    const second = manager.openSession('/project', '/tmp/second-bind.jsonl');
+    try {
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(harness.activeServiceCreations()).toBe(0);
+    } finally {
+      release();
+    }
+    const [firstId, secondId] = await Promise.all([first, second]);
+
     expect(manager.getSlot(firstId)?.session.model?.provider).toBe('genetec');
     expect(manager.getSlot(secondId)?.session.model?.provider).toBe('genetec');
     await manager.dispose();

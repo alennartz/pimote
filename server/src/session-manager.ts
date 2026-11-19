@@ -745,7 +745,7 @@ export class PimoteSessionManager {
   private readonly sessionOperationLocks = new Map<string, Promise<unknown>>();
   /** Coalesce asynchronous extension startup per concrete AgentSession. */
   private readonly extensionBindFlights = new WeakMap<AgentSession, Promise<void>>();
-  /** Serialize runtime creation because each session registers providers on the shared ModelRuntime. */
+  /** Serialize each initial session startup because extensions mutate the shared ModelRuntime. */
   private modelRuntimeStartup: Promise<void> = Promise.resolve();
   /** Set by `dispose()`: every slot below is going down mid-turn. */
   private runtimeTeardown = false;
@@ -802,7 +802,7 @@ export class PimoteSessionManager {
     return this.configSupplier();
   }
 
-  /** Run one runtime factory at a time so provider registration and availability refreshes cannot cancel each other. */
+  /** Run one shared-model startup operation at a time so provider registration and refreshes cannot overlap. */
   private async serializeModelRuntimeStartup<T>(operation: () => Promise<T>): Promise<T> {
     const previous = this.modelRuntimeStartup;
     let release!: () => void;
@@ -1092,6 +1092,11 @@ export class PimoteSessionManager {
   }
 
   private async doOpenSession(folderPath: string, sessionFilePath?: string): Promise<string> {
+    return this.serializeModelRuntimeStartup(() => this.doOpenSessionWithModelRuntimeStartup(folderPath, sessionFilePath));
+  }
+
+  /** Open one session while holding the shared model-runtime startup lease. */
+  private async doOpenSessionWithModelRuntimeStartup(folderPath: string, sessionFilePath?: string): Promise<string> {
     const eventBusRef: { current: EventBusController | null } = { current: null };
     const sharedModelRuntime = this.modelRuntime;
     const sessionManager = sessionFilePath ? PiSessionManager.open(sessionFilePath) : PiSessionManager.create(folderPath);
@@ -1171,12 +1176,18 @@ export class PimoteSessionManager {
       }
     };
 
-    const serializedFactory: CreateAgentSessionRuntimeFactory = (options) => this.serializeModelRuntimeStartup(() => factory(options));
+    // The initial runtime is already inside this manager's startup lease. Later
+    // replacements reuse the same factory after that lease has ended, so they
+    // must acquire the lease themselves.
+    let creatingInitialRuntime = true;
+    const serializedFactory: CreateAgentSessionRuntimeFactory = (options) =>
+      creatingInitialRuntime ? factory(options) : this.serializeModelRuntimeStartup(() => factory(options));
     const runtime = await createAgentSessionRuntime(serializedFactory, {
       cwd: effectiveFolderPath,
       agentDir: getAgentDir(),
       sessionManager,
     });
+    creatingInitialRuntime = false;
 
     const session = runtime.session;
     const sessionId = session.sessionId;
