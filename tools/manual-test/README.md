@@ -84,6 +84,27 @@ first, then strip the leading slash and replace every `/` `\` `:` with
 
 ## Tools
 
+### client-themes-smoke
+
+**Purpose:** Exercise the approved web Appearance flow against an isolated real server and PWA: desktop and mobile theme previews, Cancel/Close, Save propagation across two same-user browser connections, Follow server default, and the optional static-report theme bridge. It also compares static-host report bytes before and after serving to verify verbatim bundles.
+
+**Location:** `tools/manual-test/client-themes-smoke/client-themes-smoke.mjs`
+
+**Invocation:**
+
+```bash
+npm run build
+node tools/manual-test/client-themes-smoke/client-themes-smoke.mjs
+# Keep coherence screenshots outside the disposable sandbox:
+CT_SHOTS=/tmp/client-themes-shots node tools/manual-test/client-themes-smoke/client-themes-smoke.mjs
+```
+
+**Inputs:** none. The tool creates an isolated HOME, XDG directories, project, seeded session, and static report bundles. `CT_SHOTS` optionally chooses a persistent screenshot directory. `CT_KEEP=1` preserves the sandbox on a passing run.
+
+**Outputs:** per-check `✓/✗` lines, desktop/mobile/report screenshots, and a non-zero exit on hard assertion failure. On failure, the sandbox and server log remain available from the tool output.
+
+**Prerequisites:** workspaces built (`npm run build`), `agent-browser` on `PATH`, writable `os.tmpdir()`. No live LLM, persistent user theme/config, or live session is used.
+
 ### voice-mock-smoke
 
 **Purpose:** Exercise the pimote-side voice-mode pipeline end-to-end

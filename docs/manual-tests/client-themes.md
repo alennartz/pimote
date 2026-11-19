@@ -28,7 +28,16 @@ The server, WebSocket protocol, PWA, and static-host route run in an isolated te
 
 ## Results
 
-_To be filled after execution._
+- **Connect and open a session (journey 1): pass.** Booted the isolated server, opened the seeded session for `theme-user`, and loaded the dashboard in Chromium. The dashboard and settings entry point looked coherent.
+- **Global Settings and folder instructions (journey 13): pass.** Desktop and narrow mobile viewports opened the Appearance tab. The dialog showed the approved paired previews, responsive controls, and existing settings tabs. The desktop and mobile layouts looked coherent against `docs/mocks/client-themes/index.html`.
+- **One user, many devices (journey 14): pass.** Saved Pimote Light from the desktop connection and observed the same selection and palette on the mobile connection. Saved Follow server default on mobile and observed the desktop connection switch to the configured Dracula default. The shared selection looked coherent across connections.
+- **Approved desktop Appearance flow: pass.** Selected Pimote Light, observed immediate UI and paired editor preview changes, verified the unsaved status and Save gate, used Cancel, then saved. Save sent `set_theme` with `pimote/light`; the desktop preview and card state looked coherent.
+- **Approved mobile Appearance flow: pass.** Selected Pimote Dark, verified the local dark preview, used mobile Close, and confirmed the saved light palette returned. Reopened settings, selected the default, and saved through the mobile header. The mobile card stack and header actions looked coherent.
+- **Follow server default: pass.** With `defaultTheme` set to `dracula/dracula`, Follow server default was selected for a new profile, resolved to Dracula, and saved as `set_theme` with `themeId: null`. The default card and active palette looked coherent.
+- **Report helper: pass.** Loaded `/pwa/theme-bridge.js` from a static report with a user-scoped cached theme, verified dark mode, CSS variables, and theme-color metadata, applied a cross-tab cache update, switched users with no cache and restored fallback styles, then switched to a user with a cache. A report without the helper retained its own fallback styles. The helper behavior looked coherent.
+- **Verbatim static-host serving: pass.** Compared the authored report HTML and JavaScript bytes with both served responses. Compared the served helper bytes with `client/build/pwa/theme-bridge.js`. Static-host served every bundle unchanged and did not require the helper. The report route looked coherent.
+
+Invocation: `CT_SHOTS=/tmp/client-themes-shots node tools/manual-test/client-themes-smoke/client-themes-smoke.mjs` (all assertions passed). Screenshots reviewed: `desktop-initial.png`, `desktop-preview.png`, `desktop-saved.png`, `mobile-saved.png`, and `mobile-default-saved.png`.
 
 ## Plan Updates
 
@@ -36,4 +45,4 @@ Empty. The topic-specific flows do not add or retire a primary journey.
 
 ## Open Issues
 
-_To be filled after execution._
+Empty. No manual-test finding remained after the isolated run.
