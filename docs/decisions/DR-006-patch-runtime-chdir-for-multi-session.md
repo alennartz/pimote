@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted. **Retired:** the patch no longer contains any `process.chdir()` hunk, and pi SDK 1.5.2 has no `chdir` call, so the retirement condition this record names has fired. Read the record as history.
 
 ## Context
 

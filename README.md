@@ -411,7 +411,7 @@ make help           Show make targets
 Copy `Makefile.local.example` to `Makefile.local` for local deployment targets.
 ```
 
-For first-publish steps, see [docs/releasing.md](docs/releasing.md).
+For first-publish steps, see the release skill at `.pi/skills/pimote-release/SKILL.md`.
 
 ## `@pimote/sdk`
 
