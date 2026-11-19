@@ -352,8 +352,8 @@ const lightSyntax: Partial<Record<EditorSyntaxRole, string>> = {
   changed: '#24292e',
 };
 const darkSyntax: Partial<Record<EditorSyntaxRole, string>> = {
-  comment: '#8b949e',
-  'doc-comment': '#8b949e',
+  comment: '#c9d1d9',
+  'doc-comment': '#c9d1d9',
   keyword: '#ff7b72',
   'control-keyword': '#ff7b72',
   'definition-keyword': '#ff7b72',
@@ -543,8 +543,8 @@ function thirdParty(
     'shadow-color': 'rgba(0,0,0,0.3)',
   };
   const syntax: Partial<Record<EditorSyntaxRole, string>> = {
-    comment: colors.comment,
-    'doc-comment': colors.comment,
+    comment: colors.foreground,
+    'doc-comment': colors.foreground,
     string: colors.string,
     'doc-string': colors.string,
     number: colors.number,

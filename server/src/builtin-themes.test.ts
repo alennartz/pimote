@@ -38,4 +38,14 @@ describe('built-in theme mappings', () => {
       }
     }
   });
+
+  it('keeps comments readable on the editor and selection surfaces', () => {
+    for (const theme of builtinThemeDefinitions()) {
+      for (const role of ['comment', 'doc-comment'] as const) {
+        const foreground = theme.editor.syntax[role];
+        expect(contrast(foreground, theme.editor.surface.background), `${theme.id} ${role} on editor background`).toBeGreaterThanOrEqual(3);
+        expect(contrast(foreground, theme.editor.surface.selection), `${theme.id} ${role} on selection`).toBeGreaterThanOrEqual(3);
+      }
+    }
+  });
 });
