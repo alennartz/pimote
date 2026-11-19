@@ -2,6 +2,7 @@
   import { untrack, onMount } from 'svelte';
   import GlobalSettingsDialog from './GlobalSettingsDialog.svelte';
   import { globalSettingsStore } from '$lib/stores/global-settings.svelte.js';
+  import { themeRuntime } from '$lib/stores/theme-store-runtime.svelte.js';
   import { serverCapabilities } from '$lib/stores/server-capabilities.svelte.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import Settings from '@lucide/svelte/icons/settings';
@@ -78,7 +79,7 @@
   });
 </script>
 
-<GlobalSettingsDialog store={globalSettingsStore} {viewport} snippets={serverCapabilities.tagSnippets} />
+<GlobalSettingsDialog store={globalSettingsStore} {viewport} snippets={serverCapabilities.tagSnippets} themeStore={themeRuntime.store} />
 
 <Button
   variant="ghost"

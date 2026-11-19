@@ -15,6 +15,10 @@ export const PIMOTE_DOC_FILES: ReadonlyArray<{ path: string; purpose: string }> 
     purpose: 'Pimote extension host and factory contract: where modules load, package manifests, registrations, reload, and diagnostics.',
   },
   {
+    path: 'packages/sdk/docs/themes.md',
+    purpose: 'Extension theme-file registration and the versioned paired palette format.',
+  },
+  {
     path: 'packages/sdk/docs/panels.md',
     purpose: 'Card data for the session panel: handle lifetime, colors, links, validation, and repaint on client claim.',
   },
@@ -49,6 +53,10 @@ export const PIMOTE_DOC_FILES: ReadonlyArray<{ path: string; purpose: string }> 
   {
     path: 'docs/shipped/settings.md',
     purpose: 'Native config fields and the global Settings catalog: file set, validation, and when each change applies.',
+  },
+  {
+    path: 'docs/shipped/themes.md',
+    purpose: 'Theme files, catalog precedence, defaults, profile overrides, and PWA Appearance behavior.',
   },
   {
     path: 'docs/shipped/delivery.md',

@@ -229,6 +229,8 @@ export class ConnectionStore {
   onUserSessionFacts: ((facts: UserSessionFacts) => void) | null = null;
   /** The user's open child views, in server-profile order. */
   onUserViews: ((views: UserOpenViewRef[]) => void) | null = null;
+  /** Profile event after reconciliation, for per-user stores that do not own session events. */
+  onUserSessionsChanged: ((event: UserSessionsChangedEvent) => void) | null = null;
 
   /** Disconnect listeners — a set, not a slot, so the next consumer can't
    *  silently assign over an existing listener. Fires on close and on socket
@@ -651,6 +653,9 @@ export class ConnectionStore {
       orderVersion: typeof event.orderVersion === 'number' ? event.orderVersion : 0,
     });
     this.onUserViews?.(Array.isArray(event.views) ? (event.views as UserOpenViewRef[]) : []);
+    // Deliver the reconciled profile after restore planning. Per-user stores
+    // use this seam without adding a lifecycle event to session consumers.
+    this.onUserSessionsChanged?.(event);
   }
 
   /** Registry entry creation for sessions adopted from the user's profile.

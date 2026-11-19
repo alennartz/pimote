@@ -345,6 +345,135 @@
   }
 }
 
+/* ThemeStore writes the --pimote-ui-* slots. These aliases keep the existing
+ * Tailwind and component variables on the same palette, with the shipped
+ * light and dark values as the no-cache fallback. */
+:root {
+  --background: var(--pimote-ui-background, oklch(1 0 0));
+  --foreground: var(--pimote-ui-foreground, oklch(0.145 0 0));
+  --card: var(--pimote-ui-card, oklch(1 0 0));
+  --card-foreground: var(--pimote-ui-card-foreground, oklch(0.145 0 0));
+  --popover: var(--pimote-ui-popover, oklch(1 0 0));
+  --popover-foreground: var(--pimote-ui-popover-foreground, oklch(0.145 0 0));
+  --primary: var(--pimote-ui-primary, oklch(0.205 0 0));
+  --primary-foreground: var(--pimote-ui-primary-foreground, oklch(0.985 0 0));
+  --secondary: var(--pimote-ui-secondary, oklch(0.97 0 0));
+  --secondary-foreground: var(--pimote-ui-secondary-foreground, oklch(0.205 0 0));
+  --muted: var(--pimote-ui-muted, oklch(0.97 0 0));
+  --muted-foreground: var(--pimote-ui-muted-foreground, oklch(0.556 0 0));
+  --accent: var(--pimote-ui-accent, oklch(0.97 0 0));
+  --accent-foreground: var(--pimote-ui-accent-foreground, oklch(0.205 0 0));
+  --destructive: var(--pimote-ui-destructive, oklch(0.577 0.245 27.325));
+  --warning: var(--pimote-ui-warning, oklch(0.75 0.183 55.934));
+  --warning-foreground: var(--pimote-ui-warning-foreground, oklch(0.16 0.02 55));
+  --border: var(--pimote-ui-border, oklch(0.922 0 0));
+  --input: var(--pimote-ui-input, oklch(0.922 0 0));
+  --ring: var(--pimote-ui-ring, oklch(0.708 0 0));
+  --chart-1: var(--pimote-ui-chart-1, oklch(0.809 0.105 251.813));
+  --chart-2: var(--pimote-ui-chart-2, oklch(0.623 0.214 259.815));
+  --chart-3: var(--pimote-ui-chart-3, oklch(0.546 0.245 262.881));
+  --chart-4: var(--pimote-ui-chart-4, oklch(0.488 0.243 264.376));
+  --chart-5: var(--pimote-ui-chart-5, oklch(0.424 0.199 265.638));
+  --sidebar: var(--pimote-ui-sidebar, oklch(0.985 0 0));
+  --sidebar-foreground: var(--pimote-ui-sidebar-foreground, oklch(0.145 0 0));
+  --sidebar-primary: var(--pimote-ui-sidebar-primary, oklch(0.205 0 0));
+  --sidebar-primary-foreground: var(--pimote-ui-sidebar-primary-foreground, oklch(0.985 0 0));
+  --sidebar-accent: var(--pimote-ui-sidebar-accent, oklch(0.97 0 0));
+  --sidebar-accent-foreground: var(--pimote-ui-sidebar-accent-foreground, oklch(0.205 0 0));
+  --sidebar-border: var(--pimote-ui-sidebar-border, oklch(0.922 0 0));
+  --sidebar-ring: var(--pimote-ui-sidebar-ring, oklch(0.708 0 0));
+  --status-active: var(--pimote-ui-status-active, oklch(0.623 0.214 259.815));
+  --status-streaming: var(--pimote-ui-status-streaming, oklch(0.52 0.155 149.2));
+  --status-connected: var(--pimote-ui-status-connected, oklch(0.52 0.155 149.2));
+  --status-error: var(--pimote-ui-status-error, oklch(0.54 0.18 25.7));
+  --status-reconnecting: var(--pimote-ui-status-reconnecting, oklch(0.48 0.15 70.6));
+  --surface-sunken: var(--pimote-ui-surface-sunken, oklch(0.95 0.015 258));
+  --surface-raised: var(--pimote-ui-surface-raised, oklch(0.975 0.012 258));
+  --surface-subtle: var(--pimote-ui-surface-subtle, oklch(0.965 0.01 258));
+  --surface-hover: var(--pimote-ui-surface-hover, oklch(0.93 0.025 259));
+  --error-accent: var(--pimote-ui-error-accent, oklch(0.57 0.19 24));
+  --error-surface: var(--pimote-ui-error-surface, oklch(0.95 0.04 24));
+  --error-foreground: var(--pimote-ui-error-foreground, oklch(0.48 0.16 24));
+  --error-avatar-fg: var(--pimote-ui-error-avatar-fg, oklch(0.97 0.03 22));
+  --skill-accent: var(--pimote-ui-skill-accent, oklch(0.48 0.12 170));
+  --skill-surface: var(--pimote-ui-skill-surface, oklch(0.95 0.025 172));
+  --skill-foreground: var(--pimote-ui-skill-foreground, oklch(0.42 0.125 172));
+  --skill-foreground-hover: var(--pimote-ui-skill-foreground-hover, oklch(0.36 0.12 170));
+  --bash-accent: var(--pimote-ui-bash-accent, oklch(0.52 0.14 175));
+  --custom-accent: var(--pimote-ui-custom-accent, oklch(0.5 0.1 280));
+  --custom-surface: var(--pimote-ui-custom-surface, oklch(0.95 0.02 270));
+  --custom-foreground: var(--pimote-ui-custom-foreground, oklch(0.44 0.1 280));
+  --custom-foreground-hover: var(--pimote-ui-custom-foreground-hover, oklch(0.36 0.1 280));
+  --link: var(--pimote-ui-link, oklch(0.5 0.15 250));
+  --link-hover: var(--pimote-ui-link-hover, oklch(0.42 0.15 250));
+  --avatar-bg: var(--pimote-ui-avatar-bg, oklch(0.84 0.08 250));
+  --avatar-fg: var(--pimote-ui-avatar-fg, oklch(0.35 0.05 250));
+  --shadow-color: var(--pimote-ui-shadow-color, oklch(0 0 0 / 0.18));
+}
+
+.dark {
+  --background: var(--pimote-ui-background, oklch(0.137 0.036 258.5));
+  --foreground: var(--pimote-ui-foreground, oklch(0.984 0.003 247.9));
+  --card: var(--pimote-ui-card, oklch(0.137 0.036 258.5));
+  --card-foreground: var(--pimote-ui-card-foreground, oklch(0.984 0.003 247.9));
+  --popover: var(--pimote-ui-popover, oklch(0.137 0.036 258.5));
+  --popover-foreground: var(--pimote-ui-popover-foreground, oklch(0.984 0.003 247.9));
+  --primary: var(--pimote-ui-primary, oklch(0.984 0.003 247.9));
+  --primary-foreground: var(--pimote-ui-primary-foreground, oklch(0.208 0.04 265.7));
+  --secondary: var(--pimote-ui-secondary, oklch(0.28 0.037 260));
+  --secondary-foreground: var(--pimote-ui-secondary-foreground, oklch(0.984 0.003 247.9));
+  --muted: var(--pimote-ui-muted, oklch(0.28 0.037 260));
+  --muted-foreground: var(--pimote-ui-muted-foreground, oklch(0.711 0.035 256.8));
+  --accent: var(--pimote-ui-accent, oklch(0.28 0.037 260));
+  --accent-foreground: var(--pimote-ui-accent-foreground, oklch(0.984 0.003 247.9));
+  --destructive: var(--pimote-ui-destructive, oklch(0.396 0.133 25.7));
+  --warning: var(--pimote-ui-warning, oklch(0.72 0.17 55.934));
+  --warning-foreground: var(--pimote-ui-warning-foreground, oklch(0.16 0.02 55));
+  --border: var(--pimote-ui-border, oklch(0.28 0.037 260));
+  --input: var(--pimote-ui-input, oklch(0.28 0.037 260));
+  --ring: var(--pimote-ui-ring, oklch(0.869 0.02 252.8));
+  --chart-1: var(--pimote-ui-chart-1, oklch(0.809 0.105 251.813));
+  --chart-2: var(--pimote-ui-chart-2, oklch(0.623 0.214 259.815));
+  --chart-3: var(--pimote-ui-chart-3, oklch(0.546 0.245 262.881));
+  --chart-4: var(--pimote-ui-chart-4, oklch(0.488 0.243 264.376));
+  --chart-5: var(--pimote-ui-chart-5, oklch(0.424 0.199 265.638));
+  --sidebar: var(--pimote-ui-sidebar, oklch(0.208 0.04 265.7));
+  --sidebar-foreground: var(--pimote-ui-sidebar-foreground, oklch(0.984 0.003 247.9));
+  --sidebar-primary: var(--pimote-ui-sidebar-primary, oklch(0.488 0.243 264.376));
+  --sidebar-primary-foreground: var(--pimote-ui-sidebar-primary-foreground, oklch(0.984 0.003 247.9));
+  --sidebar-accent: var(--pimote-ui-sidebar-accent, oklch(0.28 0.037 260));
+  --sidebar-accent-foreground: var(--pimote-ui-sidebar-accent-foreground, oklch(0.984 0.003 247.9));
+  --sidebar-border: var(--pimote-ui-sidebar-border, oklch(0.28 0.037 260));
+  --sidebar-ring: var(--pimote-ui-sidebar-ring, oklch(0.869 0.02 252.8));
+  --status-active: var(--pimote-ui-status-active, oklch(0.623 0.214 259.815));
+  --status-streaming: var(--pimote-ui-status-streaming, oklch(0.623 0.169 149.2));
+  --status-connected: var(--pimote-ui-status-connected, oklch(0.623 0.169 149.2));
+  --status-error: var(--pimote-ui-status-error, oklch(0.396 0.133 25.7));
+  --status-reconnecting: var(--pimote-ui-status-reconnecting, oklch(0.77 0.165 70.6));
+  --surface-sunken: var(--pimote-ui-surface-sunken, oklch(0.155 0.025 258));
+  --surface-raised: var(--pimote-ui-surface-raised, oklch(0.18 0.028 258));
+  --surface-subtle: var(--pimote-ui-surface-subtle, oklch(0.2 0.02 258));
+  --surface-hover: var(--pimote-ui-surface-hover, oklch(0.22 0.035 259));
+  --error-accent: var(--pimote-ui-error-accent, oklch(0.64 0.19 24));
+  --error-surface: var(--pimote-ui-error-surface, oklch(0.22 0.04 24));
+  --error-foreground: var(--pimote-ui-error-foreground, oklch(0.74 0.16 24));
+  --error-avatar-fg: var(--pimote-ui-error-avatar-fg, oklch(0.88 0.03 22));
+  --skill-accent: var(--pimote-ui-skill-accent, oklch(0.55 0.12 170));
+  --skill-surface: var(--pimote-ui-skill-surface, oklch(0.2 0.025 172));
+  --skill-foreground: var(--pimote-ui-skill-foreground, oklch(0.71 0.125 172));
+  --skill-foreground-hover: var(--pimote-ui-skill-foreground-hover, oklch(0.75 0.12 170));
+  --bash-accent: var(--pimote-ui-bash-accent, oklch(0.68 0.14 175));
+  --custom-accent: var(--pimote-ui-custom-accent, oklch(0.55 0.1 280));
+  --custom-surface: var(--pimote-ui-custom-surface, oklch(0.2 0.02 270));
+  --custom-foreground: var(--pimote-ui-custom-foreground, oklch(0.7 0.1 280));
+  --custom-foreground-hover: var(--pimote-ui-custom-foreground-hover, oklch(0.75 0.1 280));
+  --link: var(--pimote-ui-link, oklch(0.7 0.15 250));
+  --link-hover: var(--pimote-ui-link-hover, oklch(0.8 0.15 250));
+  --avatar-bg: var(--pimote-ui-avatar-bg, oklch(0.35 0.08 250));
+  --avatar-fg: var(--pimote-ui-avatar-fg, oklch(0.85 0.05 250));
+  --shadow-color: var(--pimote-ui-shadow-color, oklch(0 0 0 / 0.3));
+}
+
 [data-panel-drawer] [data-panel-host] {
   width: 100%;
   max-width: none;

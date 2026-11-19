@@ -84,6 +84,7 @@
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@pimote/sdk": "^0.15.0-rc.2",
     "@streamparser/json": "^0.0.22",
+    "colorjs.io": "^0.7.1",
     "jiti": "^2.7.0",
     "semver": "^7.8.5",
     "typebox": "^1.1.38",

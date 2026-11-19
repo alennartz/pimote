@@ -80,6 +80,7 @@ function parseDocument(raw: string): ProfileDocument {
         views: parseViews(profile.views),
         order: normalizeOrder(sessions, profile.order),
         selectedSessionId: normalizeSelection(sessions, profile.selectedSessionId),
+        selectedThemeId: typeof profile.selectedThemeId === 'string' && profile.selectedThemeId.trim() ? profile.selectedThemeId : null,
         orderVersion: typeof profile.orderVersion === 'number' && profile.orderVersion >= 0 ? profile.orderVersion : 0,
       };
     }
@@ -351,13 +352,18 @@ export class UserProfiles {
   }
 
   /** The user's saved theme override, or null when following the server default. */
-  selectedTheme(_user: string): string | null {
-    throw new Error('not implemented');
+  selectedTheme(user: string): string | null {
+    return this.document.users[user]?.selectedThemeId ?? null;
   }
 
   /** Persist one user's theme override; null clears the override. */
-  async setSelectedTheme(_user: string, _themeId: string | null): Promise<boolean> {
-    throw new Error('not implemented');
+  async setSelectedTheme(user: string, themeId: string | null): Promise<boolean> {
+    const profile = this.ensureProfile(user);
+    const normalized = typeof themeId === 'string' && themeId.trim() ? themeId : null;
+    if ((profile.selectedThemeId ?? null) === normalized) return false;
+    profile.selectedThemeId = normalized;
+    await this.persistOrLog();
+    return true;
   }
 
   /** Alphabetical names with counts, for listusers. */
@@ -370,7 +376,7 @@ export class UserProfiles {
   private ensureProfile(user: string): UserProfile {
     let profile = this.document.users[user];
     if (!profile) {
-      profile = { sessions: [], views: [], order: [], selectedSessionId: null, orderVersion: 0 };
+      profile = { sessions: [], views: [], order: [], selectedSessionId: null, selectedThemeId: null, orderVersion: 0 };
       this.document.users[user] = profile;
     }
     return profile;

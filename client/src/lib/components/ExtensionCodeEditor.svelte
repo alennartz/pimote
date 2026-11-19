@@ -4,7 +4,9 @@
   import { EditorView, keymap } from '@codemirror/view';
   import { indentWithTab } from '@codemirror/commands';
   import { basicSetup } from 'codemirror';
-  import { githubDarkInit, githubLightInit } from '@uiw/codemirror-theme-github';
+  import type { ResolvedTheme } from '@pimote/shared';
+  import { createCodeMirrorTheme } from '$lib/codemirror-theme.js';
+  import { themeRuntime } from '$lib/theme-runtime.svelte.js';
   import { getCodeMirrorLanguageExtension } from '$lib/codemirror-language.js';
   import type { EditorLanguage } from '$lib/editor-language.js';
 
@@ -25,8 +27,115 @@
   let syncingFromView = false;
 
   const languageCompartment = new Compartment();
+  const themeCompartment = new Compartment();
+  const surfaceRoles = [
+    'background',
+    'foreground',
+    'selection',
+    'cursor',
+    'active-line',
+    'gutter-background',
+    'gutter-foreground',
+    'line-number',
+    'active-line-number',
+    'matching-bracket',
+    'search-match',
+  ] as const;
+  const syntaxRoles = [
+    'comment',
+    'doc-comment',
+    'name',
+    'variable',
+    'parameter',
+    'type',
+    'tag',
+    'property',
+    'attribute',
+    'class',
+    'label',
+    'namespace',
+    'macro',
+    'constant',
+    'function',
+    'built-in',
+    'keyword',
+    'control-keyword',
+    'definition-keyword',
+    'modifier',
+    'operator-keyword',
+    'operator',
+    'punctuation',
+    'separator',
+    'bracket',
+    'string',
+    'doc-string',
+    'character',
+    'attribute-value',
+    'number',
+    'boolean',
+    'null',
+    'regexp',
+    'escape',
+    'color',
+    'url',
+    'content',
+    'heading',
+    'content-separator',
+    'list',
+    'quote',
+    'emphasis',
+    'strong',
+    'link',
+    'monospace',
+    'strikethrough',
+    'inserted',
+    'deleted',
+    'changed',
+    'invalid',
+    'meta',
+    'document-meta',
+    'annotation',
+    'processing-instruction',
+  ] as const;
+  const terminalRoles = [
+    'black',
+    'red',
+    'green',
+    'yellow',
+    'blue',
+    'magenta',
+    'cyan',
+    'white',
+    'bright-black',
+    'bright-red',
+    'bright-green',
+    'bright-yellow',
+    'bright-blue',
+    'bright-magenta',
+    'bright-cyan',
+    'bright-white',
+  ] as const;
 
-  function buildExtensions(languageId: EditorLanguage | null): Extension[] {
+  function cssTheme(): ResolvedTheme {
+    const map = (prefix: string, roles: readonly string[]): Record<string, string> => Object.fromEntries([...roles].map((role) => [role, `var(--pimote-${prefix}-${role})`]));
+    const dark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+    return {
+      id: 'runtime/css',
+      name: 'Runtime',
+      source: 'builtin',
+      colorScheme: dark ? 'dark' : 'light',
+      ui: {} as ResolvedTheme['ui'],
+      editor: {
+        surface: map('editor', surfaceRoles) as ResolvedTheme['editor']['surface'],
+        syntax: map('editor', syntaxRoles) as ResolvedTheme['editor']['syntax'],
+        terminal: map('terminal', terminalRoles) as ResolvedTheme['editor']['terminal'],
+      },
+    };
+  }
+
+  let effectiveTheme = $derived(themeRuntime.activeTheme ?? cssTheme());
+
+  function buildExtensions(languageId: EditorLanguage | null, theme: ResolvedTheme): Extension[] {
     const languageExtension = getCodeMirrorLanguageExtension(languageId);
     const dark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
     const layoutTheme = EditorView.theme(
@@ -61,13 +170,11 @@
       },
       { dark },
     );
-    const githubTheme = dark ? githubDarkInit({ settings: { fontFamily: 'var(--font-mono)' } }) : githubLightInit({ settings: { fontFamily: 'var(--font-mono)' } });
-
     return [
       basicSetup,
       keymap.of([indentWithTab]),
       EditorView.lineWrapping,
-      githubTheme,
+      themeCompartment.of(createCodeMirrorTheme(theme)),
       layoutTheme,
       EditorView.updateListener.of((update) => {
         if (!update.docChanged) return;
@@ -86,7 +193,7 @@
     editorView = new EditorView({
       state: EditorState.create({
         doc: value,
-        extensions: buildExtensions(language),
+        extensions: buildExtensions(language, effectiveTheme),
       }),
       parent: editorHost,
     });
@@ -130,6 +237,12 @@
     editorView.dispatch({
       effects: languageCompartment.reconfigure(getCodeMirrorLanguageExtension(language) ?? []),
     });
+  });
+
+  $effect(() => {
+    const theme = effectiveTheme;
+    if (!editorView) return;
+    editorView.dispatch({ effects: themeCompartment.reconfigure(createCodeMirrorTheme(theme)) });
   });
 </script>
 

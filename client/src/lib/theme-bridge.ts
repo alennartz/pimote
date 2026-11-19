@@ -1,5 +1,6 @@
 import type { ResolvedTheme } from '@pimote/shared';
 import type { ThemeApplicationTarget } from './theme-application.js';
+import { applyResolvedTheme } from './theme-application.js';
 
 /** Options for the same-origin static-report theme bridge. */
 export interface ThemeBridgeStorage {
@@ -15,32 +16,267 @@ export interface ThemeBridgeOptions {
   eventSource?: Window;
 }
 
+const UI_KEYS = [
+  'background',
+  'foreground',
+  'card',
+  'card-foreground',
+  'popover',
+  'popover-foreground',
+  'primary',
+  'primary-foreground',
+  'secondary',
+  'secondary-foreground',
+  'muted',
+  'muted-foreground',
+  'accent',
+  'accent-foreground',
+  'destructive',
+  'warning',
+  'warning-foreground',
+  'border',
+  'input',
+  'ring',
+  'chart-1',
+  'chart-2',
+  'chart-3',
+  'chart-4',
+  'chart-5',
+  'sidebar',
+  'sidebar-foreground',
+  'sidebar-primary',
+  'sidebar-primary-foreground',
+  'sidebar-accent',
+  'sidebar-accent-foreground',
+  'sidebar-border',
+  'sidebar-ring',
+  'status-active',
+  'status-streaming',
+  'status-connected',
+  'status-error',
+  'status-reconnecting',
+  'surface-sunken',
+  'surface-raised',
+  'surface-subtle',
+  'surface-hover',
+  'error-accent',
+  'error-surface',
+  'error-foreground',
+  'error-avatar-fg',
+  'skill-accent',
+  'skill-surface',
+  'skill-foreground',
+  'skill-foreground-hover',
+  'bash-accent',
+  'custom-accent',
+  'custom-surface',
+  'custom-foreground',
+  'custom-foreground-hover',
+  'link',
+  'link-hover',
+  'avatar-bg',
+  'avatar-fg',
+  'shadow-color',
+];
+const SURFACE_KEYS = [
+  'background',
+  'foreground',
+  'selection',
+  'cursor',
+  'active-line',
+  'gutter-background',
+  'gutter-foreground',
+  'line-number',
+  'active-line-number',
+  'matching-bracket',
+  'search-match',
+];
+const SYNTAX_KEYS = [
+  'comment',
+  'doc-comment',
+  'name',
+  'variable',
+  'parameter',
+  'type',
+  'tag',
+  'property',
+  'attribute',
+  'class',
+  'label',
+  'namespace',
+  'macro',
+  'constant',
+  'function',
+  'built-in',
+  'keyword',
+  'control-keyword',
+  'definition-keyword',
+  'modifier',
+  'operator-keyword',
+  'operator',
+  'punctuation',
+  'separator',
+  'bracket',
+  'string',
+  'doc-string',
+  'character',
+  'attribute-value',
+  'number',
+  'boolean',
+  'null',
+  'regexp',
+  'escape',
+  'color',
+  'url',
+  'content',
+  'heading',
+  'content-separator',
+  'list',
+  'quote',
+  'emphasis',
+  'strong',
+  'link',
+  'monospace',
+  'strikethrough',
+  'inserted',
+  'deleted',
+  'changed',
+  'invalid',
+  'meta',
+  'document-meta',
+  'annotation',
+  'processing-instruction',
+];
+const TERMINAL_KEYS = [
+  'black',
+  'red',
+  'green',
+  'yellow',
+  'blue',
+  'magenta',
+  'cyan',
+  'white',
+  'bright-black',
+  'bright-red',
+  'bright-green',
+  'bright-yellow',
+  'bright-blue',
+  'bright-magenta',
+  'bright-cyan',
+  'bright-white',
+];
+
+function completeMap(value: unknown, keys: readonly string[]): value is Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const map = value as Record<string, unknown>;
+  return keys.every((key) => typeof map[key] === 'string' && map[key].length > 0);
+}
+
+function isResolvedTheme(value: unknown): value is ResolvedTheme {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.id !== 'string' || !candidate.id || typeof candidate.name !== 'string' || !candidate.name) return false;
+  if (candidate.source !== 'builtin' && candidate.source !== 'extension' && candidate.source !== 'user') return false;
+  if (candidate.colorScheme !== 'light' && candidate.colorScheme !== 'dark') return false;
+  if (!candidate.editor || typeof candidate.editor !== 'object') return false;
+  const editor = candidate.editor as Record<string, unknown>;
+  return completeMap(candidate.ui, UI_KEYS) && completeMap(editor.surface, SURFACE_KEYS) && completeMap(editor.syntax, SYNTAX_KEYS) && completeMap(editor.terminal, TERMINAL_KEYS);
+}
+
+/** Read one valid, complete cached theme without allowing storage failures out. */
+export function readCachedTheme(user: string, storage: ThemeBridgeStorage): ResolvedTheme | null {
+  try {
+    const raw = storage.getItem(themeCacheKey(user));
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    return isResolvedTheme(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Public lifecycle for reports that opt into the shared PWA palette. */
 export class ThemeBridge {
+  private listening = false;
+  private readonly onStorage = (event: StorageEvent): void => {
+    if (event.key !== themeCacheKey(this.options.user)) return;
+    this.apply(event.newValue ? parseTheme(event.newValue) : null);
+  };
+
   constructor(private readonly options: ThemeBridgeOptions) {}
 
   /** Read and apply the user-scoped cached resolved theme, if present. */
   start(): ResolvedTheme | null {
-    throw new Error('not implemented');
+    const theme = readCachedTheme(this.options.user, this.options.storage);
+    this.apply(theme);
+    if (!this.listening && this.options.eventSource) {
+      this.options.eventSource.addEventListener('storage', this.onStorage);
+      this.listening = true;
+    }
+    return theme;
   }
 
   /** Stop listening for cross-tab cache updates. */
   stop(): void {
-    throw new Error('not implemented');
+    if (!this.listening || !this.options.eventSource) return;
+    this.options.eventSource.removeEventListener('storage', this.onStorage);
+    this.listening = false;
   }
 
   /** Apply one cache update received from another tab. */
-  apply(_theme: ResolvedTheme | null): void {
-    throw new Error('not implemented');
+  apply(theme: ResolvedTheme | null): void {
+    if (theme) applyResolvedTheme(theme, this.options.target);
+  }
+}
+
+function parseTheme(raw: string): ResolvedTheme | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return isResolvedTheme(parsed) ? parsed : null;
+  } catch {
+    return null;
   }
 }
 
 /** Start the browser entry point used by static reports. Returns a cleanup function. */
 export function startReportThemeBridge(): () => void {
-  throw new Error('not implemented');
+  if (typeof window === 'undefined' || typeof document === 'undefined') return () => {};
+  let storage: Storage;
+  try {
+    storage = window.localStorage;
+  } catch {
+    return () => {};
+  }
+  const root = document.documentElement;
+  const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  let user = readUser(storage);
+  let bridge = new ThemeBridge({ user, storage, target: { root, themeColorMeta: meta }, eventSource: window });
+  bridge.start();
+  const onStorage = (event: StorageEvent): void => {
+    if (event.key !== 'pimote:user') return;
+    const nextUser = event.newValue?.trim() || 'default';
+    if (nextUser === user) return;
+    bridge.stop();
+    user = nextUser;
+    bridge = new ThemeBridge({ user, storage, target: { root, themeColorMeta: meta }, eventSource: window });
+    bridge.start();
+  };
+  window.addEventListener('storage', onStorage);
+  return () => {
+    bridge.stop();
+    window.removeEventListener('storage', onStorage);
+  };
+}
+
+function readUser(storage: Pick<Storage, 'getItem'>): string {
+  try {
+    return storage.getItem('pimote:user')?.trim() || 'default';
+  } catch {
+    return 'default';
+  }
 }
 
 /** Stable cache key shared by the PWA and static reports. */
-export function themeCacheKey(_user: string): string {
-  throw new Error('not implemented');
+export function themeCacheKey(user: string): string {
+  return `pimote:theme:${encodeURIComponent(user || 'default')}`;
 }

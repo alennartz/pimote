@@ -32,6 +32,7 @@
   import X from '@lucide/svelte/icons/x';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { globalSettingsStore } from '$lib/stores/global-settings.svelte.js';
+  import { syncThemeConnection } from '$lib/stores/theme-store-runtime.svelte.js';
   import { routeNotificationIntent, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
   import { panelStore } from '$lib/stores/panel-store.svelte.js';
   import { pushSubscription } from '$lib/stores/push-subscription.svelte.js';
@@ -85,6 +86,7 @@
   $effect(() => {
     connection.ready;
     [...connection.subscribedSessions.keys()];
+    syncThemeConnection();
     if (typeof navigator !== 'undefined') sendFocusState();
   });
 

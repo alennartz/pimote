@@ -12,16 +12,20 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
   import CodeEditorDialog from './CodeEditorDialog.svelte';
+  import AppearanceSettings from './AppearanceSettings.svelte';
+  import type { ThemeStore } from '../stores/theme-store.svelte.js';
   import { globalSettingsPresentation } from './global-settings-presentation.js';
 
   let {
     store,
     viewport = 'desktop',
     snippets = [],
+    themeStore = null,
   }: {
     store: GlobalSettingsStore;
     viewport?: 'desktop' | 'mobile';
     snippets?: readonly string[];
+    themeStore?: ThemeStore | null;
   } = $props();
 
   let active = $derived(store.files.find((file) => file.path === store.activePath));
@@ -35,6 +39,7 @@
   // State lives here; the server's profile list refreshes from list_users on
   // dialog open and tab select, and after a save once the socket is back.
   let userTabActive = $state(false);
+  let appearanceTabActive = $state(false);
   let userName = $state(getUser() ?? '');
   let persistedUser = $state(getUser() ?? '');
   let profiles = $state<UserSummary[]>([]);
@@ -55,6 +60,7 @@
   $effect(() => {
     if (!store.open) {
       userTabActive = false;
+      appearanceTabActive = false;
       userName = persistedUser;
     }
   });
@@ -68,8 +74,15 @@
   });
 
   function selectUserTab(): void {
+    appearanceTabActive = false;
     userTabActive = true;
     void fetchProfiles();
+  }
+
+  function selectAppearanceTab(): void {
+    if (!themeStore) return;
+    userTabActive = false;
+    appearanceTabActive = true;
   }
 
   async function fetchProfiles(): Promise<void> {
@@ -159,29 +172,38 @@
   </div>
 {/snippet}
 
+{#snippet appearancePane()}
+  {#if themeStore}
+    <AppearanceSettings store={themeStore} {viewport} embedded />
+  {/if}
+{/snippet}
+
 <CodeEditorDialog
   open={store.open}
-  title={userTabActive ? 'User' : (active?.label ?? '')}
+  title={appearanceTabActive ? 'Appearance' : userTabActive ? 'User' : (active?.label ?? '')}
   accessibleTitle="Global settings files"
-  subtitle={userTabActive ? "This device's identity on the server" : (active?.path ?? null)}
-  hint={userTabActive
-    ? userDirty
-      ? 'Unsaved changes'
-      : null
-    : active?.loaded && !active.exists
-      ? 'New file. It will be created on save.'
-      : active?.dirty
+  subtitle={appearanceTabActive ? 'Interface and code palette' : userTabActive ? "This device's identity on the server" : (active?.path ?? null)}
+  hint={appearanceTabActive
+    ? null
+    : userTabActive
+      ? userDirty
         ? 'Unsaved changes'
-        : null}
-  error={userTabActive ? null : (store.error ?? active?.error ?? null)}
-  saving={userTabActive ? false : (active?.saving ?? false)}
-  saveDisabled={userTabActive ? !userDirty : !presentation.actions.saveEnabled || !active?.loaded}
-  ready={active?.loaded ?? false}
-  editorKey={active?.path ?? null}
-  toolbarVisible={presentation.language === 'markdown' && !userTabActive}
+        : null
+      : active?.loaded && !active.exists
+        ? 'New file. It will be created on save.'
+        : active?.dirty
+          ? 'Unsaved changes'
+          : null}
+  error={appearanceTabActive || userTabActive ? null : (store.error ?? active?.error ?? null)}
+  saving={appearanceTabActive ? false : userTabActive ? false : (active?.saving ?? false)}
+  saveDisabled={appearanceTabActive ? (themeStore?.saveDisabled ?? true) : userTabActive ? !userDirty : !presentation.actions.saveEnabled || !active?.loaded}
+  saveLabel={appearanceTabActive ? 'Save theme' : 'Save'}
+  ready={appearanceTabActive ? true : (active?.loaded ?? false)}
+  editorKey={appearanceTabActive ? 'appearance' : (active?.path ?? null)}
+  toolbarVisible={!appearanceTabActive && presentation.language === 'markdown' && !userTabActive}
   language={inferLanguageFromPath(active?.path ?? '')}
-  badge={userTabActive ? 'device setting' : null}
-  body={userTabActive ? userPane : null}
+  badge={appearanceTabActive ? 'appearance' : userTabActive ? 'device setting' : null}
+  body={appearanceTabActive && themeStore ? appearancePane : userTabActive ? userPane : null}
   bind:value={
     () => active?.draft ?? '',
     (value) => {
@@ -190,8 +212,15 @@
   }
   bind:editorView
   {viewport}
-  onclose={() => store.close()}
+  onclose={() => {
+    if (appearanceTabActive) themeStore?.cancel();
+    store.close();
+  }}
   onsave={() => {
+    if (appearanceTabActive) {
+      void themeStore?.save();
+      return;
+    }
     if (userTabActive) {
       saveUser();
       return;
@@ -201,18 +230,24 @@
 >
   {#snippet tabs()}
     <div aria-label="Settings files" class="flex shrink-0 gap-1 overflow-x-auto border-b px-3 py-2" role="tablist">
+      {#if themeStore}
+        <Button type="button" variant={appearanceTabActive ? 'secondary' : 'ghost'} role="tab" aria-selected={appearanceTabActive} class="shrink-0" onclick={selectAppearanceTab}
+          >Appearance</Button
+        >
+      {/if}
       <Button type="button" variant={userTabActive ? 'secondary' : 'ghost'} role="tab" aria-selected={userTabActive} class="shrink-0" onclick={selectUserTab}>
         User{#if userDirty}<span aria-label="Unsaved changes">*</span>{/if}
       </Button>
       {#each store.files as file (file.path)}
         <Button
           type="button"
-          variant={!userTabActive && file.path === store.activePath ? 'secondary' : 'ghost'}
+          variant={!userTabActive && !appearanceTabActive && file.path === store.activePath ? 'secondary' : 'ghost'}
           role="tab"
-          aria-selected={!userTabActive && file.path === store.activePath}
+          aria-selected={!userTabActive && !appearanceTabActive && file.path === store.activePath}
           class="shrink-0"
           onclick={() => {
             userTabActive = false;
+            appearanceTabActive = false;
             void store.select(file.path);
           }}
         >

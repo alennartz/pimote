@@ -24,20 +24,35 @@ export interface ThemePreferencesOptions {
 
 /** Server command boundary for catalog reads and per-user theme selection. */
 export class ThemePreferences {
-  constructor(private readonly options: ThemePreferencesOptions) {}
+  private readonly lightFallbackId: string;
+
+  constructor(private readonly options: ThemePreferencesOptions) {
+    this.lightFallbackId = options.lightFallbackId ?? 'pimote/light';
+  }
 
   /** Return the current PWA-only catalog snapshot. */
   getCatalog(): ThemeCatalogSnapshot {
-    throw new Error('not implemented');
+    return this.options.catalog.snapshot();
   }
 
   /** Validate and persist a selection, or clear it with null. */
-  async setTheme(_user: string, _themeId: string | null): Promise<ThemeSelection> {
-    throw new Error('not implemented');
+  async setTheme(user: string, themeId: string | null): Promise<ThemeSelection> {
+    if (themeId !== null && !this.getCatalog().themes.some((theme) => theme.id === themeId)) {
+      throw new Error(`Unknown theme: ${themeId}`);
+    }
+    await this.options.profiles.setSelectedTheme(user, themeId);
+    return this.resolve(user);
   }
 
   /** Resolve a saved selection against the current catalog and default. */
-  resolve(_user: string): ThemeSelection {
-    throw new Error('not implemented');
+  resolve(user: string): ThemeSelection {
+    const snapshot = this.getCatalog();
+    const selectedThemeId = this.options.profiles.selectedTheme(user);
+    const selected = selectedThemeId ? snapshot.themes.find((theme) => theme.id === selectedThemeId) : undefined;
+    const configuredDefault = snapshot.themes.find((theme) => theme.id === snapshot.defaultThemeId);
+    const fallback = configuredDefault ?? snapshot.themes.find((theme) => theme.id === this.lightFallbackId) ?? snapshot.themes[0];
+    if (!fallback) throw new Error('Theme catalog has no usable theme');
+    const theme = selected ?? fallback;
+    return { selectedThemeId, activeThemeId: theme.id, theme };
   }
 }

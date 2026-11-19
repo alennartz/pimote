@@ -13,6 +13,8 @@ export const PIMOTE_CONFIG_DIR = join(getXdgConfigHome(), 'pimote');
 export const PIMOTE_STATE_DIR = join(getXdgStateHome(), 'pimote');
 
 export const PIMOTE_CONFIG_PATH = join(PIMOTE_CONFIG_DIR, 'config.json');
+/** User-authored versioned theme catalog. */
+export const PIMOTE_THEMES_PATH = join(PIMOTE_CONFIG_DIR, 'themes.json');
 export const PIMOTE_PUSH_SUBSCRIPTIONS_PATH = join(PIMOTE_STATE_DIR, 'push-subscriptions.json');
 export const PIMOTE_SESSION_METADATA_PATH = join(PIMOTE_STATE_DIR, 'session-metadata.json');
 /** The per-user open-session profile store (`user-profiles.json`). */

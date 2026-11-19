@@ -20,10 +20,11 @@ import { serveFileDownloadRoute, type DownloadManager } from './file-download/in
 import type { UserProfiles } from './user-profiles.js';
 import type { ThemeCatalog } from './theme-catalog.js';
 import crypto from 'node:crypto';
-import type { UpdateAvailableEvent, VersionMismatchEvent, ServerCapabilitiesEvent } from '../../shared/dist/index.js';
+import type { UpdateAvailableEvent, VersionMismatchEvent, ServerCapabilitiesEvent, ThemeCatalogChangedEvent } from '../../shared/dist/index.js';
 import type { UpdateChecker } from './update-check.js';
 import { resolveUserName } from './user-profiles.js';
 import { handleImageHttpRoute } from './image-http.js';
+import { ThemePreferences } from './theme-preferences.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 /** Directory holding the built client bundle. Resolved per call so tests can point it elsewhere. */
@@ -151,8 +152,9 @@ export async function createServer(
   folderListing?: FolderListingService,
   globalSettings?: WsGlobalSettingsDependencies,
   userProfiles?: UserProfiles,
-  _themeCatalog?: Pick<ThemeCatalog, 'snapshot' | 'onChange'>,
+  themeCatalog?: Pick<ThemeCatalog, 'snapshot' | 'onChange' | 'setDefaultTheme'>,
 ): Promise<PimoteServer> {
+  const effectiveThemeCatalog = themeCatalog ?? globalSettings?.themeCatalog;
   const appName = resolveAppName(config);
   const clientVersion = await loadClientVersion();
   if (clientVersion) {
@@ -265,6 +267,11 @@ export async function createServer(
     },
   });
   const clientRegistry: ClientRegistry = new Map();
+  const themePreferences = effectiveThemeCatalog && userProfiles ? new ThemePreferences({ catalog: effectiveThemeCatalog, profiles: userProfiles }) : undefined;
+  const stopThemeCatalogSubscription = effectiveThemeCatalog?.onChange((snapshot) => {
+    const event: ThemeCatalogChangedEvent = { type: 'theme_catalog_changed', revision: snapshot.revision };
+    for (const handler of clientRegistry.values()) handler.sendToClient(event);
+  });
 
   // Liveness heartbeat — see ws-heartbeat.ts for why this exists. 20s sits
   // under the ~30s idle drops observed through some proxy paths.
@@ -347,6 +354,7 @@ export async function createServer(
       globalSettings,
       userProfiles,
       user,
+      themePreferences,
     );
     takeOverClientSlot(clientRegistry, clientId, handler);
 
@@ -412,6 +420,7 @@ export async function createServer(
     },
     close(): Promise<void> {
       return new Promise((resolve, reject) => {
+        stopThemeCatalogSubscription?.();
         heartbeat.stop();
 
         // Force-close all active WebSocket connections

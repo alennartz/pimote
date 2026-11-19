@@ -1,47 +1,8 @@
-/*
- * GitHub syntax colors for both Pimote palettes.
- * The document's .dark class swaps the variables without changing markup.
- */
-
-:root {
-  --syntax-fg: #24292f;
-  --syntax-bg: #f6f8fa;
-  --syntax-keyword: #cf222e;
-  --syntax-title: #8250df;
-  --syntax-attr: #0550ae;
-  --syntax-string: #0a3069;
-  --syntax-built-in: #953800;
-  --syntax-comment: #6e7781;
-  --syntax-name: #116329;
-  --syntax-section: #0550ae;
-  --syntax-bullet: #953800;
-  --syntax-addition-fg: #116329;
-  --syntax-addition-bg: #dafbe1;
-  --syntax-deletion-fg: #82071e;
-  --syntax-deletion-bg: #ffebe9;
-}
-
-.dark {
-  --syntax-fg: #adbac7;
-  --syntax-bg: oklch(0.16 0.03 258);
-  --syntax-keyword: #f47067;
-  --syntax-title: #dcbdfb;
-  --syntax-attr: #6cb6ff;
-  --syntax-string: #96d0ff;
-  --syntax-built-in: #f69d50;
-  --syntax-comment: #768390;
-  --syntax-name: #8ddb8c;
-  --syntax-section: #316dca;
-  --syntax-bullet: #eac55f;
-  --syntax-addition-fg: #b4f1b4;
-  --syntax-addition-bg: #1b4721;
-  --syntax-deletion-fg: #ffd8d3;
-  --syntax-deletion-bg: #78191b;
-}
+/* Highlight.js categories mapped to the active Pimote editor palette. */
 
 .hljs {
-  color: var(--syntax-fg);
-  background: var(--syntax-bg);
+  color: var(--pimote-editor-foreground, #24292f);
+  background: var(--pimote-editor-background, #f6f8fa);
 }
 
 .hljs-doctag,
@@ -51,82 +12,86 @@
 .hljs-template-variable,
 .hljs-type,
 .hljs-variable.language_ {
-  color: var(--syntax-keyword);
+  color: var(--pimote-editor-keyword, #cf222e);
 }
 
 .hljs-title,
-.hljs-title.class_,
-.hljs-title.class_.inherited__,
-.hljs-title.function_ {
-  color: var(--syntax-title);
+.hljs-title.function_,
+.hljs-function .hljs-title {
+  color: var(--pimote-editor-function, #8250df);
 }
 
+.hljs-title.class_,
+.hljs-title.class_.inherited__,
 .hljs-attr,
 .hljs-attribute,
 .hljs-literal,
 .hljs-meta,
-.hljs-number,
 .hljs-operator,
 .hljs-selector-attr,
 .hljs-selector-class,
 .hljs-selector-id,
 .hljs-variable {
-  color: var(--syntax-attr);
+  color: var(--pimote-editor-property, #0550ae);
+}
+
+.hljs-number {
+  color: var(--pimote-editor-number, #0550ae);
 }
 
 .hljs-meta .hljs-string,
 .hljs-regexp,
 .hljs-string {
-  color: var(--syntax-string);
+  color: var(--pimote-editor-string, #0a3069);
 }
 
 .hljs-built_in,
 .hljs-symbol {
-  color: var(--syntax-built-in);
+  color: var(--pimote-editor-built-in, #953800);
 }
 
 .hljs-code,
 .hljs-comment,
 .hljs-formula {
-  color: var(--syntax-comment);
+  color: var(--pimote-editor-comment, #6e7781);
 }
 
 .hljs-name,
 .hljs-quote,
 .hljs-selector-pseudo,
 .hljs-selector-tag {
-  color: var(--syntax-name);
+  color: var(--pimote-editor-tag, #116329);
 }
 
 .hljs-subst {
-  color: var(--syntax-fg);
+  color: var(--pimote-editor-foreground, #24292f);
 }
 
 .hljs-section {
-  color: var(--syntax-section);
+  color: var(--pimote-editor-heading, #0550ae);
   font-weight: bold;
 }
 
 .hljs-bullet {
-  color: var(--syntax-bullet);
+  color: var(--pimote-editor-list, #953800);
 }
 
 .hljs-emphasis {
-  color: var(--syntax-fg);
+  color: var(--pimote-editor-emphasis, var(--pimote-editor-foreground, #24292f));
   font-style: italic;
 }
 
 .hljs-strong {
-  color: var(--syntax-fg);
+  color: var(--pimote-editor-strong, var(--pimote-editor-foreground, #24292f));
   font-weight: bold;
 }
 
 .hljs-addition {
-  color: var(--syntax-addition-fg);
-  background-color: var(--syntax-addition-bg);
+  color: var(--pimote-editor-inserted, #116329);
+  background-color: var(--pimote-editor-active-line, #dafbe1);
 }
 
 .hljs-deletion {
-  color: var(--syntax-deletion-fg);
-  background-color: var(--syntax-deletion-bg);
+  color: var(--pimote-editor-deleted, #82071e);
+  background-color: var(--pimote-editor-search-match, #ffebe9);
 }

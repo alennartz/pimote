@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
-import { mkdir, realpath } from 'node:fs/promises';
+import { mkdir, readFile, realpath } from 'node:fs/promises';
+import { watch as watchFile } from 'node:fs';
 import { homedir } from 'node:os';
 import { DefaultPackageManager, SettingsManager, getAgentDir } from '@earendil-works/pi-coding-agent';
 import type { ExtensionFactory } from '@earendil-works/pi-coding-agent';
@@ -39,6 +40,7 @@ import {
   PIMOTE_SESSION_METADATA_PATH,
   PIMOTE_STATIC_HOST_DIR,
   PIMOTE_USER_PROFILES_PATH,
+  PIMOTE_THEMES_PATH,
 } from './paths.js';
 import { FileSessionMetadataStore } from './session-metadata.js';
 import { buildVoiceOrchestrator } from './voice-orchestrator-boot.js';
@@ -46,6 +48,8 @@ import { InMemoryStaticHostRegistry, FileStaticHostStore, gcStaticHostStore, cre
 import { bootstrapFileDownloads } from './file-download/bootstrap.js';
 import { getVersion } from './version.js';
 import { createUpdateChecker, fetchLatestVersionFromNpm, type UpdateChecker } from './update-check.js';
+import { ThemeCatalog } from './theme-catalog.js';
+import { builtinThemeDefinitions } from './builtin-themes.js';
 
 export interface StartOptions {
   portOverride?: number;
@@ -101,6 +105,29 @@ export async function main(options: StartOptions = {}) {
     console.warn(`[pimote-extensions] ${diagnostic.path}: ${diagnostic.message}`);
   }
   if (initialPimoteRegistry.sources.length > 0) await repoIndex.replaceUserSources(initialPimoteRegistry.sources);
+
+  const themeCatalog = new ThemeCatalog({
+    builtinThemes: builtinThemeDefinitions(),
+    extensionFiles: initialPimoteRegistry.themeFiles ?? [],
+    userFile: PIMOTE_THEMES_PATH,
+    defaultThemeId: config.defaultTheme ?? 'pimote/light',
+    reader: {
+      read: (path) => readFile(path, 'utf8'),
+      watch: (path, listener) => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const watcher = watchFile(resolve(path, '..'), { persistent: false }, (_event, filename) => {
+          if (!filename || filename.toString() !== path.split('/').pop()) return;
+          clearTimeout(timer);
+          timer = setTimeout(listener, 25);
+        });
+        return () => {
+          clearTimeout(timer);
+          watcher.close();
+        };
+      },
+    },
+  });
+  await themeCatalog.load();
   const folderTree: FolderModelPort = {
     tree: () => repoIndex.tree(),
   };
@@ -402,6 +429,7 @@ export async function main(options: StartOptions = {}) {
       console.warn(`[pimote-extensions] ${diagnostic.path}: ${diagnostic.message}`);
     }
     await repoIndex.replaceUserSources(registry.sources);
+    await themeCatalog.replaceExtensionFiles(registry.themeFiles ?? []);
   };
   const globalSettings = {
     manifest: () =>
@@ -414,6 +442,8 @@ export async function main(options: StartOptions = {}) {
       }).snapshot(),
     configRuntime,
     capabilities: () => configRuntime.capabilities(),
+    themeDefaultChanged: (defaultThemeId: string) => themeCatalog.setDefaultTheme(defaultThemeId).then(() => undefined),
+    themeCatalog,
     reloadPimoteExtensions,
   };
 
@@ -484,6 +514,7 @@ export async function main(options: StartOptions = {}) {
     console.log('\n[pimote] Shutting down...');
     await voiceBoot?.shutdown();
     await pimoteExtensionHost.shutdown();
+    await themeCatalog.close();
     await sessionManager.dispose();
     await server.close();
     process.exit(0);

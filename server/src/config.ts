@@ -143,6 +143,7 @@ function parseConfigObject(obj: Record<string, unknown>, configPath: string, hom
     bufferSize: typeof obj.bufferSize === 'number' ? obj.bufferSize : DEFAULTS.bufferSize,
     port: typeof obj.port === 'number' ? obj.port : DEFAULTS.port,
     appName: typeof obj.appName === 'string' ? obj.appName : undefined,
+    defaultTheme: typeof obj.defaultTheme === 'string' && obj.defaultTheme.trim() ? obj.defaultTheme : 'pimote/light',
     defaultInterpreterModel: normalizeModelRef(obj.defaultInterpreterModel),
     defaultWorkerModel: normalizeModelRef(obj.defaultWorkerModel),
     voice: parseVoiceConfig(obj.voice),

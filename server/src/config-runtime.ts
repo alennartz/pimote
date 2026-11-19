@@ -76,6 +76,7 @@ export class ConfigRuntime {
 
     next.settingsFiles = candidate.settingsFiles ? [...candidate.settingsFiles] : undefined;
     next.tagSnippets = normalizeTagSnippets(candidate.tagSnippets);
+    next.defaultTheme = candidate.defaultTheme ?? 'pimote/light';
     next.defaultInterpreterModel = candidate.defaultInterpreterModel;
     next.defaultWorkerModel = candidate.defaultWorkerModel;
     next.idleTimeout = candidate.idleTimeout;

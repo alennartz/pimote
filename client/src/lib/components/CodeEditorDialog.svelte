@@ -23,6 +23,7 @@
     error = null,
     saving = false,
     saveDisabled = false,
+    saveLabel = 'Save',
     ready = true,
     language = null,
     editorKey = null,
@@ -53,6 +54,7 @@
     saving?: boolean;
     /** Extra save gate beside `saving`, e.g. content not loaded yet. */
     saveDisabled?: boolean;
+    saveLabel?: string;
     /** While false the code editor stays unmounted, e.g. file still loading. */
     ready?: boolean;
     language?: EditorLanguage | null;
@@ -181,7 +183,7 @@
           {/if}
           {#if viewport !== 'desktop'}
             <Button type="submit" class={viewport === 'mobile' ? 'h-11' : 'h-11 sm:hidden'} disabled={saving || saveDisabled}>
-              {saving ? 'Saving…' : 'Save'}
+              {saving ? 'Saving…' : saveLabel}
             </Button>
           {/if}
         </div>
@@ -232,7 +234,7 @@
           {/if}
           <Button variant="outline" type="button" disabled={saving} onclick={onclose}>Cancel</Button>
           <Button type="submit" disabled={saving || saveDisabled}>
-            {saving ? 'Saving…' : 'Save'}
+            {saving ? 'Saving…' : saveLabel}
           </Button>
         </footer>
       {/if}

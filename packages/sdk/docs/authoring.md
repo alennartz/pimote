@@ -79,6 +79,7 @@ The context has three members and nothing else:
 | -------------------------------- | -------------------------------------------------------------------------------------------------- |
 | `folders.registerSource(source)` | Adds a folder source. Throws `Invalid folder source` on a bad shape. See [folders.md](folders.md). |
 | `settings.registerFile(path)`    | Adds a file to the global Settings catalog.                                                        |
+| `themes.registerFile(path)`      | Adds a versioned read-only JSON theme file. See [themes.md](themes.md).                            |
 | `on('shutdown', handler)`        | Registers a shutdown handler and returns a function that removes it.                               |
 
 `registerSource` requires a non-empty string `id`, a `list` function, and either no `onFolderOpen` or a function.

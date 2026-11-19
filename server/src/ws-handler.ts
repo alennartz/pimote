@@ -45,6 +45,7 @@ import { seedPersonaFolder } from './manager/seed.js';
 import { createCodeFolder } from './folder-create.js';
 import type { FolderListingService } from './folder-listing.js';
 import type { UserProfiles } from './user-profiles.js';
+import type { ThemePreferences } from './theme-preferences.js';
 import { classifyFolder, nodeFolderFs } from './folder-model/index.js';
 import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
 import type { PushNotificationService } from './push-notification.js';
@@ -64,6 +65,8 @@ export interface WsGlobalSettingsDependencies {
   reloadPimoteExtensions?: () => Promise<void>;
   configRuntime?: ConfigRuntime;
   capabilities?: () => ServerCapabilitiesEvent;
+  themeDefaultChanged?: (defaultThemeId: string) => Promise<void>;
+  themeCatalog?: Pick<import('./theme-catalog.js').ThemeCatalog, 'snapshot' | 'onChange' | 'setDefaultTheme'>;
 }
 
 /** True when the forwarded input's first token is the retired `/new`
@@ -215,6 +218,7 @@ export class WsHandler {
     private readonly userProfiles?: UserProfiles,
     /** Honor-system connection identity resolved from the `?user=` query param at socket open. */
     private readonly user: string = 'default',
+    private readonly themePreferences?: ThemePreferences,
   ) {
     this.clientId = clientId;
     // Open-time pin initialization, nonblocking: a folder command arriving
@@ -909,6 +913,30 @@ export class WsHandler {
         }
 
         // ---- File editing commands ----
+        case 'get_theme_catalog': {
+          if (!this.themePreferences) {
+            this.sendResponse(id, false, undefined, 'theme catalog unavailable');
+            break;
+          }
+          this.sendResponse(id, true, this.themePreferences.getCatalog());
+          break;
+        }
+
+        case 'set_theme': {
+          if (!this.themePreferences || !this.userProfiles) {
+            this.sendResponse(id, false, undefined, 'theme preferences unavailable');
+            break;
+          }
+          try {
+            const selection = await this.themePreferences.setTheme(this.user, command.themeId);
+            WsHandler.broadcastUserSessionsChanged(this.userProfiles, this.clientRegistry, this.user);
+            this.sendResponse(id, true, selection);
+          } catch (error) {
+            this.sendResponse(id, false, undefined, error instanceof Error ? error.message : String(error));
+          }
+          break;
+        }
+
         case 'get_global_settings': {
           const manifest = this.globalSettings?.manifest ? await this.globalSettings.manifest() : { files: [] };
           this.sendResponse(id, true, manifest);
@@ -928,6 +956,7 @@ export class WsHandler {
             if (capabilities) {
               for (const handler of this.clientRegistry.values()) handler.sendToClient(capabilities);
             }
+            await this.globalSettings?.themeDefaultChanged?.(runtime?.snapshot().defaultTheme ?? 'pimote/light');
           }
           if (basename(data.path) === 'AGENTS.md') {
             // Folder rows are keyed by folder roots: the edit maps to the row
@@ -2027,6 +2056,7 @@ export class WsHandler {
       order: userProfiles.order(user),
       selectedSessionId: userProfiles.selection(user),
       orderVersion: userProfiles.orderVersion(user),
+      selectedThemeId: userProfiles.selectedTheme(user),
       fresh: userProfiles.isFresh(user),
     };
   }

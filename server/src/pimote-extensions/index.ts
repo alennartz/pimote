@@ -111,6 +111,7 @@ type ShutdownRegistration = {
 class Runtime {
   readonly sources: PimoteExtensionRegistry['sources'][number][] = [];
   readonly settingsFiles: string[] = [];
+  readonly themeFiles: string[] = [];
   readonly diagnostics: PimoteExtensionDiagnostic[] = [];
   readonly handlers: ShutdownRegistration[] = [];
   active = true;
@@ -140,8 +141,11 @@ class Runtime {
         },
       },
       themes: {
-        registerFile: () => {
-          throw new Error('not implemented');
+        registerFile: (file) => {
+          if (!this.active) return;
+          if (typeof file !== 'string' || !file.trim()) throw new Error('Invalid theme file path');
+          const expanded = file === '~' ? homedir() : file.startsWith('~/') ? join(homedir(), file.slice(2)) : file;
+          this.themeFiles.push(resolve(dirname(path), expanded));
         },
       },
       on: (event, handler) => {
@@ -162,6 +166,7 @@ class Runtime {
     if (!this.active || !entry.active) return;
     this.sources.push(...entry.sources);
     this.settingsFiles.push(...entry.settingsFiles);
+    this.themeFiles.push(...entry.themeFiles);
     for (const registration of entry.handlers) {
       registration.owner = this;
       this.handlers.push(registration);
@@ -181,7 +186,12 @@ class Runtime {
   }
 
   snapshot(): PimoteExtensionRegistry {
-    return { sources: [...this.sources], settingsFiles: [...this.settingsFiles], diagnostics: this.diagnostics.map((diagnostic) => ({ ...diagnostic })) };
+    return {
+      sources: [...this.sources],
+      settingsFiles: [...this.settingsFiles],
+      themeFiles: [...this.themeFiles],
+      diagnostics: this.diagnostics.map((diagnostic) => ({ ...diagnostic })),
+    };
   }
 
   async stop(): Promise<readonly PimoteExtensionDiagnostic[]> {
@@ -224,7 +234,7 @@ class ExtensionHost implements PimoteExtensionHost {
   }
 
   getRegistry(): PimoteExtensionRegistry {
-    return this.runtime?.snapshot() ?? { sources: [], settingsFiles: [], diagnostics: [] };
+    return this.runtime?.snapshot() ?? { sources: [], settingsFiles: [], themeFiles: [], diagnostics: [] };
   }
 
   shutdown(): Promise<void> {

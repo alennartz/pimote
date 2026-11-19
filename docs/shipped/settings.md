@@ -22,6 +22,7 @@ The file is `$XDG_CONFIG_HOME/pimote/config.json`, which defaults to `~/.config/
 | `managerRoot`                                         | string                          | `$XDG_STATE_HOME/pimote/manager` | Working directory of the manager session. A leading `~` expands.                                                             |
 | `port`                                                | number                          | `3000`                           | HTTP listen port.                                                                                                            |
 | `appName`                                             | string                          | `Pimote`                         | Display name for the browser tab, iOS web app, and installed PWA.                                                            |
+| `defaultTheme`                                        | string                          | `pimote/light`                   | Theme used by profiles that do not save an override. Applies after a native config save.                                     |
 | `idleTimeout`                                         | number                          | `1800000`                        | Milliseconds before the reaper closes an idle session.                                                                       |
 | `bufferSize`                                          | number                          | `1000`                           | Events retained per session replay buffer.                                                                                   |
 | `defaultInterpreterModel`                             | string or `{provider, modelId}` | automatic                        | Voice interpreter model; the slug form accepts a `:level` thinking suffix. Empty or unset leaves the session model to pi.    |
@@ -51,7 +52,7 @@ A field with the wrong type falls back to its default. Only the cases above fail
 
 | Field                                                                         | Applies                                                    |
 | ----------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `settingsFiles`, `tagSnippets`                                                | At once.                                                   |
+| `settingsFiles`, `tagSnippets`, `defaultTheme`                                | At once.                                                   |
 | `defaultInterpreterModel`, `defaultWorkerModel`                               | To the next voice extension build.                         |
 | `idleTimeout`                                                                 | At the next reaper check.                                  |
 | `bufferSize`                                                                  | To new session buffers, including reset and fork rebuilds. |
