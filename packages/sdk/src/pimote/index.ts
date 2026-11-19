@@ -10,13 +10,18 @@ export type PimoteExtension = (context: PimoteExtensionContext) => void | Promis
  * Context exposed to server-global Pimote extensions.
  *
  * This is intentionally separate from pi's session-scoped ExtensionAPI. Pimote
- * extensions contribute folder discovery and global settings files only.
+ * extensions contribute folder discovery, global settings files, and read-only
+ * theme files.
  */
 export interface PimoteExtensionContext {
   readonly folders: {
     registerSource(source: import('../folders/types.js').FolderSource): void;
   };
   readonly settings: {
+    registerFile(path: string): void;
+  };
+  readonly themes: {
+    /** Register a versioned JSON theme file relative to the extension entry. */
     registerFile(path: string): void;
   };
   on(event: 'shutdown', handler: () => void | Promise<void>): () => void;

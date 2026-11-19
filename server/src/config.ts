@@ -34,6 +34,8 @@ export interface PimoteConfig {
   port: number;
   /** Display name for the web app and installed PWA (tab title, manifest, app name). Default "Pimote". */
   appName?: string;
+  /** Theme ID used by profiles that do not save an override. Defaults to `pimote/light`. */
+  defaultTheme?: string;
   /** Voice interpreter model ref (`provider/model[:level]`). Empty or unset leaves the session model to pi. */
   defaultInterpreterModel?: string;
   /** Voice worker model ref. Empty or unset lets spawned workers inherit the interpreter's model. */

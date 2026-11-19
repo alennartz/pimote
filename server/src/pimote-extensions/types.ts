@@ -29,12 +29,14 @@ export interface PimoteExtensionDiagnostic {
   message: string;
 }
 
-/** The registrations visible to the folder model and global-settings catalog. */
+/** The registrations visible to the folder model, settings catalog, and theme catalog. */
 export interface PimoteExtensionRegistry {
   /** Sources in deterministic extension discovery order. */
   readonly sources: readonly FolderSource[];
   /** Resolved settings-file paths in deterministic extension discovery order. */
   readonly settingsFiles: readonly string[];
+  /** Resolved theme-file paths in deterministic extension discovery order. */
+  readonly themeFiles?: readonly string[];
   /** Isolated entry/factory failures from the current runtime. */
   readonly diagnostics: readonly PimoteExtensionDiagnostic[];
 }

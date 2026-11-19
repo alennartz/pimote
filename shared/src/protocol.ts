@@ -25,6 +25,21 @@ import type {
 } from '@pimote/sdk/subagents';
 import type { Card as SdkCard } from '@pimote/sdk/panels';
 import type { RepoInfo as SdkRepoInfo } from '@pimote/sdk/folders';
+import type { ThemeCatalogSnapshot } from './themes.js';
+
+export type {
+  AnsiColorName,
+  EditorSurfaceRole,
+  EditorSyntaxRole,
+  ResolvedTheme,
+  ThemeCatalogSnapshot,
+  ThemeColorValue,
+  ThemeDefinition,
+  ThemeDiagnostic,
+  ThemeFile,
+  ThemeSourceKind,
+  UiColorToken,
+} from './themes.js';
 
 // Canonical subagent, panel, and folder types live in @pimote/sdk. The wire
 // re-exports them; nothing here redeclares a shape the SDK already owns.
@@ -872,6 +887,19 @@ export interface GetGlobalSettingsResponseData {
   files: GlobalSettingsFile[];
 }
 
+/** Request the PWA-only theme catalog snapshot. */
+export interface GetThemeCatalogCommand extends CommandBase {
+  type: 'get_theme_catalog';
+}
+
+export type GetThemeCatalogResponseData = ThemeCatalogSnapshot;
+
+/** Persist the user's theme override, or null to follow the server default. */
+export interface SetThemeCommand extends CommandBase {
+  type: 'set_theme';
+  themeId: string | null;
+}
+
 export interface FileGetCommand extends CommandBase {
   type: 'file_get';
   /** Absolute path, a `~`-prefixed path (the server expands a leading `~`/`~/` to its home directory), or a relative path (resolved against the server's working directory). */
@@ -1155,6 +1183,8 @@ export type PimoteCommand =
   | ViewSessionCommand
   | ReorderSessionsCommand
   | GetGlobalSettingsCommand
+  | GetThemeCatalogCommand
+  | SetThemeCommand
   | FileGetCommand
   | FilePutCommand
   | RegisterPushCommand
@@ -1594,6 +1624,12 @@ export interface FoldersChangedEvent {
   epoch: number;
 }
 
+/** Broadcast when the PWA theme catalog revision changes. */
+export interface ThemeCatalogChangedEvent {
+  type: 'theme_catalog_changed';
+  revision: number;
+}
+
 /** One child view a user holds open. `path` is root-relative. */
 export interface UserOpenViewRef {
   /** Child session id — the session the view renders. */
@@ -1624,6 +1660,9 @@ export interface UserSessionsChangedEvent {
    *  as `baseVersion` so a whole-order write computed against a superseded
    *  order is refused instead of silently clobbering it. */
   orderVersion: number;
+  /** The saved theme override, or null when this user follows the server default.
+   *  Optional for additive compatibility with older servers. */
+  selectedThemeId?: string | null;
   /** True when this user has no server profile yet (never linked).
    *  Gates migration: only a fresh profile adopts a connection's
    *  pre-existing local set. */
@@ -1987,6 +2026,7 @@ export type PimoteEvent =
   | SessionCommandsChangedEvent
   | ConnectionRestoredEvent
   | FoldersChangedEvent
+  | ThemeCatalogChangedEvent
   | UserSessionsChangedEvent
   | SessionRestoreEvent
   | BufferedEventsEvent

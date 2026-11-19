@@ -98,3 +98,79 @@ Static reports can load the shared same-origin helper from `/pwa/theme-bridge.js
 ### Interaction Mocks
 
 - `docs/mocks/client-themes/index.html` — Appearance tab on desktop and mobile; paired theme previews; server-default choice; local preview; Save to sync; Cancel to revert.
+
+## Tests
+
+**Pre-test-write commit:** `669b46af250a96903d5d6ba5b929ff95aeb6ee79`
+
+### Interface Files
+
+- `shared/src/themes.ts` — Versioned theme-file, token, resolved-theme, diagnostic, and catalog snapshot types.
+- `shared/src/index.ts` — Shared theme type exports.
+- `shared/src/protocol.ts` — Theme catalog request, selection command, catalog-change event, and user-profile selection fields.
+- `server/src/config.ts` — Native `defaultTheme` configuration field.
+- `server/src/theme-catalog.ts` — Server catalog lifecycle, source reader, snapshot, revision, and listener boundary.
+- `server/src/theme-preferences.ts` — Server catalog and per-user selection command boundary.
+- `server/src/user-profiles.ts` — Persisted theme selection interface on user profiles.
+- `server/src/pimote-extensions/types.ts` — Extension theme-file registration in the host registry.
+- `server/src/pimote-extensions/index.ts` — Extension context theme-registration seam.
+- `packages/sdk/src/pimote/index.ts` — `context.themes.registerFile` SDK contract.
+- `client/src/lib/stores/theme-store.svelte.ts` — PWA catalog, profile reconciliation, preview, save, cancel, and cache boundary.
+- `client/src/lib/theme-application.ts` — Root palette, mode, and browser metadata application boundary.
+- `client/src/lib/theme-bootstrap.ts` — Early cached-theme bootstrap boundary.
+- `client/src/lib/theme-bridge.ts` — Static-report cache bridge lifecycle and cache-key boundary.
+- `client/src/lib/components/AppearanceSettings.svelte` — Appearance tab component surface.
+
+### Test Files
+
+- `server/src/theme-catalog.test.ts` — Source precedence, validation, inheritance, palette resolution, diagnostics, retention, and revisions.
+- `server/src/pimote-extensions/themes.test.ts` — Extension theme-file path resolution, ordering, isolation, and reload invalidation.
+- `server/src/user-profiles-themes.test.ts` — Per-user theme override persistence, clearing, isolation, and document compatibility.
+- `server/src/config-themes.test.ts` — Native default parsing and live runtime updates.
+- `server/src/theme-preferences.test.ts` — Catalog reads, valid and null selection, invalid IDs, and unavailable-theme fallbacks.
+- `client/src/lib/stores/theme-store.svelte.test.ts` — PWA catalog refresh, profile adoption, local preview, save gating, cancel, and default selection.
+- `client/src/lib/theme-application.test.ts` — CSS custom properties, root mode, color-scheme, browser metadata, and manifest fallback behavior.
+- `client/src/lib/theme-bootstrap.test.ts` — Early user-scoped cache application and invalid-cache fallback.
+- `client/src/lib/theme-bridge.test.ts` — User-scoped cache, no-cache fallback, and cross-tab lifecycle.
+- `client/src/lib/components/AppearanceSettings.test.ts` — Desktop/mobile Appearance tab, paired previews, default choice, and preview/save/cancel affordances.
+
+### Behaviors Covered
+
+#### Theme catalog
+
+- Built-in, extension, and user files resolve in deterministic source order.
+- Malformed files isolate their diagnostics and do not block valid sources.
+- Reserved built-in IDs and later duplicate IDs do not shadow the first valid definition.
+- Palette references and inheritance resolve into complete paired UI, editor, and terminal tokens.
+- Cycles and missing inheritance bases reject only the affected themes.
+- Invalid user edits retain the last valid user contribution.
+- Valid source changes and native default changes publish incremented revisions.
+
+#### Extension registration
+
+- `context.themes.registerFile` resolves relative and home-relative paths from the entry.
+- Registrations retain deterministic discovery order and isolate failing entries.
+- Reload invalidates old theme registrations.
+
+#### Profiles and server commands
+
+- A profile starts with no override, persists one user's override, and clears it with `null`.
+- A theme override never changes another user's profile.
+- Native configuration defaults to `pimote/light`, accepts a configured ID, and applies live updates.
+- Catalog requests return the PWA snapshot, valid IDs save, `null` follows the server default, and unknown IDs fail.
+- Missing saved themes use the configured default while retaining the saved ID; an unavailable default uses `pimote/light`.
+
+#### PWA ThemeStore and Appearance
+
+- The PWA requests a full catalog and refreshes after a revision-only event.
+- Profile reconciliation adopts the shared selection before Save becomes available.
+- Theme selection previews paired UI and code palettes locally; Cancel restores the saved selection.
+- Save remains disabled until profile reconciliation and session adoption finish, then sends `set_theme` for a theme or `null`.
+- Desktop and mobile Appearance surfaces show Follow server default and built-in, extension, and user choices with paired previews.
+
+#### Palette application and static reports
+
+- Theme application writes UI, editor, and terminal custom properties and updates root mode and browser theme metadata.
+- Manifest installation fallback remains unchanged by runtime theme application.
+- The PWA applies a valid user-scoped cached theme before its first render and leaves fallback styles untouched for invalid or absent cache data.
+- Static reports use a user-scoped cached resolved theme, leave fallback styles untouched without a cache, and react to cross-tab updates until stopped.

@@ -31,6 +31,8 @@ interface UserProfile {
   /** Session ids in chip order — the client owns the order, this stores it. */
   order: string[];
   selectedSessionId: string | null;
+  /** Saved theme override. Null follows the native server default. */
+  selectedThemeId?: string | null;
   /** Epoch of `order`, bumped on every accepted whole-order write. */
   orderVersion: number;
 }
@@ -50,6 +52,7 @@ type PersistedDocument = {
       views?: ViewRef[];
       order?: string[];
       selectedSessionId?: string | null;
+      selectedThemeId?: string | null;
       orderVersion?: number;
     };
   };
@@ -345,6 +348,16 @@ export class UserProfiles {
     profile.selectedSessionId = sessionId;
     await this.persistOrLog();
     return true;
+  }
+
+  /** The user's saved theme override, or null when following the server default. */
+  selectedTheme(_user: string): string | null {
+    throw new Error('not implemented');
+  }
+
+  /** Persist one user's theme override; null clears the override. */
+  async setSelectedTheme(_user: string, _themeId: string | null): Promise<boolean> {
+    throw new Error('not implemented');
   }
 
   /** Alphabetical names with counts, for listusers. */

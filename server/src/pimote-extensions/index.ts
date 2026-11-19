@@ -139,6 +139,11 @@ class Runtime {
           this.settingsFiles.push(resolve(dirname(path), expanded));
         },
       },
+      themes: {
+        registerFile: () => {
+          throw new Error('not implemented');
+        },
+      },
       on: (event, handler) => {
         if (!this.active) return () => {};
         if (event !== 'shutdown' || typeof handler !== 'function') throw new Error('Invalid shutdown handler');
