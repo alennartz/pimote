@@ -50,8 +50,10 @@ describe('ThemeCatalog', () => {
     ['solarized/light', '#859900', '#cb4b16', '#dc322f', '#859900'],
     ['catppuccin/mocha', '#a6e3a1', '#fab387', '#f38ba8', '#a6e3a1'],
     ['catppuccin/latte', '#40a02b', '#fe640b', '#d20f39', '#40a02b'],
-  ] as const)('uses palette-aligned semantic statuses and ANSI green for %s', (id, success, warning, error, ansiGreen) => {
-    const theme = builtinThemeDefinitions().find((entry) => entry.id === id);
+  ] as const)('uses palette-aligned semantic statuses and ANSI green for %s', async (id, success, warning, error, ansiGreen) => {
+    const service = catalog({ builtinThemes: builtinThemeDefinitions() });
+    const snapshot = await service.load();
+    const theme = snapshot.themes.find((entry) => entry.id === id);
     expect(theme?.ui).toMatchObject({
       'status-connected': success,
       'status-streaming': success,

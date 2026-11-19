@@ -1,4 +1,4 @@
-import type { AnsiColorName, EditorSurfaceRole, EditorSyntaxRole, ThemeDefinition, UiColorToken } from '../../shared/dist/index.js';
+import type { AnsiColorName, EditorSurfaceRole, EditorSyntaxRole, ThemeColorValue, ThemeDefinition, UiColorToken } from '../../shared/dist/index.js';
 
 /*
  * Palette provenance:
@@ -172,17 +172,21 @@ const TERMINAL_ROLES: readonly AnsiColorName[] = [
   'bright-white',
 ];
 
-function fill<K extends string>(keys: readonly K[], value: string): Record<K, string> {
-  return Object.fromEntries(keys.map((key) => [key, value])) as Record<K, string>;
+function fill<K extends string>(keys: readonly K[], value: ThemeColorValue): Record<K, ThemeColorValue> {
+  return Object.fromEntries(keys.map((key) => [key, value])) as Record<K, ThemeColorValue>;
 }
 
-function ui(values: Partial<Record<UiColorToken, string>>, fallback: string): Record<UiColorToken, string> {
-  return Object.fromEntries(UI_TOKENS.map((token) => [token, values[token] ?? fallback])) as Record<UiColorToken, string>;
+function ui(values: Partial<Record<UiColorToken, ThemeColorValue>>, fallback: ThemeColorValue): Record<UiColorToken, ThemeColorValue> {
+  return Object.fromEntries(UI_TOKENS.map((token) => [token, values[token] ?? fallback])) as Record<UiColorToken, ThemeColorValue>;
 }
 
 function editor(
-  values: { surface?: Partial<Record<EditorSurfaceRole, string>>; syntax?: Partial<Record<EditorSyntaxRole, string>>; terminal?: Partial<Record<AnsiColorName, string>> },
-  fallback: { surface: string; syntax: string; terminal: string },
+  values: {
+    surface?: Partial<Record<EditorSurfaceRole, ThemeColorValue>>;
+    syntax?: Partial<Record<EditorSyntaxRole, ThemeColorValue>>;
+    terminal?: Partial<Record<AnsiColorName, ThemeColorValue>>;
+  },
+  fallback: { surface: ThemeColorValue; syntax: ThemeColorValue; terminal: ThemeColorValue },
 ): ThemeDefinition['editor'] {
   return {
     surface: fill(SURFACE_ROLES, fallback.surface),
@@ -194,15 +198,51 @@ function editor(
   };
 }
 
+function normalizeColorMap<K extends string>(
+  values: Readonly<Partial<Record<K, ThemeColorValue>>>,
+  prefix: string,
+  palette: Record<string, string>,
+  aliases: Map<string, string>,
+): Record<K, ThemeColorValue> {
+  return Object.fromEntries(
+    Object.entries(values).flatMap(([role, value]) => {
+      if (value === undefined) return [];
+      if (typeof value !== 'string') return [[role, value] as const];
+      let alias = aliases.get(value);
+      if (!alias) {
+        alias = `${prefix}-${role}`;
+        palette[alias] = value;
+        aliases.set(value, alias);
+      }
+      return [[role, { palette: alias }] as const];
+    }),
+  ) as Record<K, ThemeColorValue>;
+}
+
+function normalizeDefinition(definition: ThemeDefinition): ThemeDefinition {
+  const palette = { ...(definition.palette ?? {}) };
+  const aliases = new Map<string, string>(Object.entries(palette).map(([name, value]) => [value, name]));
+  return {
+    ...definition,
+    palette,
+    ui: normalizeColorMap(definition.ui, 'ui', palette, aliases),
+    editor: {
+      surface: normalizeColorMap(definition.editor.surface, 'editor-surface', palette, aliases),
+      syntax: normalizeColorMap(definition.editor.syntax, 'editor-syntax', palette, aliases),
+      terminal: normalizeColorMap(definition.editor.terminal, 'terminal', palette, aliases),
+    },
+  };
+}
+
 function definition(
   id: string,
   name: string,
   colorScheme: 'light' | 'dark',
-  uiValues: Partial<Record<UiColorToken, string>>,
+  uiValues: Partial<Record<UiColorToken, ThemeColorValue>>,
   editorValues: Parameters<typeof editor>[0],
   fallback: Parameters<typeof editor>[1],
 ): ThemeDefinition {
-  return { id, name, colorScheme, ui: ui(uiValues, fallback.surface), editor: editor(editorValues, fallback) };
+  return normalizeDefinition({ id, name, colorScheme, ui: ui(uiValues, fallback.surface), editor: editor(editorValues, fallback) });
 }
 
 const lightUi: Partial<Record<UiColorToken, string>> = {
@@ -420,7 +460,7 @@ const lightEditor = {
     'line-number': '#6a737d',
     'active-line-number': '#24292e',
     'matching-bracket': '#b6e3ff',
-    'search-match': '#ffdf5d',
+    'search-match': '#24292e',
     'diff-addition-background': '#dafbe1',
     'diff-deletion-background': '#ffebe9',
   },
@@ -439,7 +479,7 @@ const darkEditor = {
     'line-number': '#8b949e',
     'active-line-number': '#c9d1d9',
     'matching-bracket': '#3b434b',
-    'search-match': '#634d18',
+    'search-match': '#c9d1d9',
     'diff-addition-background': '#1b4721',
     'diff-deletion-background': '#78191b',
   },
@@ -668,7 +708,7 @@ export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
     cursor: '#c0caf5',
     lineNumber: '#363b54',
     matchingBracket: '#16161e',
-    searchMatch: '#3d59a166',
+    searchMatch: '#c0caf5',
     errorSurface: '#16161e',
   }),
   thirdParty('nord/nord', 'Nord', 'dark', {
@@ -707,7 +747,7 @@ export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
     cursor: '#d8dee9',
     lineNumber: '#4c566a',
     matchingBracket: '#434c5e',
-    searchMatch: '#88c0d066',
+    searchMatch: '#d8dee9',
     errorSurface: '#3b2d31',
   }),
   thirdParty('gruvbox/dark', 'Gruvbox Dark', 'dark', {
@@ -785,7 +825,7 @@ export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
     cursor: '#657b83',
     lineNumber: '#93a1a1',
     matchingBracket: '#b58900',
-    searchMatch: '#b58900',
+    searchMatch: '#657b83',
     errorSurface: '#eee8d5',
   }),
   thirdParty('catppuccin/mocha', 'Catppuccin Mocha', 'dark', {
@@ -863,7 +903,7 @@ export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
     cursor: '#4c4f69',
     lineNumber: '#8c8fa1',
     matchingBracket: '#df8e1d',
-    searchMatch: '#fe640b',
+    searchMatch: '#4c4f69',
     errorSurface: '#e6e9ef',
   }),
 ];
