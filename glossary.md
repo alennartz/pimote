@@ -61,7 +61,7 @@ A user-level file Pimote exposes as one tab in the Global settings experience. S
 _Avoid_: settings document, configuration file (when referring to the tabbed settings surface)
 
 **Web theme**:
-A named appearance preset for the Pimote PWA. It pairs Pimote UI color tokens with code-editor syntax colors; selecting it applies both palettes. Agent-hosted static reports can opt into it through the theme helper.
+A named appearance preset for the Pimote PWA. It pairs Pimote UI color tokens with code-editor and terminal colors; selecting it applies both palettes. Agent-hosted static reports can opt into it through the theme helper.
 _Avoid_: UI theme, editor theme (when referring to the complete preset)
 
 **Pimote extension**:
