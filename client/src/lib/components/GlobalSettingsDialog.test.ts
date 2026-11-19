@@ -4,6 +4,7 @@ import { mount, tick, unmount } from 'svelte';
 import { drainBodyScrollLockCleanup } from '../../test/bits-ui-cleanup.js';
 import GlobalSettingsDialog from './GlobalSettingsDialog.svelte';
 import { GlobalSettingsStore } from '../stores/global-settings.svelte.js';
+import { ThemeStore } from '../stores/theme-store.svelte.js';
 
 let component: ReturnType<typeof mount> | undefined;
 afterEach(async () => {
@@ -13,7 +14,7 @@ afterEach(async () => {
   await drainBodyScrollLockCleanup();
 });
 
-async function render(viewport: 'desktop' | 'mobile' = 'desktop') {
+async function render(viewport: 'desktop' | 'mobile' = 'desktop', themeStore: ThemeStore | null = null) {
   const store = new GlobalSettingsStore(async (command) => {
     if (command.type === 'get_global_settings')
       return {
@@ -30,7 +31,7 @@ async function render(viewport: 'desktop' | 'mobile' = 'desktop') {
   });
   const target = document.createElement('div');
   document.body.appendChild(target);
-  component = mount(GlobalSettingsDialog, { target, props: { store, viewport, snippets: ['note'] } });
+  component = mount(GlobalSettingsDialog, { target, props: { store, viewport, snippets: ['note'], themeStore } });
   await tick();
   return store;
 }
@@ -69,6 +70,23 @@ describe('Settings dialog rendering', () => {
     await store.select('/config.json');
     await tick();
     expect(document.querySelector('[role="dialog"]')?.textContent).toMatch(/new file|created.*sav|sav.*creat/i);
+  });
+
+  it('constrains the Appearance pane inside the scrollable dialog body', async () => {
+    const themeStore = new ThemeStore({
+      user: 'test',
+      send: async () => ({ id: '1', success: true }),
+      storage: { getItem: () => null, setItem: () => {} },
+      apply: () => {},
+    });
+    const store = await render('mobile', themeStore);
+    await store.loadManifest();
+    button('Appearance').click();
+    await tick();
+    expect(document.querySelector('[role="tabpanel"][aria-label="Appearance"]')).not.toBeNull();
+    const body = document.querySelector<HTMLElement>('[role="dialog"] form > div.min-h-0.flex-1.overflow-hidden');
+    expect(body?.classList.contains('flex')).toBe(true);
+    expect(body?.classList.contains('flex-col')).toBe(true);
   });
 
   it('shows the Tag row only for Markdown tabs', async () => {

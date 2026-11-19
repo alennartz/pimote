@@ -202,7 +202,7 @@
         </div>
       {/if}
 
-      <div class="min-h-0 flex-1 overflow-hidden pb-[env(safe-area-inset-bottom)] sm:pb-0">
+      <div class="flex min-h-0 flex-1 flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] sm:pb-0">
         {#if body}
           {@render body()}
         {:else if editorModule && ready}
