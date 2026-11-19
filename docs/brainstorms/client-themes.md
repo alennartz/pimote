@@ -15,7 +15,7 @@ Add a full theme feature for the Pimote PWA. Users select a named theme that def
 - **Let sessions author themes.** Do not build a visual theme editor or expose the raw theme file as an editable Settings tab. A user can ask any session to create or change the custom theme file. Shipped Pimote documentation must explain the format well enough for an agent to complete the task without extra guidance.
 - **Preview before saving.** The Appearance tab previews a selected full theme on the current device. Save makes it the Pimote user's shared selection; Cancel restores the saved theme. A Follow server default choice clears the user's override. Theme saving waits until the initial user profile reconcile and session adoption complete, so the existing freshness contract needs no extra migration flag.
 - **Share the active choice by Pimote user.** A user's selected theme follows that Pimote username across devices. Pimote usernames are honor-system identities, not authentication. This setting controls appearance only.
-- **Set a server default for new users.** Add a native server setting that names the theme for a Pimote user with no saved choice. Changing the default does not replace existing users' selections. An unavailable saved theme uses the configured server default; an unavailable server default falls back to Pimote Light. Keep unavailable saved IDs unchanged.
+- **Set a server default for new users.** Add a native server setting that names the theme for a Pimote user with no saved choice. Changing the default does not replace existing users' selections. An unavailable saved theme or a custom theme with a missing base uses the configured server default; an unavailable server default falls back to Pimote Light. Keep unavailable saved IDs unchanged.
 - **Do not enforce contrast checks.** Accept syntactically valid theme colors without warnings or contrast-based rejection. Keep schema and parse errors separate from color contrast.
 - **Support themed static reports without changing the host contract.** Keep static-host bundles verbatim. Provide one lightweight same-origin helper script that reads the PWA's cached resolved theme from local storage and updates on cross-tab storage changes. The shipped report guide recommends it for general reports but does not require it or override a requested custom style.
 
@@ -27,7 +27,7 @@ The existing extension host loads modules from `$XDG_CONFIG_HOME/pimote/extensio
 
 ## Open questions for architecture
 
-- Define the user theme-file schema, UI token names, editor-role names, swatch-reference syntax, validation, and behavior when a referenced theme disappears.
+- Define the user theme-file schema, UI token names, editor-role names, swatch-reference syntax, and validation.
 - Map the agreed language-neutral editor roles across CodeMirror, Highlight.js, and the ANSI palette.
 - Apply a selection without a flash on startup, and decide how browser chrome and installed-PWA colors respond.
 - Define the shared static-report helper's public CSS variables and fallback when no cached theme snapshot exists.
