@@ -2,17 +2,25 @@
 
 ## Overview
 
-Pimote is a Node.js server and SvelteKit PWA for using pi coding-agent sessions remotely. Server and web client share a TypeScript WebSocket protocol; an independent Kotlin Android client mirrors the subset it consumes. Pi extensions provide voice calls, static hosting, file downloads, and panel cards.
+Pimote is a Node.js server and SvelteKit PWA for remote pi sessions, with a Kotlin Android client for voice-first use. The server embeds pi `AgentSession`s and serves both clients over WebSocket. `shared/` defines the TypeScript wire protocol; extensions use `@pimote/sdk`.
 
 ```mermaid
 graph LR
-  Protocol --> Server
-  Protocol --> Web_Client[Web Client]
-  Protocol -.mirror.-> Android_Client[Android Client]
-  Web_Client --> Server
-  Android_Client --> Server
+  Server --> Protocol
+  Server --> SDK
   Server --> Agent_Extensions[Agent Extensions]
-  Agent_Extensions --> SDK
+  Web_Client[Web Client] --> Server
+  Web_Client --> Protocol
+  Android_Client[Android Client] --> Server
+  Android_Client -.mirrors.-> Protocol
+  Agent_Extensions --> Server
+  Agent_Extensions --> Protocol
+  Protocol --> SDK
+  Development_Tooling[Development Tooling] --> Server
+  Development_Tooling --> Web_Client
+  Development_Tooling --> Agent_Extensions
+  Development_Tooling --> SDK
+  Development_Tooling --> Android_Client
 ```
 
 ### Key Flows
@@ -39,11 +47,11 @@ sequenceDiagram
 
 ### Protocol
 
-Defines the TypeScript WebSocket contract shared by server and web client.
+Defines the TypeScript wire contract for the server and web client.
 
-**Responsibilities:** wire commands and events, request/response envelopes, session and message data including assistant/tool-result `PimoteUsage`, streaming usage snapshots, and `SessionMeta.usageBreakdown`, observer/archive lifecycle vocabulary (`open_session` error `session_archived`, `session_archived` event, `archived` close reason), ownership hard-cut (`isOwnedByMe`, open `force`, `session_owned`, session `displaced`, and `remoteSessions` removed), `extension_ui_resolved` and `session_settings_changed`, prompt dispatch outcomes (`clientMessageId`, `PromptOutcome` `started`/`queued`/`handled`, stamped user echoes on `message_start`/`message_end` — DR-076), mid-run `full_resync` partials (`streamingMessage`, `runningToolCallIds`), chunked full-resync start, JSON-message, branch-ID, active-operation, running-tool, and in-flight-message events, 16ms batched live stream envelopes, content-addressed image refs with legacy native data-URL command support, and metadata/commands on lifecycle and open responses, `messageEntryIds` on every final `agent_end`, native bash metadata, panels and downloads, voice call vocabulary, provider login steps, tree navigation (`navigate_tree`, `get_tree`, `set_tree_label`) with message-only `conversationText` and the `fork` command for separate-session branching, root-scoped subagent hierarchy and stop commands, typed operation content with tool/custom-entry provenance and stable transcript placement, child-view open/close commands with applied client cursors, child command payloads derived from root commands, child queue editing, shared transcript/recovery/resync frames inside a child address envelope, child transcript replay or snapshots at an independent view cursor, the `subagent_view_unavailable` rejection, and per-user open views in `user_sessions_changed`, update availability, folder discovery and curation vocabulary (windowed listings, order tokens, epochs, delta syncs, FolderInfo hub facts and member representations/checkouts, `RepoInfo.worktreePath`, the optional hub-creation representation, and the `disband_hub` worktree-hub cleanup command)
+**Responsibilities:** commands and typed responses, session and folder contracts, lifecycle and live events, replay and resync envelopes, transcript, usage and image data, subagent views, extension UI, panels and downloads, voice, login, push, settings and update vocabulary
 
-**Dependencies:** none; Android maintains a hand-written mirror of the subset it consumes and ignores the new subagent events through its unknown-event filter
+**Dependencies:** SDK for canonical subagent, panel and folder types. Android mirrors its consumed wire subset by hand and skips unknown event types.
 
 **Files:**
 
@@ -53,11 +61,11 @@ Defines the TypeScript WebSocket contract shared by server and web client.
 
 Hosts pi `AgentSession` instances and exposes the HTTP and WebSocket API.
 
-**Responsibilities:** CLI and configuration (roots, managerRoot, validated native-config writes, dynamic settings/model/idle/buffer policy, capability broadcasts, VAPID), global Pimote extension host (XDG modules and user-package pimote.extensions entries with serialized lifecycle), global Settings catalog (effective Pi/Pimote files, path resolution, labels, snapshots), HTTP and PWA serving, content-addressed image upload/retrieval with a 64MiB memory LRU and XDG disk cache, WebSocket command routing and envelopes (permessage-deflate with context takeover disabled), AgentSession slots with replay buffers and per-client observers, per-root subagent provider discovery, root-scoped stop through provider owner control, and `SubagentHost` attachments outside root session slots, source-owned transcript projection that suppresses declared native tool/custom entries and rehydrates persisted results, `SessionSurface` instances with shared native subscriptions, transcript mapping, input dispatch, queue ownership, abort recovery, bash admission, settings, and context snapshots for roots and children, independent event buffers and replay cursors, shared `SessionEventGate` attach ordering and bounded snapshot encoding in `session-resync.ts`, one child surface per agent path with client observers so a shared child has one transcript, one replay buffer, and one lease, an observer-scoped borrowed lease whose last detach releases it (and with it the parent idle hold) while keeping children out of root slots, archive state, folder counts, and root idle lifecycle, open child views in user profiles (linked on open, unlinked on close, cascaded with their root, dropped at boot), cursor-aware event fan-out and observer attach/detach, 16ms streaming-event micro-batching (max 128) with lifecycle flush ordering, single-serialization observer fan-out, chunked large full-resync frames with client-assembled message and branch-ID arrays, wall-clock-based replay cursors so a cursor from an earlier buffer resyncs (DR-077), prompt/steer/follow-up dispatch through pi's preflight with reported outcomes and stamped echoes (DR-076), queue-ownership ledger (exact-text then oldest-same-kind matching, per-entry abort attribution, drafts held for offline senders until their next attach, with child interaction state retained across view closure for the same native runtime), settings-watch extension fanning out model and thinking changes from any source, tree snapshots shared by `get_tree` and `/tree` with message-only `conversationText`, tree navigation and labels plus the `fork` wire command for separate-session branching (DR-084), session open/archive/close lifecycle, per-session archive/open/resume serialization, and archived-open rejection, observer-aware idle reaping and folder-scoped external-process conflict checks, voice-call-holder-aware reaping, `call_bind` auto-reopen of dormant record-backed sessions (holder, not observer), SDK-to-wire event mapping with validated assistant/tool-result usage snapshots for live events and resync, content-addressed image mapping for transcript and tool-result images, metadata/command piggyback on open responses and lifecycle events, indexed attach-window snapshot deduplication, Pi's per-session codemode, tool-search, and MCP extension registration with Pi settings and MCP-configured exposure, automatic continuation of sessions that load after an interruption (`session-resume.ts`, exempting the abort pimote's own shutdown records), Pi-authoritative session cost plus persisted category rollup (`session-usage.ts`), file edit and file get/put service (tilde expansion, atomic symlink-preserving writes), `fd`-backed file-reference autocomplete, session records, summaries, metadata, and lifetime cost, sparse folder-model discovery (marker-aware code/persona classification, visit budget with partial-tree fallback), repo index over the folder model (TTL caches, stale-while-revalidate, bounded git-status probes including nested worktree checkouts), folder listing (windows, monotonic epochs, reconciled deltas, two-tier search with an archive-gated session tier, hub member inventory over symlinks and Git-verified nested worktrees), curated folder registry (favorites, archive state, tags), representation-aware registry rows and mutations, and hub materialization in `folder-sources/materialize.ts` (symlink members or Git-verified detached worktrees, persona symlinks in either mode, the `.pimote-hub.json` worktree-mode marker) with managed AGENTS.md blocks (shape, not creator ownership), worktree checkout status enrichment while retaining canonical source identity, guarded worktree-only disband (idle-observerless-session close plus clean-state and detached-`HEAD` reachability checks over the `hub-worktrees.ts` Git adapter and the `hub-activity.ts` fail-closed activity port — DR-085; no branch operations), shared folder seeding (`folder-seeding.ts` renderers for code and persona AGENTS.md plus persona memory stub), source-only FolderSource registration through the Pimote host, shared code-folder creation routing (`folder-create.ts`, wire and manager alike), manager extension lifecycle and its nine-tool folder/persona/session surface (kind-parameterized creation with the optional `memberRepresentation`, curation, batched hub membership, guarded `pimote_disband_hub` for worktree hubs, explicit resume-by-session-ID; filtered-first reads — find_folders/find_sessions; find_folders queries folder text only (session content search lives in find_sessions — DR-075 revising DR-074), with nature, hub, includeArchived, no freshness flag or limit; 16KB spill guard over the find tools' rows into JSONL files the agent greps/jqs — DR-071; turn-abort signal raced against the shared discovery walk and session cache fills — DR-072) plus the `pimote-docs` system-prompt section (`server/src/pimote-docs/`), provider OAuth login orchestration, web push, TTL-cached npm update checks, shared utilities (paths, branding, version, tool-result idiom — DR-073, `sdk-twins` Protocol/SDK parity assertions)
+**Responsibilities:** CLI and startup, validated runtime configuration, Pimote extension host and Settings catalog, HTTP/PWA and WebSocket APIs, pi session lifecycle and wire projection, observer delivery and replay/resync, subagent views, folder discovery/indexing/listing/curation, guarded hub/worktree management, manager tools, session records and metadata, image/file delivery, provider login, web push and update checks
 
-Client auth is external (Cloudflare Access); the server implements no auth.
+The server has no client-auth layer; deployment supplies access control.
 
-**Dependencies:** Protocol for wire types; Agent Extensions for session tools and resources; `@pimote/sdk` for source-only folder types, the Pimote extension factory types, the activity reap-guard value import (`askActivity`), and the typed subagent provider seam
+**Dependencies:** Protocol for wire types, SDK for folder and extension contracts, Agent Extensions for per-session features
 
 **Files:**
 
@@ -69,13 +77,13 @@ Client auth is external (Cloudflare Access); the server implements no auth.
 
 ### Agent Extensions
 
-In-process pi extensions for voice calls, static bundles, and one-shot file downloads.
+Pi session extensions for voice, static hosting and one-shot downloads.
 
-**Responsibilities:** voice call state machine (pure reducer with lifecycle/streaming/walkback sub-machines plus imperative shell), speechmux WebSocket bridge and call-bind dispatch, single call holder per session with targeted forced-transfer notification, FIFO utterance queue with settlement-aware interruption, identity-based walk-back context rewrite, interpreter prompt riding a named pi prompt section, static-host registry, store, HTTP handler, tools, and static-report guidance listed in the `pimote-docs` section, file-download offer registry and HTTP tools, panel and EventBus integration
+**Responsibilities:** voice-call orchestration and speech bridge, static-host publishing, file-download offers, extension prompts, panel and EventBus integration
 
-`voice-orchestrator.ts`/`voice-orchestrator-boot.ts` and `session-json-store.ts` sit under the Server glob but serve this module.
+The server-root voice orchestrator and shared JSON store bridge these extensions to server lifecycle and persistence.
 
-**Dependencies:** Server for lifecycle, routes, and session EventBus; Protocol for client events; SDK panels for static-host cards; pi SDK extension APIs
+**Dependencies:** Server for session lifecycle, EventBus and HTTP integration, Protocol for wire payloads, pi SDK extension APIs
 
 **Files:**
 
@@ -85,31 +93,27 @@ In-process pi extensions for voice calls, static bundles, and one-shot file down
 - `server/src/static-host/**`
 - `server/src/pimote-docs/**`
 - `server/src/file-download/**`
-- `server/src/session-json-store.ts` (shared persistence seam)
+- `server/src/session-json-store.ts`
 
 ### Web Client
 
-Installable SvelteKit PWA for browsing, controlling, and rendering remote pi sessions.
+Installable SvelteKit PWA for browsing, controlling and rendering remote pi sessions.
 
-**Responsibilities:** WebSocket reconnect and request/response, ordered event-batch dispatch and one atomic chunk assembler for root and addressed child full-resync snapshots, image upload and content-addressed image rendering, duplicate-tab client-id guard (BroadcastChannel), global Settings store/dialog (manifest snapshots, lazy reads, per-tab drafts, native capability snippets), multi-observer session registry with URL-synced navigation, id-keyed optimistic entries settled by prompt outcome or stamped echo (DR-076), branch-tree snapshots and cache invalidation (`BranchTreeStore`), transcript redo and sticky navigation, branch exploration (`BranchExplorer`), conversation find controls, mid-run resync of the in-flight message and running tools, archived-session restore cleanup while retaining tracked transcripts, streamed conversation and tool rendering, assistant-row cost projection from assistant and correlated tool-result usage (`assistant-row-usage.ts`), active-view terminal partial-usage fallback, reusable cost breakdown disclosures for transcript and session totals (`cost-disclosure.ts`, `CostBreakdownPopover.svelte`, local popover wrappers), observer-local settings updates, composer bang-command parsing with dedicated bash execution UI, explicit abort with draft restore, manager input as a toolbar box (search/manager toggle, prior-manager-session dropdown) submitting over ordinary persisted sessions, single-column dashboard landing with the manager toolbar and windowed virtualized folder list (TanStack variable-height rows, epoch-guarded delta sync, server-authoritative debounced search, live subset re-sort), four-kind folder-creation wizard (code/persona folders and hubs, member selection, symlinks or detached worktrees, seeded instructions), hub create, member management with representation and checkout-path display, and guarded worktree-hub disband, favorites and archive/restore, folder-scoped config-file editor (AGENTS.md load/save, capability-fed tag snippets), home-only global Settings button/dialog and agent-initiated editor requests sharing one fullscreen dialog shell (`CodeEditorDialog`: mobile header save/close, lazy-loaded CodeMirror with retry-on-reopen failure state), composer `@`-file autocomplete, extension dialogs with cross-observer resolution (queue reset on session restore, deduped re-sends, per-request editor draft preservation), subagent hierarchy with compact command and usage details, details-only child-view and teardown controls, root-scoped interrupt action, one flat conversation-state shape, transcript reducer, composer, command-response reducer, draft recovery, bash completion, cost tracking, settings, autocomplete, and runtime-ID-keyed branch tree for roots and children, cursor-driven child reattachments on every reconnect with a client-side close for an unavailable view, source-anchored semantic transcript blocks with stable tool/custom-entry placement across replay and resync, and SDK panels, downloads inbox and push, browser voice calls with TTS, provider login, update banner and ambient status, PWA service worker
+**Responsibilities:** WebSocket connection and session registry, transcript streaming and resync, root and child views, composer and command dispatch, dashboard and manager workflows, settings and file editors, conversation and tree navigation, cost and usage views, extension UI and panels, voice calls, downloads and push, provider login, PWA updates and offline behavior
 
-**Dependencies:** Protocol for wire types; Server's HTTP/WebSocket API
+**Dependencies:** Protocol for wire types, Server's HTTP and WebSocket API
 
 **Files:**
 
-- `client/src/**` (notably `lib/components/Dashboard.svelte`, `lib/components/FolderList.svelte`, `lib/components/HomeToolbar.svelte`, `lib/components/MessageList.svelte`, `lib/components/BranchExplorer.svelte`, `lib/components/MessageActionMenu.svelte`, `lib/components/ConversationFindBar.svelte`, `lib/components/StickyUserPreview.svelte`, `lib/branch-tree.ts`, `lib/conversation-find.ts`, `lib/transcript-navigation.ts`, `lib/components/BashExecution.svelte`, `lib/stores/branch-tree-store.svelte.ts`, `lib/stores/folder-store.svelte.ts`, `lib/stores/connection.svelte.ts`, `lib/stores/session-registry.svelte.ts`, `lib/session-route.ts`, `lib/bash-command.ts`, `lib/manager-composer.ts`)
+- `client/src/**`
 
 ### SDK
 
-Published `@pimote/sdk` extensibility package that pi extensions import to talk to pimote.
+Published `@pimote/sdk` package for session and process-global extensions.
 
-**Responsibilities:** card types, EventBus panel detection, namespace-scoped panel handles, typed per-session subagent topology and operation-presentation provider contract, child leases, and native tool/custom-entry placement types at `@pimote/sdk/subagents`, background-activity reap-guard seam (`@pimote/sdk/activity`: synchronous EventBus poll with `answerActivity`/`askActivity` twins, consumed by the server's idle reaper — DR-054), Pimote extension factory and source-only folder discovery seam (`@pimote/sdk/pimote` and `@pimote/sdk/folders`, awaited `onFolderOpen`), RepoInfo twin of the wire type including optional `worktreePath`; core Pimote owns folder creation
+**Responsibilities:** panel card types and handles, background-activity polling, subagent provider/topology/lease contracts, folder-source types, process-global Pimote extension context
 
-The server's `sdk-twins.ts` asserts compile-time equality between SDK and Protocol types.
-
-The npm package is the authoring surface for extension developers. The app bundles its own copies (`bundleDependencies`) of the SDK and pinned pi runtime, so the packed install never resolves them from the consumer's tree. The server's Pimote extension host pins user-module `@pimote/sdk` imports to that bundled copy. Folder sources are contributed through the Pimote host; folder creation remains core behavior.
-
-**Dependencies:** pi SDK extension APIs
+**Dependencies:** pi coding-agent SDK types
 
 **Files:**
 
@@ -117,11 +121,11 @@ The npm package is the authoring surface for extension developers. The app bundl
 
 ### Android Client
 
-Native Kotlin voice-first peer that connects to Pimote through Android's calling surfaces.
+Native Kotlin client for voice-first access and Android Auto.
 
-**Responsibilities:** WebSocket/session synchronization, self-managed Telecom calls, WebRTC audio, contacts sync, Assistant shortcuts, Android Auto car UI, Compose UI, settings and authentication; pinned Docker build image and host-side wireless ADB selection and install
+**Responsibilities:** WebSocket session and folder sync, Telecom/WebRTC calls, Contacts and Assistant integration, Android Auto UI, authentication, settings and Compose screens
 
-**Dependencies:** Server's WebSocket API; Protocol mirror (hard-cut removes session ownership fields, `open_session.force`, and session-level `displaced`, and adds archived-session close vocabulary; Android must update in lockstep; windowed `list_folders` and `folders_changed` also have no compatibility shim; push metadata `projectName` is deliberate wire vocabulary); Android Telecom, Contacts, Car App, and WebRTC APIs
+**Dependencies:** Server's WebSocket API and the consumed Protocol subset mirrored by hand, Android Telecom, Contacts, Car App and WebRTC APIs
 
 **Files:**
 
@@ -129,11 +133,11 @@ Native Kotlin voice-first peer that connects to Pimote through Android's calling
 
 ### Development Tooling
 
-Packages, boots, tests, and manually exercises the product surfaces.
+Builds, packages, tests, installs and manually exercises Pimote's npm and Android workspaces.
 
-**Responsibilities:** npm CLI entry, install/service/patch setup scripts, session archival and voice diagnostics, permanent manual-test plan (`tools/manual-test/PLAN.md`, journeys 12–15; hub-member coverage stays in journey 12, and journey 15 documents live subagent views) and driver catalog (`tools/manual-test/README.md`), two-observer smoke (`tools/manual-test/session-observers-smoke/session-observers-smoke.mjs`: transcript/send fan-out, dialog resolution, archive/restore, voice holder, and external-process conflict), end-to-end dashboard/folders/hubs smoke against a fabricated multi-root tree (wizard creation, member management, archive/restore; session-surface polling with mount-latency logging and client-state timeout dumps), hub representation coverage in `tools/manual-test/project-management-smoke/project-management-smoke.mjs` through dashboard and wire mutations; `tools/manual-test/manager-tools-smoke/manager-tools-smoke.mjs` checks nine-tool registration and manager parity through the real registry and Git adapter, including generated-content rejection, unrelated-file preservation, and partial-disband retry; windowed folder-paging smoke over a ~250-row fixture, journey smokes (Global Settings home button/dialog with folder-row AGENTS.md editing retained, `@`-file syntax, per-assistant and complete-session cost disclosures with category accounting, streaming code highlight, static host/PWA, downloads, provider login), deterministic update-notification harness, shared smoke harness lib (`tools/manual-test/lib/`: report, sandbox, ws-probe, browser driver, session-dir fixtures), extension UI test fixture, release/publish CI and Docker-based Android build targets
+**Responsibilities:** npm build/package/release and dependency-patch workflows, install and service scripts, test configuration, manual browser/API smoke drivers, Docker-based Android builds and device tools
 
-**Dependencies:** Server, Web Client, Agent Extensions, and Android Client as applicable
+**Dependencies:** Server, Web Client, Agent Extensions, SDK and Android Client
 
 **Files:**
 
@@ -141,10 +145,12 @@ Packages, boots, tests, and manually exercises the product surfaces.
 - `scripts/**`
 - `tools/**`
 - `.pi/**`
-- `Makefile`
-- `patches/**`
 - `.github/workflows/**`
 - `.husky/**`
+- `patches/**`
+- `client/*.config.{js,ts}`
+- `eslint.config.js`
+- `Makefile`
 - `package.json`
 - `server/vitest.config.ts`
 - `server/test-setup.ts`
