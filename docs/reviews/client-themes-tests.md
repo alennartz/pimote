@@ -14,7 +14,7 @@ The review added coverage for catalog validation, theme propagation, rendering, 
 
 - **Category:** missing coverage
 - **Severity:** critical
-- **Location:** `server/src/ws-themes.test.ts:125-198`
+- **Location:** `server/src/ws-themes.test.ts:125-189`
 - **Status:** resolved
 
 The original tests bypassed the WebSocket transport and did not verify shared selections or catalog isolation. The user approved tests for catalog requests, revision events, same-user propagation, other-user isolation, and the initial connect payload.
