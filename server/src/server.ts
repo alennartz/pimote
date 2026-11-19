@@ -291,7 +291,6 @@ export async function createServer(
     ws.on('error', (err) => {
       console.error('[pimote] WebSocket error:', err);
     });
-    heartbeat.track(ws);
 
     let url: URL;
     try {
@@ -302,6 +301,19 @@ export async function createServer(
     }
     const clientId = url.searchParams.get('clientId') ?? crypto.randomUUID();
     const user = resolveUserName(url.searchParams.get('user'));
+    type InboundFrameType = 'pong' | 'message' | 'ping';
+    const inboundState: { type: InboundFrameType | null; at: number | null } = { type: null, at: null };
+    const recordInboundFrame = (type: InboundFrameType): void => {
+      inboundState.type = type;
+      inboundState.at = Date.now();
+    };
+    ws.on('pong', () => recordInboundFrame('pong'));
+    ws.on('ping', () => recordInboundFrame('ping'));
+    heartbeat.track(ws, (details) => {
+      console.warn(
+        `[pimote] WebSocket heartbeat termination (clientId=${clientId}, consecutiveMisses=${details.consecutiveMisses}, lastInboundType=${details.lastInboundType ?? 'none'}, lastInboundAgeMs=${details.lastInboundAgeMs ?? 'none'})`,
+      );
+    });
     console.log(`[pimote] WebSocket client connected (clientId=${clientId}, user=${user})`);
 
     // Version check — if the client's build version doesn't match the server's,
@@ -356,13 +368,17 @@ export async function createServer(
     }
 
     ws.on('message', (data) => {
+      recordInboundFrame('message');
       handler.handleMessage(data.toString()).catch((err) => {
         console.error('[pimote] Unhandled error in message handler:', err);
       });
     });
 
-    ws.on('close', () => {
-      console.log(`[pimote] WebSocket client disconnected (clientId=${clientId})`);
+    ws.on('close', (code, reason) => {
+      const lastInboundAgeMs = inboundState.at === null ? null : Math.max(0, Date.now() - inboundState.at);
+      console.log(
+        `[pimote] WebSocket client disconnected (clientId=${clientId}, code=${code}, reason=${JSON.stringify(reason.toString('utf8'))}, lastInboundType=${inboundState.type ?? 'none'}, lastInboundAgeMs=${lastInboundAgeMs ?? 'none'})`,
+      );
       // Only clean up if this handler is still the current entry.
       // If a new handler replaced us (stale-connection reconnect), the new
       // handler owns the sessions — don't orphan them.

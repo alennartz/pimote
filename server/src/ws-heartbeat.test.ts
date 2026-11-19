@@ -150,6 +150,29 @@ describe('startWebSocketHeartbeat', () => {
     heartbeat.stop();
   });
 
+  it('reports the last inbound frame when a heartbeat terminates a socket', () => {
+    const socket = createFakeSocket();
+    const onTimeout = vi.fn();
+    const heartbeat = startWebSocketHeartbeat({ clients: clientSet(socket) }, 20_000);
+    heartbeat.track(socket, onTimeout);
+
+    vi.advanceTimersByTime(20_000); // ping 1
+    vi.advanceTimersByTime(5_000); // first missed window
+    socket.message(); // reset the strike and record inbound activity
+    vi.advanceTimersByTime(15_000); // ping 2
+    vi.advanceTimersByTime(5_000); // first miss after the message
+    vi.advanceTimersByTime(20_000); // ping 3
+    vi.advanceTimersByTime(5_000); // second consecutive miss
+
+    expect(socket.terminated).toBe(true);
+    expect(onTimeout).toHaveBeenCalledWith({
+      consecutiveMisses: 2,
+      lastInboundType: 'message',
+      lastInboundAgeMs: 40_000,
+    });
+    heartbeat.stop();
+  });
+
   it('stops ticking and clears pending pong timeouts after stop()', () => {
     const socket = createFakeSocket();
     const heartbeat = startWebSocketHeartbeat({ clients: clientSet(socket) }, 20_000);

@@ -328,9 +328,11 @@ describe('createServer — server_capabilities advertisement', () => {
 describe('createServer — malformed WebSocket frames', () => {
   let server: PimoteServer;
   let error: ReturnType<typeof vi.spyOn>;
+  let log: ReturnType<typeof vi.spyOn>;
 
   afterEach(async () => {
     error?.mockRestore();
+    log?.mockRestore();
     await server?.close();
   });
 
@@ -413,6 +415,42 @@ describe('createServer — malformed WebSocket frames', () => {
     await awaitOpen(healthy);
     await capabilities;
     healthy.close();
+  });
+
+  it('logs the close code, reason, and last inbound frame', async () => {
+    log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    server = await createServer(
+      { roots: [], managerRoot: '/tmp/manager-root', idleTimeout: 60_000, bufferSize: 10, port: 0 },
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      undefined,
+      new InMemoryStaticHostRegistry(),
+      makeDownloads(),
+    );
+    await server.start(0);
+    const port = (server.httpServer.address() as AddressInfo).port;
+    const clientId = 'close-diagnostic-client';
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?clientId=${clientId}`);
+    await awaitOpen(ws);
+
+    const pong = new Promise<void>((resolve) => ws.once('pong', resolve));
+    ws.ping();
+    await pong;
+    const close = awaitClose(ws);
+    ws.close(4001, 'diagnostic');
+    await expect(close).resolves.toBe(4001);
+
+    await vi.waitFor(() => {
+      const disconnect = log.mock.calls
+        .map(([message]) => String(message))
+        .find((message) => message.includes(`clientId=${clientId}`) && message.includes('WebSocket client disconnected'));
+      expect(disconnect).toContain('code=4001');
+      expect(disconnect).toContain('reason="diagnostic"');
+      expect(disconnect).toContain('lastInboundType=ping');
+      expect(disconnect).toMatch(/lastInboundAgeMs=\d+/);
+    });
   });
 
   it('installs the error listener before the version-mismatch early return', async () => {

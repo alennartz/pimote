@@ -5,9 +5,17 @@ export interface HeartbeatServer {
   clients: Iterable<WebSocket>;
 }
 
+export interface HeartbeatTimeoutDetails {
+  consecutiveMisses: number;
+  lastInboundType: 'pong' | 'message' | 'ping' | null;
+  lastInboundAgeMs: number | null;
+}
+
+type HeartbeatTimeoutListener = (details: HeartbeatTimeoutDetails) => void;
+
 export interface WebSocketHeartbeat {
-  /** Attach liveness tracking to a newly connected socket. */
-  track(ws: WebSocket): void;
+  /** Attach liveness tracking and optional diagnostics to a new socket. */
+  track(ws: WebSocket, onTimeout?: HeartbeatTimeoutListener): void;
   /** Stop the timer — server shutdown. */
   stop(): void;
 }
@@ -37,9 +45,16 @@ const MAX_MISSED_PINGS = 2;
  * liveness evidence, and on paths where a proxy answers pings itself, it is
  * the only one.
  */
+interface ClientLiveness {
+  missedPings: number;
+  lastInboundType: HeartbeatTimeoutDetails['lastInboundType'];
+  lastInboundAt: number | null;
+  onTimeout?: HeartbeatTimeoutListener;
+}
+
 export function startWebSocketHeartbeat(server: HeartbeatServer, intervalMs: number): WebSocketHeartbeat {
   const pendingPongTimers = new Map<WebSocket, ReturnType<typeof setTimeout>>();
-  const missedPings = new Map<WebSocket, number>();
+  const clientLiveness = new Map<WebSocket, ClientLiveness>();
 
   const clearPendingPongTimer = (ws: WebSocket): void => {
     const timer = pendingPongTimers.get(ws);
@@ -50,11 +65,16 @@ export function startWebSocketHeartbeat(server: HeartbeatServer, intervalMs: num
 
   const forget = (ws: WebSocket): void => {
     clearPendingPongTimer(ws);
-    missedPings.delete(ws);
+    clientLiveness.delete(ws);
   };
 
-  const sawLife = (ws: WebSocket): void => {
-    missedPings.set(ws, 0);
+  const sawLife = (ws: WebSocket, type: NonNullable<HeartbeatTimeoutDetails['lastInboundType']>): void => {
+    const liveness = clientLiveness.get(ws);
+    if (liveness) {
+      liveness.missedPings = 0;
+      liveness.lastInboundType = type;
+      liveness.lastInboundAt = Date.now();
+    }
     clearPendingPongTimer(ws);
   };
 
@@ -63,9 +83,21 @@ export function startWebSocketHeartbeat(server: HeartbeatServer, intervalMs: num
       const pongTimer = setTimeout(() => {
         if (pendingPongTimers.get(client) !== pongTimer) return;
         pendingPongTimers.delete(client);
-        const missed = (missedPings.get(client) ?? 0) + 1;
-        missedPings.set(client, missed);
-        if (missed >= MAX_MISSED_PINGS) client.terminate();
+        const liveness = clientLiveness.get(client);
+        const missed = (liveness?.missedPings ?? 0) + 1;
+        if (liveness) liveness.missedPings = missed;
+        if (missed >= MAX_MISSED_PINGS) {
+          const details: HeartbeatTimeoutDetails = {
+            consecutiveMisses: missed,
+            lastInboundType: liveness?.lastInboundType ?? null,
+            lastInboundAgeMs: liveness?.lastInboundAt == null ? null : Math.max(0, Date.now() - liveness.lastInboundAt),
+          };
+          try {
+            liveness?.onTimeout?.(details);
+          } finally {
+            client.terminate();
+          }
+        }
       }, PONG_TIMEOUT_MS);
       pongTimer.unref?.();
       clearPendingPongTimer(client);
@@ -76,18 +108,23 @@ export function startWebSocketHeartbeat(server: HeartbeatServer, intervalMs: num
   // Never holds the process open by itself; absent under some timer mocks.
   timer.unref?.();
   return {
-    track(ws) {
-      missedPings.set(ws, 0);
-      ws.on('pong', () => sawLife(ws));
-      ws.on('message', () => sawLife(ws));
-      ws.on('ping', () => sawLife(ws));
+    track(ws, onTimeout) {
+      clientLiveness.set(ws, {
+        missedPings: 0,
+        lastInboundType: null,
+        lastInboundAt: null,
+        onTimeout,
+      });
+      ws.on('pong', () => sawLife(ws, 'pong'));
+      ws.on('message', () => sawLife(ws, 'message'));
+      ws.on('ping', () => sawLife(ws, 'ping'));
       ws.on('close', () => forget(ws));
     },
     stop() {
       clearInterval(timer);
       for (const timer of pendingPongTimers.values()) clearTimeout(timer);
       pendingPongTimers.clear();
-      missedPings.clear();
+      clientLiveness.clear();
     },
   };
 }

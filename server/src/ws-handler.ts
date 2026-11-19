@@ -159,6 +159,7 @@ export function takeOverClientSlot(clientRegistry: ClientRegistry, clientId: str
   const existing = clientRegistry.get(clientId);
   clientRegistry.set(clientId, handler);
   if (existing) {
+    console.log(`[pimote] WebSocket client takeover closing previous connection (clientId=${clientId})`);
     existing.cleanup();
     existing.closeWebSocket();
   }
