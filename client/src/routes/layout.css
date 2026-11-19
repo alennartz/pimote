@@ -41,6 +41,36 @@
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
   --status-active: var(--chart-2);
+  --status-streaming: oklch(0.52 0.155 149.2);
+  --status-connected: oklch(0.52 0.155 149.2);
+  --status-error: oklch(0.54 0.18 25.7);
+  --status-reconnecting: oklch(0.48 0.15 70.6);
+
+  /* Pimote surface ladder — light equivalents of the dark chat chrome. */
+  --surface-sunken: oklch(0.95 0.015 258);
+  --surface-raised: oklch(0.975 0.012 258);
+  --surface-subtle: oklch(0.965 0.01 258);
+  --surface-hover: oklch(0.93 0.025 259);
+
+  /* Pimote callout families — each theme owns the same semantic slots. */
+  --error-accent: oklch(0.57 0.19 24);
+  --error-surface: oklch(0.95 0.04 24);
+  --error-foreground: oklch(0.48 0.16 24);
+  --error-avatar-fg: oklch(0.97 0.03 22);
+  --skill-accent: oklch(0.48 0.12 170);
+  --skill-surface: oklch(0.95 0.025 172);
+  --skill-foreground: oklch(0.42 0.125 172);
+  --skill-foreground-hover: oklch(0.36 0.12 170);
+  --bash-accent: oklch(0.52 0.14 175);
+  --custom-accent: oklch(0.5 0.1 280);
+  --custom-surface: oklch(0.95 0.02 270);
+  --custom-foreground: oklch(0.44 0.1 280);
+  --custom-foreground-hover: oklch(0.36 0.1 280);
+  --link: oklch(0.5 0.15 250);
+  --link-hover: oklch(0.42 0.15 250);
+  --avatar-bg: oklch(0.84 0.08 250);
+  --avatar-fg: oklch(0.35 0.05 250);
+  --shadow-color: oklch(0 0 0 / 0.18);
 }
 
 .dark {
@@ -194,6 +224,9 @@
     @apply font-sans;
     height: 100%;
     overflow: hidden;
+    color-scheme: light;
+  }
+  html.dark {
     color-scheme: dark;
   }
   body {

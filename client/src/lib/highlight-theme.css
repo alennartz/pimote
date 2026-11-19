@@ -1,11 +1,47 @@
 /*
- * GitHub Dark Dimmed — adapted for pimote
- * Based on highlight.js github-dark-dimmed theme
+ * GitHub syntax colors for both Pimote palettes.
+ * The document's .dark class swaps the variables without changing markup.
  */
 
+:root {
+  --syntax-fg: #24292f;
+  --syntax-bg: #f6f8fa;
+  --syntax-keyword: #cf222e;
+  --syntax-title: #8250df;
+  --syntax-attr: #0550ae;
+  --syntax-string: #0a3069;
+  --syntax-built-in: #953800;
+  --syntax-comment: #6e7781;
+  --syntax-name: #116329;
+  --syntax-section: #0550ae;
+  --syntax-bullet: #953800;
+  --syntax-addition-fg: #116329;
+  --syntax-addition-bg: #dafbe1;
+  --syntax-deletion-fg: #82071e;
+  --syntax-deletion-bg: #ffebe9;
+}
+
+.dark {
+  --syntax-fg: #adbac7;
+  --syntax-bg: oklch(0.16 0.03 258);
+  --syntax-keyword: #f47067;
+  --syntax-title: #dcbdfb;
+  --syntax-attr: #6cb6ff;
+  --syntax-string: #96d0ff;
+  --syntax-built-in: #f69d50;
+  --syntax-comment: #768390;
+  --syntax-name: #8ddb8c;
+  --syntax-section: #316dca;
+  --syntax-bullet: #eac55f;
+  --syntax-addition-fg: #b4f1b4;
+  --syntax-addition-bg: #1b4721;
+  --syntax-deletion-fg: #ffd8d3;
+  --syntax-deletion-bg: #78191b;
+}
+
 .hljs {
-  color: #adbac7;
-  background: oklch(0.16 0.03 258);
+  color: var(--syntax-fg);
+  background: var(--syntax-bg);
 }
 
 .hljs-doctag,
@@ -15,14 +51,14 @@
 .hljs-template-variable,
 .hljs-type,
 .hljs-variable.language_ {
-  color: #f47067;
+  color: var(--syntax-keyword);
 }
 
 .hljs-title,
 .hljs-title.class_,
 .hljs-title.class_.inherited__,
 .hljs-title.function_ {
-  color: #dcbdfb;
+  color: var(--syntax-title);
 }
 
 .hljs-attr,
@@ -35,62 +71,62 @@
 .hljs-selector-class,
 .hljs-selector-id,
 .hljs-variable {
-  color: #6cb6ff;
+  color: var(--syntax-attr);
 }
 
 .hljs-meta .hljs-string,
 .hljs-regexp,
 .hljs-string {
-  color: #96d0ff;
+  color: var(--syntax-string);
 }
 
 .hljs-built_in,
 .hljs-symbol {
-  color: #f69d50;
+  color: var(--syntax-built-in);
 }
 
 .hljs-code,
 .hljs-comment,
 .hljs-formula {
-  color: #768390;
+  color: var(--syntax-comment);
 }
 
 .hljs-name,
 .hljs-quote,
 .hljs-selector-pseudo,
 .hljs-selector-tag {
-  color: #8ddb8c;
+  color: var(--syntax-name);
 }
 
 .hljs-subst {
-  color: #adbac7;
+  color: var(--syntax-fg);
 }
 
 .hljs-section {
-  color: #316dca;
+  color: var(--syntax-section);
   font-weight: bold;
 }
 
 .hljs-bullet {
-  color: #eac55f;
+  color: var(--syntax-bullet);
 }
 
 .hljs-emphasis {
-  color: #adbac7;
+  color: var(--syntax-fg);
   font-style: italic;
 }
 
 .hljs-strong {
-  color: #adbac7;
+  color: var(--syntax-fg);
   font-weight: bold;
 }
 
 .hljs-addition {
-  color: #b4f1b4;
-  background-color: #1b4721;
+  color: var(--syntax-addition-fg);
+  background-color: var(--syntax-addition-bg);
 }
 
 .hljs-deletion {
-  color: #ffd8d3;
-  background-color: #78191b;
+  color: var(--syntax-deletion-fg);
+  background-color: var(--syntax-deletion-bg);
 }

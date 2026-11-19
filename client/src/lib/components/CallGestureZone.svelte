@@ -132,9 +132,9 @@
   onpointerup={onPointerUp}
   onpointercancel={onPointerCancel}
 >
-  <div class="flex flex-col items-center gap-0.5 text-rose-400/90" style:transform="translateY({chevronOffset}px)">
+  <div class="text-destructive flex flex-col items-center gap-0.5" style:transform="translateY({chevronOffset}px)">
     <ChevronUp class="-mb-1 size-5 animate-pulse" aria-hidden="true" />
-    <div class="flex items-center gap-1.5 rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-xs font-medium tracking-wide">
+    <div class="border-destructive/40 bg-destructive/10 flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium tracking-wide">
       <PhoneOff class="size-3.5" aria-hidden="true" />
       <span>Swipe up to hang up</span>
     </div>
@@ -142,20 +142,20 @@
 
   <div
     class="relative flex size-16 items-center justify-center rounded-full border-2 transition-colors {muted
-      ? 'border-amber-500/60 bg-amber-500/15 text-amber-300'
-      : 'border-emerald-500/70 bg-emerald-500/15 text-emerald-300'}"
+      ? 'border-status-reconnecting/60 bg-status-reconnecting/15 text-status-reconnecting'
+      : 'border-status-connected/70 bg-status-connected/15 text-status-connected'}"
     aria-label={muted ? 'Microphone muted, tap to unmute' : 'Microphone live, tap to mute'}
   >
     {#if muted}
       <MicOff class="size-7" aria-hidden="true" />
     {:else}
       <Mic class="size-7" aria-hidden="true" />
-      <span class="absolute inset-0 -z-10 animate-ping rounded-full bg-emerald-500/20"></span>
+      <span class="bg-status-connected/20 absolute inset-0 -z-10 animate-ping rounded-full"></span>
     {/if}
   </div>
 
-  <div class="flex flex-col items-center gap-0.5 text-amber-400/90" style:transform="translateY({chevronOffset}px)">
-    <div class="flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-xs font-medium tracking-wide">
+  <div class="text-status-reconnecting flex flex-col items-center gap-0.5" style:transform="translateY({chevronOffset}px)">
+    <div class="border-status-reconnecting/40 bg-status-reconnecting/10 flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium tracking-wide">
       <OctagonX class="size-3.5" aria-hidden="true" />
       <span>Swipe down to abort</span>
     </div>

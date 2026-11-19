@@ -36,12 +36,12 @@
 
   let connectionColor = $derived(
     connection.phase === 'ready'
-      ? 'bg-emerald-500'
+      ? 'bg-status-connected'
       : connection.phase === 'syncing'
-        ? 'bg-blue-500'
+        ? 'bg-status-active'
         : connection.phase === 'backoff' || connection.phase === 'connecting'
-          ? 'bg-amber-500'
-          : 'bg-red-500',
+          ? 'bg-status-reconnecting'
+          : 'bg-status-error',
   );
 
   let activeChild = $derived(sessionRegistry.viewedSubagentAttachment);
@@ -56,7 +56,7 @@
   let contextDisplay = $derived(getContextDisplay(sessionRegistry.viewedConversation));
 
   let contextColor = $derived(
-    getContextTone(contextPercent) === 'critical' ? 'text-red-400' : getContextTone(contextPercent) === 'warning' ? 'text-amber-400' : 'text-muted-foreground',
+    getContextTone(contextPercent) === 'critical' ? 'text-status-error' : getContextTone(contextPercent) === 'warning' ? 'text-status-reconnecting' : 'text-muted-foreground',
   );
 
   let sessionDisplayName = $derived(activeNode ? activeNode.path.join('/') : getSessionDisplayName(sessionRegistry.viewedConversation));
@@ -192,8 +192,8 @@
     {#if sessionRegistry.viewedConversation?.isStreaming}
       <Badge variant="secondary" class="gap-1.5 text-xs">
         <span class="relative flex size-2">
-          <span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-          <span class="relative inline-flex size-2 rounded-full bg-emerald-500"></span>
+          <span class="bg-status-connected absolute inline-flex size-full animate-ping rounded-full opacity-75"></span>
+          <span class="bg-status-connected relative inline-flex size-2 rounded-full"></span>
         </span>
         Streaming
       </Badge>
@@ -203,8 +203,8 @@
     {#if sessionRegistry.viewedConversation?.isCompacting}
       <Badge variant="secondary" class="gap-1 text-xs">
         <span class="relative flex size-2">
-          <span class="absolute inline-flex size-full animate-ping rounded-full bg-amber-400 opacity-75"></span>
-          <span class="relative inline-flex size-2 rounded-full bg-amber-500"></span>
+          <span class="bg-status-reconnecting absolute inline-flex size-full animate-ping rounded-full opacity-75"></span>
+          <span class="bg-status-reconnecting relative inline-flex size-2 rounded-full"></span>
         </span>
         Compacting…
       </Badge>
@@ -214,8 +214,8 @@
     {#if navigationIndicator.visible}
       <Badge variant="secondary" class="gap-1 text-xs">
         <span class="relative flex size-2">
-          <span class="absolute inline-flex size-full animate-ping rounded-full bg-violet-400 opacity-75"></span>
-          <span class="relative inline-flex size-2 rounded-full bg-violet-500"></span>
+          <span class="bg-status-active absolute inline-flex size-full animate-ping rounded-full opacity-75"></span>
+          <span class="bg-status-active relative inline-flex size-2 rounded-full"></span>
         </span>
         {sessionRegistry.viewedConversation?.treeNavigationSummarizing ? 'Summarizing…' : 'Navigating…'}
       </Badge>

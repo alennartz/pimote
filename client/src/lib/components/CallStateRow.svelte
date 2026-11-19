@@ -17,11 +17,11 @@
 
 <div class="flex items-center gap-2">
   {#if state === 'listening'}
-    <span class="dot animate-breathe bg-cyan-400" aria-hidden="true"></span>
+    <span class="dot animate-breathe bg-status-active" aria-hidden="true"></span>
   {:else if state === 'thinking'}
-    <span class="dot animate-thinking bg-amber-400" aria-hidden="true"></span>
+    <span class="dot animate-thinking bg-status-reconnecting" aria-hidden="true"></span>
   {:else}
-    <span class="dot bg-emerald-400 transition-[transform,opacity] duration-[80ms]" style:transform="scale({speakingScale})" style:opacity={speakingOpacity} aria-hidden="true"
+    <span class="dot bg-status-connected transition-[transform,opacity] duration-[80ms]" style:transform="scale({speakingScale})" style:opacity={speakingOpacity} aria-hidden="true"
     ></span>
   {/if}
   <span class="text-foreground text-sm font-medium">{label}</span>

@@ -1,8 +1,8 @@
 // Guardrail: component and route source must not contain raw color literals.
 // Every color lives in routes/layout.css as a token (surface ladder, callout
 // families, status colors); components reference them with var() and derive
-// hover/alpha variants with color-mix(). Keeping literals out is what makes a
-// future light theme a tokens-only change.
+// hover/alpha variants with color-mix(). Keeping literals out keeps the main
+// surface and callout palette in one place when themes change.
 //
 // Allowlist:
 // - routes/layout.css: the token source of truth.
@@ -17,6 +17,40 @@ const SRC_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 const ALLOWLIST = new Set(['routes/layout.css', 'lib/highlight-theme.css']);
 
 const RAW_COLOR = /oklch\(|#[0-9a-fA-F]{3,8}\b/;
+
+const PIMOTE_THEME_TOKENS = [
+  '--status-active',
+  '--status-streaming',
+  '--status-connected',
+  '--status-error',
+  '--status-reconnecting',
+  '--surface-sunken',
+  '--surface-raised',
+  '--surface-subtle',
+  '--surface-hover',
+  '--error-accent',
+  '--error-surface',
+  '--error-foreground',
+  '--error-avatar-fg',
+  '--skill-accent',
+  '--skill-surface',
+  '--skill-foreground',
+  '--skill-foreground-hover',
+  '--bash-accent',
+  '--custom-accent',
+  '--custom-surface',
+  '--custom-foreground',
+  '--custom-foreground-hover',
+  '--link',
+  '--link-hover',
+  '--avatar-bg',
+  '--avatar-fg',
+  '--shadow-color',
+] as const;
+
+function declaredTokens(block: string): Set<string> {
+  return new Set([...block.matchAll(/^\s*(--[a-z0-9-]+)\s*:/gim)].map((match) => match[1]));
+}
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -38,5 +72,15 @@ describe('color token guardrail', () => {
       .sort();
 
     expect(offenders, 'Raw color literals belong in routes/layout.css tokens — see the token blocks there.').toEqual([]);
+  });
+
+  it('defines every Pimote semantic token in both palettes', () => {
+    const css = readFileSync(join(SRC_ROOT, 'routes/layout.css'), 'utf8');
+    const rootBlock = css.match(/:root \{([\s\S]*?)\n\}\n\n\.dark \{/i)?.[1] ?? '';
+    const darkBlock = css.match(/\.dark \{([\s\S]*?)\n\}\n\n@theme inline/i)?.[1] ?? '';
+    const missingFromRoot = PIMOTE_THEME_TOKENS.filter((token) => !declaredTokens(rootBlock).has(token));
+    const missingFromDark = PIMOTE_THEME_TOKENS.filter((token) => !declaredTokens(darkBlock).has(token));
+
+    expect({ missingFromRoot, missingFromDark }).toEqual({ missingFromRoot: [], missingFromDark: [] });
   });
 });

@@ -4,7 +4,7 @@
   import { EditorView, keymap } from '@codemirror/view';
   import { indentWithTab } from '@codemirror/commands';
   import { basicSetup } from 'codemirror';
-  import { githubDarkInit } from '@uiw/codemirror-theme-github';
+  import { githubDarkInit, githubLightInit } from '@uiw/codemirror-theme-github';
   import { getCodeMirrorLanguageExtension } from '$lib/codemirror-language.js';
   import type { EditorLanguage } from '$lib/editor-language.js';
 
@@ -25,52 +25,49 @@
   let syncingFromView = false;
 
   const languageCompartment = new Compartment();
-  const layoutTheme = EditorView.theme(
-    {
-      '&': {
-        height: '100%',
-      },
-      '.cm-editor': {
-        height: '100%',
-      },
-      '.cm-scroller': {
-        overflow: 'auto',
-        fontFamily: 'var(--font-mono)',
-        // JetBrains Mono Variable shapes `--` / `!!` as spacer+ligature pairs;
-        // renderers that clip ligature ink to its advance drop the first
-        // character visually. Command text must stay verbatim.
-        fontVariantLigatures: 'none',
-        lineHeight: '1.6',
-      },
-      '.cm-content': {
-        padding: '1rem 0',
-      },
-      '.cm-line': {
-        padding: '0 1rem',
-      },
-      '.cm-gutterElement': {
-        padding: '0 0.75rem 0 0.5rem',
-      },
-      '.cm-focused': {
-        outline: 'none',
-      },
-    },
-    { dark: true },
-  );
-  const githubDarkTheme = githubDarkInit({
-    settings: {
-      fontFamily: 'var(--font-mono)',
-    },
-  });
 
   function buildExtensions(languageId: EditorLanguage | null): Extension[] {
     const languageExtension = getCodeMirrorLanguageExtension(languageId);
+    const dark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+    const layoutTheme = EditorView.theme(
+      {
+        '&': {
+          height: '100%',
+        },
+        '.cm-editor': {
+          height: '100%',
+        },
+        '.cm-scroller': {
+          overflow: 'auto',
+          fontFamily: 'var(--font-mono)',
+          // JetBrains Mono Variable shapes `--` / `!!` as spacer+ligature pairs;
+          // renderers that clip ligature ink to its advance drop the first
+          // character visually. Command text must stay verbatim.
+          fontVariantLigatures: 'none',
+          lineHeight: '1.6',
+        },
+        '.cm-content': {
+          padding: '1rem 0',
+        },
+        '.cm-line': {
+          padding: '0 1rem',
+        },
+        '.cm-gutterElement': {
+          padding: '0 0.75rem 0 0.5rem',
+        },
+        '.cm-focused': {
+          outline: 'none',
+        },
+      },
+      { dark },
+    );
+    const githubTheme = dark ? githubDarkInit({ settings: { fontFamily: 'var(--font-mono)' } }) : githubLightInit({ settings: { fontFamily: 'var(--font-mono)' } });
 
     return [
       basicSetup,
       keymap.of([indentWithTab]),
       EditorView.lineWrapping,
-      githubDarkTheme,
+      githubTheme,
       layoutTheme,
       EditorView.updateListener.of((update) => {
         if (!update.docChanged) return;
