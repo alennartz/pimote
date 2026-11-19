@@ -184,12 +184,9 @@ function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
   auditPair(findings, theme, 'editor.body', 'editor foreground on background', surface.foreground, surface.background, 4.5, surface.background);
   auditPair(findings, theme, 'editor.selection', 'editor foreground on selection', surface.foreground, surface.selection, 4.5, surface.background);
   auditPair(findings, theme, 'editor.matching-bracket', 'bracket syntax on matching bracket', syntax.bracket, surface['matching-bracket'], 3, surface.background);
-  auditPair(findings, theme, 'editor.search-match', 'editor foreground on search match', surface.foreground, surface['search-match'], 3, surface.background);
+  auditPair(findings, theme, 'editor.search-match-marker', 'search-match marker on editor background', surface['search-match'], surface.background, 3, surface.background);
 
-  for (const role of Object.keys(syntax) as EditorSyntaxRole[]) {
-    auditSyntaxTriple(findings, theme, role);
-    auditPair(findings, theme, `editor.syntax.${role}.search-match`, `${role} syntax on search match`, syntax[role], surface['search-match'], 3, surface.background);
-  }
+  for (const role of Object.keys(syntax) as EditorSyntaxRole[]) auditSyntaxTriple(findings, theme, role);
 
   for (const { role, label, background } of DIFF_ROLES) {
     const foreground = syntax[role];
