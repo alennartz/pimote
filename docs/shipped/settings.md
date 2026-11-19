@@ -21,7 +21,7 @@ The file is `$XDG_CONFIG_HOME/pimote/config.json`, which defaults to `~/.config/
 | `roots`                                               | string[]                        | required                         | Scan roots for folder discovery.                                                                                             |
 | `managerRoot`                                         | string                          | `$XDG_STATE_HOME/pimote/manager` | Working directory of the manager session. A leading `~` expands.                                                             |
 | `port`                                                | number                          | `3000`                           | HTTP listen port.                                                                                                            |
-| `appName`                                             | string                          | `Pimote`                         | Display name for the tab title and the installed PWA.                                                                        |
+| `appName`                                             | string                          | `Pimote`                         | Display name for the browser tab, iOS web app, and installed PWA.                                                            |
 | `idleTimeout`                                         | number                          | `1800000`                        | Milliseconds before the reaper closes an idle session.                                                                       |
 | `bufferSize`                                          | number                          | `1000`                           | Events retained per session replay buffer.                                                                                   |
 | `defaultInterpreterModel`                             | string or `{provider, modelId}` | automatic                        | Voice interpreter model; the slug form accepts a `:level` thinking suffix. Empty or unset leaves the session model to pi.    |
@@ -29,10 +29,9 @@ The file is `$XDG_CONFIG_HOME/pimote/config.json`, which defaults to `~/.config/
 | `voice.speechmuxSignalUrl`, `voice.speechmuxLlmWsUrl` | string                          | none                             | Voice signalling and interpreter endpoints.                                                                                  |
 | `settingsFiles`                                       | string[]                        | none                             | Extra files in the global Settings catalog.                                                                                  |
 | `tagSnippets`                                         | string[]                        | none                             | Wrap-tag palette in the `AGENTS.md` editor.                                                                                  |
+| `folderSourcesDir`                                    | string                          | legacy                           | Retained for compatibility; production discovery uses the global extension host and ignores this setting.                    |
 | `updateCheck`                                         | boolean                         | `true`                           | Check npm for newer releases.                                                                                                |
 | `vapidPublicKey`, `vapidPrivateKey`, `vapidEmail`     | string                          | generated at first boot          | Web push credentials.                                                                                                        |
-
-`folderSourcesDir` is a legacy field. The extension host ignores it.
 
 ### Validation
 

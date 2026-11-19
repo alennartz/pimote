@@ -41,28 +41,7 @@ A persona folder runs the session rooted in itself. Its `AGENTS.md` is the promp
 
 ## Idle reaping
 
-Pimote closes sessions that hold no work. It checks every 60 seconds and closes a session whose idle time exceeds `idleTimeout`, which defaults to 30 minutes.
-
-A session is busy, and stays open, while any of these holds:
-
-- A browser observes it.
-- A voice call is active.
-- A bash command runs, or a bash dispatch is in flight.
-- Tree navigation is in progress.
-- A turn has not settled.
-- An extension reports background work.
-
-Closing a reaped session ends its runtime. Its record stays on disk and reopens on demand.
-
-The activity poll gives extensions a veto. Before closing, Pimote emits `pimote:activity:request` on the session event bus and reads the answer synchronously. An extension that manages work the root session cannot see registers a responder:
-
-```ts
-import { answerActivity } from '@pimote/sdk/activity';
-
-answerActivity(pi, () => myAgents.some((agent) => agent.state === 'running'));
-```
-
-A responder that throws answers `active: true`, so a broken predicate parks the session instead of destroying work. With no responder, the base rule applies. `@pimote/sdk` documents the rest of the API.
+Pimote closes idle session runtimes but keeps their records for later reopening. Extensions can veto reaping while they manage background work the root session cannot see. See the [activity guide](../../packages/sdk/docs/activity.md) for the reaper interval, timeout, busy conditions, and responder contract.
 
 ## Interrupted runs
 

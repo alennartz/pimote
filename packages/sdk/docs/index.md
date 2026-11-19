@@ -81,6 +81,17 @@ Pimote talks to session extensions over pi's EventBus. The SDK wraps most channe
 
 Every channel is per session. A message never crosses into another session.
 
+## Breaking changes
+
+### 0.15.0 (0.x breaking)
+
+The SDK exposes two independent hosts:
+
+- `@pimote/sdk/pimote` runs process-global Pimote extensions for folder sources and Settings files.
+- `@pimote/sdk` and its `panels` and `activity` modules run inside Pi sessions through EventBus bridges.
+
+Folder creation is a Pimote core operation. External creation registration was removed. Existing source modules must move their exported source arrays into a default `PimoteExtension` factory and call `context.folders.registerSource()`. Pi package manifests can list separate `pi.extensions` and `pimote.extensions` entries; Pimote loads only the latter from user scope.
+
 ## Versioning
 
-The SDK follows the Pimote version. A breaking change ships with a major or a pre-1.0 minor bump and a note in [Breaking changes](../README.md#breaking-changes). Read that section before you upgrade across a minor version in the 0.x range.
+The SDK follows the Pimote version. A breaking change ships with a major or a pre-1.0 minor bump and a note in [Breaking changes](#breaking-changes). Read that section before you upgrade across a minor version in the 0.x range.

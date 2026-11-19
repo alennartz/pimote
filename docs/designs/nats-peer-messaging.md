@@ -115,6 +115,9 @@ This is the current preferred shape because it lets either side queue outbound m
 6. **Outbox capacity and cleanup:** Choose `MaxBytes`/`MaxMsgs` values and the data high-water mark that reserves control-event capacity. `MaxAge` is not used; accepted messages remain until acknowledged or explicitly cleaned up. Define the local retry path if the hard limit blocks a control event, plus deduplication, reply expiry, and archive cleanup.
 7. **Peer invitation details:** Define invitation fields and validation for node identity, reachable leaf address, TLS CA or certificate pin, and public NKey. The first version requires one reachable TLS listener and does not include a hub, relay, or VPN overlay.
 8. **Super-cluster alternative:** Gateways can route interest through a cluster mesh, but do not provide peer-pair isolation. If considered, account sharing and gateway reach must preserve the A–B versus A–C boundary.
+9. **Root address and controls:** Define the copyable root address and user flow for connecting. Define which operations a root agent can request for its own root and which operations a user can manage across roots. Do not expose NATS subjects as public root addresses.
+10. **Message admission and recovery:** Define whether ingress starts a turn, steers a working root, or waits for a closed root to reopen. Define idempotency when a crash occurs after transcript persistence but before peer-stream acknowledgement.
+11. **Root lifecycle:** Define how ordinary close and archive affect directory registration, connections, pending requests, and queued messages, and whether unarchive restores any state.
 
 ## NATS references
 
