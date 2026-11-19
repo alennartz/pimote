@@ -1,7 +1,7 @@
 # Manual Testing — per-user-open-session-state
 
 Topic: server-side per-user open-session profiles
-(`docs/plans/per-user-open-session-state.md`). The browser's open-session
+(`docs/brainstorms/per-user-open-session-state.md`). The browser's open-session
 list moved into `user-profiles.json` keyed by a client-side user name;
 `user_sessions_changed` syncs a user's devices; the settings dialog gains
 a User pane.
