@@ -8,7 +8,7 @@ Accepted
 
 Pimote's web input gained TUI-style `@file` references. The original framing (brainstorm + first draft of the plan) assumed parity with pi's `@` should mean **server-side expansion at send time**: the server would resolve each `@path` token, inline text files as `<file>` blocks, and materialize images/PDFs as attachments before forwarding the message to the SDK — mirroring the CLI's `processFileArguments`. That framing rippled into a large surface: an `attachment` content block in the protocol, `images?: string[]` on `prompt`/`steer`/`follow_up`, an `expandFileRefs` server function, `message-mapper` changes to emit attachment blocks, and `Message.svelte` work to render them.
 
-A mid-pipeline architecture audit (then `docs/reviews/at-file-syntax-web-architecture-audit.md`) forced a closer look at what pi actually does, and surfaced that pi has **two different** `@` behaviors:
+A mid-pipeline architecture audit forced a closer look at what pi actually does, and surfaced that pi has **two different** `@` behaviors:
 
 - **Interactive TUI** (`CombinedAutocompleteProvider`): `@` only drives autocomplete — it shells out to `fd` and inserts the chosen path back into the editor. At submit, the raw `@path` text is passed to `session.prompt(text)` **unchanged**. `prompt` expands `/`-commands, skills, and prompt templates, but does **not** expand `@` references — they reach the model as plain text, and the agent reads them with its own `read` tool.
 - **CLI** (`pi @foo.png "…"`, `processFileArguments`): inlines text files as `<file>` blocks and attaches images.

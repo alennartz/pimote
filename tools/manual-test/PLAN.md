@@ -173,10 +173,7 @@ in speechmux and is exercised separately.
   emits `call_bind`, full-screen calling-mode surface mounts (header +
   read-only transcript + bottom gesture zone), the three gestures
   (tap=mute, swipe-up=hangup, swipe-down=abort) drive their respective
-  actions, and hangup tears down back to the chat surface. Real-
-  speechmux end-to-end is blocked on speechmux-repo work; see
-  `docs/manual-tests/voice-call-fullscreen-ui.md` for the current
-  `agent-browser`-driven run.
+  actions, and hangup tears down back to the chat surface. Real-speechmux end-to-end remains blocked on speechmux-repo work.
 
 ### 9. Android — Assistant-callable Pimote projects
 

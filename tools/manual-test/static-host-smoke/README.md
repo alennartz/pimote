@@ -12,8 +12,6 @@ End-to-end smoke for the server-side static-host pipeline:
   `session_start` handler uses.
 - `gcStaticHostStore` against a populated store directory.
 
-Drives manual-test tests 1–11 in `docs/manual-tests/static-resources.md`.
-
 ## Location
 
 `tools/manual-test/static-host-smoke/static-host-smoke.mjs`

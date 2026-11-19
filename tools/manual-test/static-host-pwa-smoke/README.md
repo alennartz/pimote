@@ -1,7 +1,6 @@
 # static-host-pwa-smoke
 
-Drives the **client-side** verifications deferred to manual testing in
-`docs/reviews/static-resources-tests.md`:
+Verifies client-side behavior for static-host bundles:
 
 - `Panel.svelte` renders a card with `href` as a clickable `<a>`.
 - `/s/<slug>/` requests pass through the service worker to the network
@@ -30,8 +29,6 @@ The script:
      bundle's `index.html` body is visible (proves SW pass-through —
      no SPA shell).
    - `history.back()` returns to the session view.
-
-Drives manual-test tests 12–14 in `docs/manual-tests/static-resources.md`.
 
 ## Location
 

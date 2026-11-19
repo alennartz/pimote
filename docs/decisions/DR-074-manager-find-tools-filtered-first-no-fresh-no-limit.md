@@ -12,7 +12,7 @@ First, the descriptions listed filters as "optional", so broad unfiltered listin
 
 Second, `fresh` gave the model a discovery-cache bypass it needs only after manual `mv`/`ln` — a once-per-install need permanently costing a parameter, its description weight, and a documented mental model. Staleness is bounded (30s TTL, stale-while-revalidate) and self-heals; mutations invalidate and broadcast immediately.
 
-Third, `limit` duplicated truncation the spill guard (DR-071) already handles: the inline budget bounds context, the JSONL spill file keeps every remaining row reachable with jq/grep, and reads cost the same regardless.
+Third, `limit` duplicated truncation the spill guard already handles: the inline budget bounds context, the JSONL spill file keeps every remaining row reachable with jq/grep, and reads cost the same regardless.
 
 ## Decision
 

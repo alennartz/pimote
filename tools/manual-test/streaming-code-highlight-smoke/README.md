@@ -29,8 +29,7 @@ only. It does **not** exercise the streaming-only behaviors —
 auto-expand-while-streaming / auto-collapse-on-completion, and mid-stream
 highlighting in the write view. Those require a live token stream; their logic
 is covered by `client/src/lib/*.test.ts`
-(`code-highlight.test.ts`, `write-content.test.ts`, `smd-renderer.test.ts`). See
-`docs/manual-tests/streaming-code-highlight.md` → Harness Limitations.
+(`code-highlight.test.ts`, `write-content.test.ts`, `smd-renderer.test.ts`).
 
 ## Invocation
 

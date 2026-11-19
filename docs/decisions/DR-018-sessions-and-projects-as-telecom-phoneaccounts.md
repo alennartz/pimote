@@ -2,9 +2,9 @@
 
 ## Status
 
-**Superseded by [DR-019](DR-019-sessions-and-projects-as-contactscontract-contacts.md).**
+**Superseded by [DR-025](DR-025-android-voice-via-app-actions-contacts-as-supporting-surface.md). The intermediate DR-019 and DR-024 lineage is recorded there.**
 
-The central decision — "each unarchived session and each project registers as a self-managed `PhoneAccount`" — was wrong. Android Telecom caps PhoneAccount registrations at **10 per package**, and PhoneAccount is the wrong primitive entirely: it models a calling _service_ (a SIM, a VoIP line), not a callee. Manual testing immediately hit the cap (`IllegalArgumentException: cannot register phone account ... because the limit, 10, has been reached`). DR-019 supersedes this with the correct architecture: one Pimote service PhoneAccount, sessions and projects synced into ContactsContract under a Pimote AccountManager Account, dial routing via a `pimote:` URI scheme.
+The central decision — "each unarchived session and each project registers as a self-managed `PhoneAccount`" — was wrong. Android Telecom caps PhoneAccount registrations at **10 per package**, and PhoneAccount is the wrong primitive entirely: it models a calling _service_ (a SIM, a VoIP line), not a callee. Manual testing immediately hit the cap (`IllegalArgumentException: cannot register phone account ... because the limit, 10, has been reached`). The replacement uses one Pimote service PhoneAccount, syncs sessions and projects into ContactsContract under a Pimote AccountManager Account, and routes dialing through a `pimote:` URI scheme.
 
 ## Context
 

@@ -123,8 +123,7 @@ shipped `InMemoryStaticHostRegistry`, `FileStaticHostStore`,
 `gcStaticHostStore`, `serveStaticHostRoute`, `executeRegisterTool`,
 `executeRemoveTool`, slug validation + collision resolution,
 persistence + replay across session evict/rehydrate, and boot-time GC
-of orphan store files. Drives static-resources tests 1–11 in
-`docs/manual-tests/static-resources.md`.
+of orphan store files.
 
 **Location:** `tools/manual-test/static-host-smoke/static-host-smoke.mjs`
 
@@ -144,11 +143,10 @@ real network, browser, or LLM required.
 
 ### static-host-pwa-smoke
 
-**Purpose:** Verify the client-side behaviours the test-review phase
-deferred for static-resources: `Panel.svelte` rendering `Card.href`
-as a clickable `<a>`, the service worker passing `/s/*` through to the
-network unmodified, and browser-back returning to the session view
-after viewing a hosted bundle. Drives static-resources tests 12–14.
+**Purpose:** Verify client-side behavior for static-host bundles:
+`Panel.svelte` rendering `Card.href` as a clickable `<a>`, the service
+worker passing `/s/*` through to the network unmodified, and browser-back
+returning to the session view after viewing a hosted bundle.
 
 **Location:** `tools/manual-test/static-host-pwa-smoke/static-host-pwa-smoke.mjs`
 
@@ -230,8 +228,7 @@ tool-call visualization.
 > Harness limitation: disk-fabricated sessions show the settled state only, so
 > the streaming-only behaviors (auto-expand/collapse during a write stream,
 > mid-stream highlight in the write view) are NOT exercised here — their logic
-> is covered by client unit tests. See
-> `docs/manual-tests/streaming-code-highlight.md`.
+> is covered by client unit tests.
 
 **Location:** `tools/manual-test/streaming-code-highlight-smoke/streaming-code-highlight-smoke.mjs`
 
@@ -329,7 +326,7 @@ server-side expansion). Drives the prompt-composition half of journey 2 in
 > optimistic user-message echo plus the structural fact that
 > `prompt`/`steer`/`follow_up` forward `command.message` unchanged. `steer`
 > / `follow_up` are not driven live (same forward-unchanged handler as
-> `prompt`). See `docs/manual-tests/at-file-syntax-web.md`.
+> `prompt`).
 
 **Location:** `tools/manual-test/at-file-syntax-smoke/at-file-syntax-smoke.mjs`
 
@@ -492,7 +489,7 @@ dashboard row plus the `pimote_find_folders` nature-filtered team view), the
 missing-member warning chip, the unscanned-cwd `classifyFolder` session
 fallback (list/open in cwds outside the scan roots never lists or curates
 them), legacy `multiRepo` registry read-compat (loads unchanged; the next
-write persists curation only — hub lists are retired, DR-064), and the mobile
+write persists curation only, not hub membership), and the mobile
 manager affordance. Tool-call and
 assistant-reply detection is role-scoped (`.tool-block .tool-name`,
 `.assistant-message`) so user prompt text cannot false-positive it. Manager
@@ -800,8 +797,7 @@ agent-browser snapshot -i                     # expect calling-mode surface
 # `End call` button; drive hangup via a synthetic swipe-up
 # pointer sequence on the gesture zone, or via
 # `agent-browser eval 'window.__voiceCallStore?.endCall()'`
-# when wired for tests. See docs/manual-tests/voice-call-
-# fullscreen-ui.md for the recipe used in the most recent run.
+# when wired for tests.
 agent-browser snapshot -i                     # calling mode gone, chat returns
 ```
 

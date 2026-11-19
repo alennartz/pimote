@@ -20,6 +20,6 @@ Accepted
 - No SDK `FolderInfo` twin is added: `FolderInfo` is wire-protocol only, and folder sources contribute source entries, never wire rows.
 - Dropped deltas leave phantom rows in client caches. Explicit refresh (`repin` cache-replace) and reconnect cache-replace are the heal paths; a delta retry or periodic reconcile is the revisit point if phantom rows ever matter in practice.
 
-> **Amendment (2026-01-14, DR-063/064):** hub disband was removed from every surface. `FolderRegistry.createHub` now invalidates discovery before it emits its creation delta; no `disband_hub` removal delta exists.
+> **Historical amendment (2026-01-14):** hub disband had been removed from every surface. `FolderRegistry.createHub` invalidated discovery before its creation delta, and no `disband_hub` removal delta existed then. [DR-085](DR-085-disband-closes-idle-sessions-before-removal.md) later restored guarded worktree-only disband and its removal delta.
 >
 > **Amendment (DR-085):** `disband_hub` returns for worktree hubs only, and its removal delta carries the hub path in `removedPaths`. Symlink hubs still have no disband mutation. The invalidation-before-delta rule stands.

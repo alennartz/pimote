@@ -8,7 +8,7 @@ Accepted
 
 Pimote's `jsonToolResult` idiom put one identical payload into all three channels of pi's `AgentToolResult`: model-facing `content` (JSON text), `details`, and `structuredContent`. Pi's contract assigns each channel a single audience — `content` for the model, `structuredContent` for programmatic callers (codemode scripts resolve to it when an `outputSchema` is declared), `details` for renderer/state metadata ("for rendering or state reconstruction"; pi's own tools populate it only with execution metadata, e.g. bash's truncation facts, or leave it undefined).
 
-The duplication had two costs. The spill guard (DR-071) truncates the list tools' rows, and because the payload fanned out to every channel, the truncation hit codemode scripts and the pimote client too — scripts got a prefix plus a spill-file pointer instead of the data, diverging from pi's MCP behavior ("Codemode scripts receive the complete result"). And `details` carried a payload copy, which pi reserves for metadata — doubling transcript storage for large results and blurring the channels.
+The duplication had two costs. The spill guard truncates list-tool rows, and because the payload fanned out to every channel, the truncation hit codemode scripts and the pimote client too — scripts got a prefix plus a spill-file pointer instead of the data, diverging from pi's MCP behavior ("Codemode scripts receive the complete result"). And `details` carried a payload copy, which pi reserves for metadata — doubling transcript storage for large results and blurring the channels.
 
 ## Decision
 
@@ -20,7 +20,7 @@ One audience per channel, for every pimote tool:
 
 `jsonToolResult` gained optional `modelView`/`details` overrides; the ten small action tools keep the single-payload call, where the channels legitimately coincide.
 
-Rejected alternatives: `details` = full rows so the client's generic renderer shows typed data with no client work — rejected because it re-introduces the payload copy pi reserves for metadata and doubles transcript size; pi's built-in `truncateHead`/`truncateTail` for the model view — rejected because they are line-oriented text choppers and would destroy DR-071's row-aligned, jq-able JSONL spill.
+Rejected alternatives: `details` = full rows so the client's generic renderer shows typed data with no client work — rejected because it re-introduces the payload copy pi reserves for metadata and doubles transcript size; pi's built-in `truncateHead`/`truncateTail` for the model view — rejected because they are line-oriented text choppers and would destroy the row-aligned, jq-able JSONL spill.
 
 ## Consequences
 
