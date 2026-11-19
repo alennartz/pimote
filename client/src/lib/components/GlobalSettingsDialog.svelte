@@ -11,10 +11,15 @@
   import { AlertDialog } from 'bits-ui';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
+  import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '$lib/components/ui/dropdown-menu/index.js';
+  import ChevronDown from '@lucide/svelte/icons/chevron-down';
+  import Check from '@lucide/svelte/icons/check';
   import CodeEditorDialog from './CodeEditorDialog.svelte';
   import AppearanceSettings from './AppearanceSettings.svelte';
   import type { ThemeStore } from '../stores/theme-store.svelte.js';
   import { globalSettingsPresentation } from './global-settings-presentation.js';
+
+  const DIRECT_FILE_LIMIT = 4;
 
   let {
     store,
@@ -50,6 +55,10 @@
   let userDirty = $derived(trimmedName !== '' && trimmedName !== persistedUser);
   let currentUser = $derived(persistedUser === '' ? 'default' : persistedUser);
   let adoptedProfileKnown = $derived(profiles.some((profile) => profile.name === trimmedName));
+  let directFiles = $derived(store.files.slice(0, DIRECT_FILE_LIMIT));
+  let overflowFiles = $derived(store.files.slice(DIRECT_FILE_LIMIT));
+  let overflowFileActive = $derived(!userTabActive && !appearanceTabActive && overflowFiles.some((file) => file.path === store.activePath));
+  let filesMenuOpen = $state(false);
 
   $effect(() => {
     if (!store.open || store.activePath) {
@@ -84,6 +93,7 @@
     cancelThemePreview();
     appearanceTabActive = false;
     userTabActive = true;
+    filesMenuOpen = false;
     void fetchProfiles();
   }
 
@@ -92,6 +102,15 @@
     userTabActive = false;
     appearanceTabActive = true;
     themeSaveError = null;
+    filesMenuOpen = false;
+  }
+
+  function selectFile(path: string): void {
+    cancelThemePreview();
+    userTabActive = false;
+    appearanceTabActive = false;
+    filesMenuOpen = false;
+    void store.select(path);
   }
 
   async function saveTheme(): Promise<void> {
@@ -248,32 +267,66 @@
   }}
 >
   {#snippet tabs()}
-    <div aria-label="Settings files" class="flex shrink-0 gap-1 overflow-x-auto border-b px-3 py-2" role="tablist">
-      {#if themeStore}
-        <Button type="button" variant={appearanceTabActive ? 'secondary' : 'ghost'} role="tab" aria-selected={appearanceTabActive} class="shrink-0" onclick={selectAppearanceTab}
-          >Appearance</Button
-        >
-      {/if}
-      <Button type="button" variant={userTabActive ? 'secondary' : 'ghost'} role="tab" aria-selected={userTabActive} class="shrink-0" onclick={selectUserTab}>
-        User{#if userDirty}<span aria-label="Unsaved changes">*</span>{/if}
-      </Button>
-      {#each store.files as file (file.path)}
-        <Button
-          type="button"
-          variant={!userTabActive && !appearanceTabActive && file.path === store.activePath ? 'secondary' : 'ghost'}
-          role="tab"
-          aria-selected={!userTabActive && !appearanceTabActive && file.path === store.activePath}
-          class="shrink-0"
-          onclick={() => {
-            cancelThemePreview();
-            userTabActive = false;
-            appearanceTabActive = false;
-            void store.select(file.path);
-          }}
-        >
-          {file.label}{#if file.dirty}<span aria-label="Unsaved changes">*</span>{/if}
+    <div aria-label="Settings files" class="flex min-w-0 shrink-0 items-center border-b px-3 py-2" role="tablist">
+      <div class="flex min-w-0 flex-1 gap-1 overflow-x-auto">
+        {#if themeStore}
+          <Button type="button" variant={appearanceTabActive ? 'secondary' : 'ghost'} role="tab" aria-selected={appearanceTabActive} class="shrink-0" onclick={selectAppearanceTab}
+            >Appearance</Button
+          >
+        {/if}
+        <Button type="button" variant={userTabActive ? 'secondary' : 'ghost'} role="tab" aria-selected={userTabActive} class="shrink-0" onclick={selectUserTab}>
+          User{#if userDirty}<span aria-label="Unsaved changes">*</span>{/if}
         </Button>
-      {/each}
+        {#each directFiles as file (file.path)}
+          <Button
+            type="button"
+            variant={!userTabActive && !appearanceTabActive && file.path === store.activePath ? 'secondary' : 'ghost'}
+            role="tab"
+            aria-selected={!userTabActive && !appearanceTabActive && file.path === store.activePath}
+            class="max-w-[min(14rem,45vw)] min-w-0 shrink-0"
+            onclick={() => selectFile(file.path)}
+          >
+            <span class="truncate">{file.label}</span>{#if file.dirty}<span aria-label="Unsaved changes">*</span>{/if}
+          </Button>
+        {/each}
+      </div>
+      {#if overflowFiles.length > 0}
+        <div class="border-border ml-1 shrink-0 border-l pl-1">
+          <DropdownMenu bind:open={filesMenuOpen}>
+            <DropdownMenuTrigger>
+              <Button
+                type="button"
+                variant={overflowFileActive ? 'secondary' : 'ghost'}
+                size="sm"
+                class="max-w-[min(14rem,40vw)] gap-1 max-md:min-h-11 max-md:px-3"
+                aria-label={overflowFileActive ? `More settings files, current ${active?.label ?? 'file'}` : 'More settings files'}
+                title={overflowFileActive ? `Current file: ${active?.label ?? 'file'}` : 'More settings files'}
+              >
+                <span class="truncate">{overflowFileActive ? (active?.label ?? 'More files') : 'More files'}</span>
+                <span class="text-muted-foreground text-xs">+{overflowFiles.length}</span>
+                <ChevronDown class="size-3.5 shrink-0" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" class="max-h-[min(70dvh,24rem)] w-64 max-w-[calc(100vw-1rem)]">
+              <DropdownMenuLabel>Additional settings files</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {#each overflowFiles as file (file.path)}
+                <DropdownMenuItem
+                  onclick={() => selectFile(file.path)}
+                  aria-current={!userTabActive && !appearanceTabActive && file.path === store.activePath ? 'page' : undefined}
+                  class="min-w-0 justify-between gap-3"
+                >
+                  <span class="min-w-0 truncate">{file.label}</span>
+                  <span class="flex shrink-0 items-center gap-1">
+                    {#if file.dirty}<span aria-label="Unsaved changes">*</span>{/if}
+                    {#if !userTabActive && !appearanceTabActive && file.path === store.activePath}<Check class="text-primary size-4" /><span class="sr-only">Current</span>{/if}
+                  </span>
+                </DropdownMenuItem>
+              {/each}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      {/if}
     </div>
   {/snippet}
   {#snippet toolbar()}

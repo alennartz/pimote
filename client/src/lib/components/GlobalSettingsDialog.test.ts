@@ -14,18 +14,20 @@ afterEach(async () => {
   await drainBodyScrollLockCleanup();
 });
 
-async function render(viewport: 'desktop' | 'mobile' = 'desktop', themeStore: ThemeStore | null = null) {
+async function render(
+  viewport: 'desktop' | 'mobile' = 'desktop',
+  themeStore: ThemeStore | null = null,
+  files = [
+    { path: '/agent/AGENTS.md', label: 'AGENTS.md' },
+    { path: '/config.json', label: 'config.json' },
+  ],
+) {
   const store = new GlobalSettingsStore(async (command) => {
     if (command.type === 'get_global_settings')
       return {
         id: '1',
         success: true,
-        data: {
-          files: [
-            { path: '/agent/AGENTS.md', label: 'AGENTS.md' },
-            { path: '/config.json', label: 'config.json' },
-          ],
-        },
+        data: { files },
       };
     return { id: '1', success: true, data: { path: '/agent/AGENTS.md', exists: command.type === 'file_get' && command.path !== '/config.json', content: '' } };
   });
@@ -87,6 +89,41 @@ describe('Settings dialog rendering', () => {
     const body = document.querySelector<HTMLElement>('[role="dialog"] form > div.min-h-0.flex-1.overflow-hidden');
     expect(body?.classList.contains('flex')).toBe(true);
     expect(body?.classList.contains('flex-col')).toBe(true);
+  });
+
+  it.each(['desktop', 'mobile'] as const)('moves excess settings files into a More files menu on %s', async (viewport) => {
+    const files = [
+      { path: '/one.json', label: 'one.json' },
+      { path: '/two.json', label: 'two.json' },
+      { path: '/three.json', label: 'three.json' },
+      { path: '/four.json', label: 'four.json' },
+      { path: '/five.json', label: 'five.json' },
+      { path: '/six.json', label: 'six.json' },
+    ];
+    const store = await render(viewport, null, files);
+    await store.loadManifest();
+    await tick();
+
+    const tabs = document.querySelector('[aria-label="Settings files"]');
+    expect(tabs?.textContent).toContain('one.json');
+    expect(tabs?.textContent).toContain('four.json');
+    expect(tabs?.textContent).not.toContain('five.json');
+
+    const more = document.querySelector<HTMLButtonElement>('button[aria-label^="More settings files"]');
+    expect(more).not.toBeNull();
+    more?.click();
+    await tick();
+    await tick();
+    const menuItems = [...document.querySelectorAll<HTMLElement>('[data-slot="dropdown-menu-item"]')];
+    const items = menuItems.map((item) => item.textContent?.trim());
+    expect(items).toEqual(expect.arrayContaining(['five.json', 'six.json']));
+    menuItems.find((item) => item.textContent?.trim() === 'five.json')?.click();
+    await tick();
+    expect(store.activePath).toBe('/five.json');
+    expect(more?.getAttribute('aria-label')).toContain('current five.json');
+    button('User').click();
+    await tick();
+    expect(more?.getAttribute('aria-label')).toBe('More settings files');
   });
 
   it('shows the Tag row only for Markdown tabs', async () => {
