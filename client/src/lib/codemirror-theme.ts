@@ -79,7 +79,12 @@ export function createCodeMirrorTheme(theme: ResolvedTheme): Extension {
         '.cm-lineNumbers .cm-gutterElement': { color: surface['line-number'] },
         '.cm-activeLineGutter': { backgroundColor: surface['active-line'], color: surface['active-line-number'] },
         '.cm-matchingBracket': { backgroundColor: surface['matching-bracket'] },
-        '.cm-searchMatch': { backgroundColor: surface['search-match'] },
+        '.cm-searchMatch': {
+          backgroundColor: 'transparent',
+          textDecoration: `underline 2px ${surface['search-match']}`,
+          textUnderlineOffset: '2px',
+        },
+        '.cm-searchMatch-selected': { backgroundColor: surface.selection, textDecoration: 'none' },
       },
       { dark: theme.colorScheme === 'dark' },
     ),

@@ -109,6 +109,30 @@ describe('CodeMirror theme rendering', () => {
     }
   });
 
+  it('uses an underline for search matches and selection for the selected match', () => {
+    const parent = host();
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({ doc: 'match selected', extensions: [createCodeMirrorTheme(light)] }),
+    });
+    const match = document.createElement('span');
+    match.className = 'cm-searchMatch';
+    match.textContent = 'match';
+    const selected = document.createElement('span');
+    selected.className = 'cm-searchMatch cm-searchMatch-selected';
+    selected.textContent = 'selected';
+    view.contentDOM.append(match, selected);
+    try {
+      const matchStyle = getComputedStyle(match);
+      expect(matchStyle.backgroundColor).toBe('rgba(0, 0, 0, 0)');
+      expect(matchStyle.textDecoration).toContain('underline');
+      expect(renderedColor(selected, 'background-color')).toBe(cssColor(light.editor.surface.selection));
+      expect(getComputedStyle(selected).textDecoration).toBe('none');
+    } finally {
+      view.destroy();
+    }
+  });
+
   it('updates the editor color scheme when reconfigured', () => {
     const parent = host();
     const compartment = new Compartment();
