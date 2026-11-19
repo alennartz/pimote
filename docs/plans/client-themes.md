@@ -309,4 +309,4 @@ Create `docs/shipped/themes.md` for session agents and `packages/sdk/docs/themes
 Run the existing theme tests without changing them, then run the project build, checks, and relevant server and client suites. Verify that the published package includes the guides and the runtime parser dependency.
 
 **Verify:** `npm test -w @pimote/server -- --run src/pimote-docs/index.test.ts` passes. `npm run build`, `npm run check`, and `npm run lint` pass; `npm pack --dry-run` includes the built bridge and both guides.
-**Status:** not started
+**Status:** done
