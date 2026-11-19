@@ -27,6 +27,7 @@
   let inspectedPath = $state<AgentPath | null>(null);
   let collapsedInspectorPath = $state<AgentPath | null>(null);
   let notice = $state<SubagentViewClosedNotice | null>(null);
+  let resurrectionNotice = $state<SubagentViewClosedNotice | null>(null);
   let teardownConfirmation = $state<SubagentTeardownConfirmation | null>(null);
   let resurrectOpen = $state(false);
   let resurrectSavedSessionId = $state('');
@@ -278,7 +279,8 @@
     teardownConfirmation = null;
   }
 
-  function prepareResurrection(closed: SubagentViewClosedNotice, open = true): void {
+  function prepareResurrection(closed: SubagentViewClosedNotice): void {
+    resurrectionNotice = closed;
     const node = closed.node;
     const path = closed.path;
     resurrectSavedSessionId = node?.sessionId ?? selectedAttachment?.sessionId ?? '';
@@ -287,7 +289,7 @@
     resurrectTask = node?.task ?? '';
     resurrectChannels = (node?.channels ?? []).join(', ');
     resurrectModel = node?.model ?? '';
-    if (open) resurrectOpen = true;
+    resurrectOpen = true;
   }
 
   async function resurrect(): Promise<void> {
@@ -308,10 +310,9 @@
         ...(resurrectModel.trim() ? { model: resurrectModel.trim() } : {}),
       });
       if (response.success) {
-        if (notice) sessionRegistry.clearPendingSubagentResurrection(notice.rootSessionId, notice.path);
-        clearNoticeExpiry();
+        if (resurrectionNotice) sessionRegistry.clearPendingSubagentResurrection(resurrectionNotice.rootSessionId, resurrectionNotice.path);
+        resurrectionNotice = null;
         resurrectOpen = false;
-        notice = null;
       }
     } finally {
       busy = false;
@@ -320,34 +321,25 @@
 
   function dismissNotice(): void {
     clearNoticeExpiry();
-    if (notice?.reason === 'teardown') sessionRegistry.clearPendingSubagentResurrection(notice.rootSessionId, notice.path);
     notice = null;
   }
 
   function cancelResurrection(): void {
-    if (notice?.reason === 'teardown') sessionRegistry.clearPendingSubagentResurrection(notice.rootSessionId, notice.path);
+    if (resurrectionNotice) sessionRegistry.clearPendingSubagentResurrection(resurrectionNotice.rootSessionId, resurrectionNotice.path);
+    resurrectionNotice = null;
     resurrectOpen = false;
   }
 
   onMount(() => {
     const pending = rootSessionId ? sessionRegistry.getPendingSubagentResurrection(rootSessionId) : null;
-    const closed = rootSessionId ? sessionRegistry.getLatestSubagentClosedNotice(rootSessionId) : null;
-    if (pending) {
-      setNotice(pending, false);
-      prepareResurrection(pending);
-    } else if (closed) {
-      setNotice(closed, true);
-      prepareResurrection(closed, false);
-    }
+    if (pending) prepareResurrection(pending);
     const unsubscribe = sessionRegistry.onSubagentViewClosed((closed) => {
       if (closed.rootSessionId !== sessionRegistry.viewedSessionId) return;
-      setNotice(closed, true);
       teardownConfirmation = null;
-      if (closed.reason === 'teardown') prepareResurrection(closed, false);
+      if (closed.reason === 'unavailable') setNotice(closed, true);
     });
     const unsubscribeResurrection = sessionRegistry.onSubagentResurrectionRequested((requested) => {
       if (requested.rootSessionId !== sessionRegistry.viewedSessionId) return;
-      setNotice(requested, false);
       teardownConfirmation = null;
       prepareResurrection(requested);
     });
@@ -356,14 +348,6 @@
       unsubscribe();
       unsubscribeResurrection();
     };
-  });
-
-  $effect(() => {
-    const persisted = rootSessionId ? sessionRegistry.getLatestSubagentClosedNotice(rootSessionId) : null;
-    if (persisted && !notice) {
-      setNotice(persisted, true);
-      prepareResurrection(persisted, false);
-    }
   });
 
   $effect(() => {
@@ -618,11 +602,8 @@
 
   {#if notice}
     <div class="border-warning/40 bg-warning/10 m-2 rounded-md border px-2.5 py-2 text-xs" role="status">
-      <p><strong>{pathLabel(notice.path)}</strong> {notice.reason === 'teardown' ? 'was removed.' : 'is no longer available.'}</p>
-      {#if notice.reason === 'teardown'}
-        <Button variant="link" size="xs" class="text-foreground mt-1 h-auto px-0 underline" onclick={() => prepareResurrection(notice!)}>Resurrect saved session</Button>
-      {/if}
-      <Button variant="link" size="xs" class="text-muted-foreground ml-2 h-auto px-0 underline" onclick={dismissNotice}>Dismiss</Button>
+      <p><strong>{pathLabel(notice.path)}</strong> is no longer available.</p>
+      <Button variant="link" size="xs" class="text-muted-foreground mt-1 h-auto px-0 underline" onclick={dismissNotice}>Dismiss</Button>
     </div>
   {/if}
 </div>

@@ -524,7 +524,8 @@ describe('Panel row teardown', () => {
 
     expect(target.querySelector('[aria-label="Teardown worker"]')).toBeNull();
     expect(target.querySelector('[role="alertdialog"]')).toBeNull();
-    expect(target.querySelector('[role="status"]')?.textContent).toContain('was removed.');
+    expect(target.querySelector('[role="status"]')).toBeNull();
+    expect(sessionRegistry.getLatestSubagentClosedNotice('root')).not.toBeNull();
   });
 
   it('keeps the child when the row teardown is canceled', async () => {
@@ -546,7 +547,7 @@ describe('Panel row teardown', () => {
   });
 });
 
-describe('Panel removal notices', () => {
+describe('Panel lifecycle notices', () => {
   function removeWorkerNode(): void {
     sessionRegistry.handleEvent({
       type: 'subagent_event',
@@ -560,23 +561,15 @@ describe('Panel removal notices', () => {
     });
   }
 
-  it('auto-dismisses a removal notice after ten seconds and clears the persisted entry', async () => {
-    vi.useFakeTimers();
+  it('does not render a teardown notice', async () => {
     const target = render();
     await tick();
 
     removeWorkerNode();
     await tick();
-    expect(target.querySelector('[role="status"]')?.textContent).toContain('was removed.');
 
-    vi.advanceTimersByTime(5_000);
-    await tick();
-    expect(target.querySelector('[role="status"]')?.textContent).toContain('was removed.');
-
-    vi.advanceTimersByTime(5_000);
-    await tick();
     expect(target.querySelector('[role="status"]')).toBeNull();
-    expect(sessionRegistry.getLatestSubagentClosedNotice('root')).toBeNull();
+    expect(sessionRegistry.getLatestSubagentClosedNotice('root')).not.toBeNull();
   });
 
   it('auto-dismisses an unavailable notice after ten seconds', async () => {
@@ -599,18 +592,15 @@ describe('Panel removal notices', () => {
     expect(target.querySelector('[role="status"]')).toBeNull();
   });
 
-  it('keeps a resurrection request past ten seconds until dismissed', async () => {
-    vi.useFakeTimers();
+  it('opens resurrection from a request without a panel notice', async () => {
     const target = render();
     await tick();
 
     sessionRegistry.requestSubagentResurrection('root', ['worker']);
     await tick();
-    expect(target.querySelector('[role="status"]')?.textContent).toContain('was removed.');
 
-    vi.advanceTimersByTime(10_000);
-    await tick();
-    expect(target.querySelector('[role="status"]')).not.toBeNull();
+    expect(target.querySelector('[role="status"]')).toBeNull();
+    expect(target.querySelector('[role="dialog"]')?.textContent).toContain('Resurrect child session');
     expect(sessionRegistry.getPendingSubagentResurrection('root')).not.toBeNull();
   });
 });

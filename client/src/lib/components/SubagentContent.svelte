@@ -12,6 +12,7 @@
   import CheckCircle from '@lucide/svelte/icons/check-circle-2';
   import ExternalLink from '@lucide/svelte/icons/external-link';
   import Loader2 from '@lucide/svelte/icons/loader-2';
+  import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
   import XCircle from '@lucide/svelte/icons/x-circle';
 
   type SubagentContent = Extract<PimoteMessageContent, { type: 'subagent' }>;
@@ -19,6 +20,10 @@
     path: AgentPath;
     persona?: string;
     personaIcon?: string;
+  }>;
+  type TeardownAgent = Readonly<{
+    path: AgentPath;
+    usage?: SubagentUsage;
   }>;
 
   let {
@@ -44,6 +49,7 @@
   let title = $derived(titleFor(content));
   let status = $derived(statusFor(content));
   let references = $derived(referencesFor(content));
+  let teardownAgents = $derived(teardownAgentsFor(content));
   let headerReferences = $derived(references.slice(0, 2));
   let extraReferenceCount = $derived(Math.max(0, references.length - headerReferences.length));
   let detail = $derived(detailFor(content));
@@ -123,8 +129,16 @@
     return false;
   }
 
+  function teardownAgentsFor(block: SubagentContent): readonly TeardownAgent[] {
+    if (block.data.operation !== 'teardown') return [];
+    if (block.data.result.affectedAgents.length > 0) return block.data.result.affectedAgents;
+    const path = pathFrom(resultValue(block.data.parameters, 'agent'));
+    return path && path.length > 0 ? [{ path }] : [];
+  }
+
   function referencesFor(block: SubagentContent): AgentReference[] {
     const data = block.data;
+    if (data.operation === 'teardown') return teardownAgentsFor(block).map(({ path }) => ({ path }));
     if (block.subagentKind === 'message_received' && data.operation === 'send') {
       const from = pathFrom(resultValue(data.result, 'from'));
       return from ? [{ path: from }] : [];
@@ -148,7 +162,7 @@
     if (data.operation === 'interrupt') {
       return [...data.result.interrupted.map(({ path }) => ({ path })), ...data.result.pending.map(({ path }) => ({ path })), ...data.result.failed.map(({ path }) => ({ path }))];
     }
-    if (data.operation === 'teardown' || data.operation === 'resurrect') {
+    if (data.operation === 'resurrect') {
       return data.result.affectedAgents.map(({ path }) => ({ path }));
     }
     return [];
@@ -233,6 +247,11 @@
     if (attachment && !attachment.closed) sessionRegistry.selectSubagentView(rootSessionId, path);
     else await sessionRegistry.openSubagentView(rootSessionId, path);
     if (panelStore.isDrawer) panelStore.closePanel();
+  }
+
+  function requestResurrection(path: AgentPath): void {
+    if (!rootSessionId || path.length === 0) return;
+    sessionRegistry.requestSubagentResurrection(rootSessionId, path);
   }
 </script>
 
@@ -353,10 +372,22 @@
           </div>
         {/each}
       {:else if content.data.operation === 'teardown'}
-        {#each content.data.result.affectedAgents as agent (agent.path.join('/'))}
+        {#each teardownAgents as agent (agent.path.join('/'))}
           <div class="subagent-agent-row subagent-lifecycle-row">
             <AgentChip path={agent.path} {rootSessionId} />
-            <span class="subagent-usage">{usageLabel(agent.usage)}</span>
+            {#if agent.usage}<span class="subagent-usage">{usageLabel(agent.usage)}</span>{/if}
+            {#if content.data.result.status === 'removed' && rootSessionId && agent.path.length > 0}
+              <button
+                type="button"
+                class="subagent-view-button subagent-resurrect-button"
+                aria-label={`Resurrect ${agent.path.join('/')}`}
+                title="Resurrect saved session"
+                onclick={() => requestResurrection(agent.path)}
+              >
+                <RotateCcw size={12} />
+                <span>Resurrect</span>
+              </button>
+            {/if}
           </div>
         {/each}
       {:else if content.data.operation === 'resurrect'}

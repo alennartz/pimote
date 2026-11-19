@@ -338,6 +338,51 @@ describe('subagent transcript cards', () => {
     expect(teardownCard.textContent).not.toContain('incarnation-2');
   });
 
+  it('offers resurrection from a tool teardown card', async () => {
+    const teardown = operation(
+      {
+        operation: 'teardown',
+        parameters: { agent: ['team', 'worker'] },
+        result: {
+          status: 'removed',
+          affectedAgents: [
+            {
+              path: ['team', 'worker'],
+              sessionId: 'saved-session',
+              incarnation: 'incarnation-2',
+              state: 'idle',
+              usage: { input: 5, output: 6, cacheRead: 7, cacheWrite: 8, cost: 0.015, turns: 2 },
+            },
+          ],
+        },
+      },
+      'complete',
+    );
+    const { target } = await render(teardown, { rootSessionId: chipStateRoot });
+    const resurrect = card(target, 'teardown').querySelector<HTMLButtonElement>('[aria-label="Resurrect team/worker"]');
+
+    expect(resurrect).not.toBeNull();
+    resurrect!.click();
+    await tick();
+    expect(sessionRegistry.getPendingSubagentResurrection(chipStateRoot)?.path).toEqual(['team', 'worker']);
+  });
+
+  it('renders and offers resurrection for a user teardown custom message', async () => {
+    const teardown = {
+      ...operation({ operation: 'teardown', parameters: { agent: ['team', 'worker'] }, result: { status: 'removed', affectedAgents: [] } }),
+      placement: { entryId: 'custom-teardown' } as const,
+    };
+    const { target } = await render(teardown, { custom: true, rootSessionId: chipStateRoot });
+    const teardownCard = card(target, 'teardown');
+    const resurrect = teardownCard.querySelector<HTMLButtonElement>('[aria-label="Resurrect team/worker"]');
+
+    expect(teardownCard.querySelector('[data-agent-path="team/worker"]')).not.toBeNull();
+    expect(resurrect).not.toBeNull();
+    resurrect!.click();
+    await tick();
+    expect(sessionRegistry.getPendingSubagentResurrection(chipStateRoot)?.path).toEqual(['team', 'worker']);
+  });
+
   it('shows a view action, session identity, and bounded output on resurrection', async () => {
     const resurrect = operation({
       operation: 'resurrect',
