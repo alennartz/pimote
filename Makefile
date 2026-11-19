@@ -21,92 +21,77 @@ all: build
 
 # ── Install ───────────────────────────────────────────────────────────────────
 
-install:
+install: ## Install workspace dependencies
 	npm install
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 
-## Apply dependency patches before compiling or bundling any workspace
-patch-dependencies:
+patch-dependencies: ## Apply checked-in dependency patches
 	npm run patch:dependencies
 
-## Build everything in dependency order: shared → SDK → server, then client
-build: patch-dependencies build-sdk build-shared build-server build-client
+build: patch-dependencies build-sdk build-shared build-server build-client ## Build shared, SDK, server, then client
 
-build-shared: patch-dependencies
+build-shared: patch-dependencies ## Build shared types only
 	npm run build:shared
 
-build-sdk: patch-dependencies
+build-sdk: patch-dependencies ## Build the SDK package
 	npm run build --workspace=@pimote/sdk
 
-## Server depends on shared and SDK; rebuild both first if you've changed them
-build-server: patch-dependencies build-shared build-sdk
+build-server: patch-dependencies build-shared build-sdk ## Build the server package (rebuilds shared and SDK)
 	npm run build --workspace=@pimote/server
 
-build-client: patch-dependencies
+build-client: patch-dependencies ## Build the client package
 	npm run build --workspace=client
 
-## Create a publishable tarball in $(ARTIFACTS_DIR)
-package: build
+package: build ## Create a publishable npm tarball in .artifacts
 	mkdir -p $(ARTIFACTS_DIR)
 	npm pack --ignore-scripts --pack-destination $(ARTIFACTS_DIR)
 
-## Bump the release version everywhere (root, server, client, SDK, lockfile).
-## Requires VERSION, e.g.: make version VERSION=0.17.0
-version:
+version: ## Bump the release version everywhere (needs VERSION=x.y.z)
 	npm version $(VERSION) --no-git-tag-version
 
 # ── Dev (hot-reload) ──────────────────────────────────────────────────────────
 
-## Run server and client dev servers concurrently (requires tmux or two terminals).
-## Use make dev-server and make dev-client in separate terminals instead.
-dev:
+dev: ## Show how to run the dev servers
 	@echo "Run these in two separate terminals:"
 	@echo "  make dev-server"
 	@echo "  make dev-client"
 
-dev-server:
+dev-server: ## Run the server with hot reload (tsx watch)
 	npm run dev --workspace=@pimote/server
 
-## Vite dev server — proxies /ws to localhost:$(PORT)
-dev-client:
+dev-client: ## Run the Vite dev server (proxies /ws to localhost:PORT)
 	npm run dev --workspace=client
 
 # ── Production start ──────────────────────────────────────────────────────────
 
-## Run the production app from the repo checkout.
-## Port comes from ~/.config/pimote/config.json unless PORT= is passed explicitly.
-start:
+start: ## Run the production app from the repo checkout (optional PORT=)
 	node ./bin/pimote.js start $(if $(PORT),--port $(PORT),)
 
 # ── Lint & Format ─────────────────────────────────────────────────────────────
 
-## Format all files with Prettier
-format:
+format: ## Format all files with Prettier (writes changes)
 	npm run format
 
-## Check formatting without writing
-format-check:
+format-check: ## Check formatting without writing
 	npm run format:check
 
-## Run ESLint on all files
-lint:
+lint: ## Run ESLint on all files
 	npm run lint
 
-## Run type checking (svelte-check + tsc)
-check:
+check: ## Run type checking (svelte-check + tsc)
 	npm run check
 
 # ── Test ──────────────────────────────────────────────────────────────────────
 
-test: patch-dependencies
+test: patch-dependencies ## Run server, client, and patch tests
 	npm run test --workspace=@pimote/server -- --run
 	npm run test --workspace=client -- --run
 	npm run test:patches
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
 
-clean:
+clean: ## Remove build artifacts
 	rm -rf shared/dist
 	rm -rf shared/tsconfig.tsbuildinfo
 	rm -rf server/dist
@@ -121,72 +106,38 @@ ANDROID_TOOLS := mobile/android/tools
 ANDROID_IMAGE ?= pimote-android-builder:local
 export ANDROID_IMAGE
 
-android-image:
+android-image: ## Build the Android build container image
 	$(ANDROID_TOOLS)/android-image
 
-android-build:
+android-build: ## Assemble the debug APK in the build container
 	$(ANDROID_TOOLS)/android-build
 
-android-test:
+android-test: ## Run Android unit tests in the build container
 	$(ANDROID_TOOLS)/run-container -- ./gradlew test
 
-android-connect:
+android-connect: ## Connect and verify the wireless debugging phone
 	$(ANDROID_TOOLS)/android-connect
 
-android-install:
+android-install: ## Build the debug APK and install it on the phone
 	$(ANDROID_TOOLS)/android-install
 
-android-shell:
+android-shell: ## Interactive bash shell in the build container
 	$(ANDROID_TOOLS)/run-container --interactive -- bash
 
-android-gradle:
+android-gradle: ## Run a gradle task: make android-gradle ARGS="<task>"
 	$(ANDROID_TOOLS)/run-container -- ./gradlew $(ARGS)
 
-android-clean:
+android-clean: ## gradle clean in the build container
 	$(ANDROID_TOOLS)/run-container -- ./gradlew clean
 
-android-tooling-test:
+android-tooling-test: ## Test host device selection (no Docker or phone)
 	bash mobile/android/tests/discovery.test.sh
 
 # ── Help ──────────────────────────────────────────────────────────────────────
 
-help:
+help: ## Show this help
 	@echo ""
 	@echo "Usage: make [target] [PORT=3000]"
-	@echo ""
-	@echo "  install          Install all workspace dependencies"
-	@echo "  build            Apply patches, then build shared → server → client (production)"
-	@echo "  patch-dependencies Apply checked-in dependency patches"
-	@echo "  build-shared     Build shared types/utils only"
-	@echo "  build-server     Build server only (rebuilds shared first)"
-	@echo "  build-client     Build client only"
-	@echo "  package          Create a publishable npm tarball in $(ARTIFACTS_DIR)"
-	@echo ""
-	@echo "  dev-server       Run server with hot-reload (tsx watch)"
-	@echo "  dev-client       Run Vite dev server (proxies /ws to :PORT)"
-	@echo ""
-	@echo "  start            Start the repo build via the pimote CLI"
-	@echo "  test             Run all tests (server + client, single run)"
-	@echo ""
-	@echo "  format           Format all files with Prettier (writes changes)"
-	@echo "  format-check     Check formatting without writing"
-	@echo "  lint             Run ESLint on all files"
-	@echo "  check            Run type checking (svelte-check + tsc)"
-	@echo ""
-	@echo "  clean            Remove all build artifacts"
-	@echo ""
-	@echo "  deployment       Copy Makefile.local.example for local deployment targets"
-	@echo ""
-	@echo "  android-image    Build the Android build container image ($(ANDROID_IMAGE))"
-	@echo "  android-build    Assemble the debug APK inside the build container"
-	@echo "  android-test     Run Android unit tests inside the build container"
-	@echo "  android-connect  Connect and verify the wireless debugging phone"
-	@echo "  android-install  Build the debug APK and install it on the phone"
-	@echo "  android-shell    Interactive bash shell inside the build container"
-	@echo "  android-gradle   Run an arbitrary gradle task: make android-gradle ARGS=\"<task>\""
-	@echo "  android-clean    gradle clean inside the build container"
-	@echo "  android-tooling-test  Test host device selection (no Docker or phone)"
-	@echo ""
-	@echo "  help             Show this message"
-	@echo ""
+	@grep -E '^[a-zA-Z_-]+:.*## ' $(firstword $(MAKEFILE_LIST)) | \
+		awk '{ n = index($$0, ":"); name = substr($$0, 1, n - 1); desc = substr($$0, index($$0, "## ") + 3); printf "  %-22s %s\n", name, desc }'
 
