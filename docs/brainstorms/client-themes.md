@@ -15,10 +15,11 @@ Add a full theme feature for the Pimote PWA. Users select a named theme that def
 - **Share the active choice by Pimote user.** A user's selected theme follows that Pimote username across devices. Pimote usernames are honor-system identities, not authentication. This setting controls appearance only.
 - **Set a server default for new users.** Add a native server setting that names the theme for a Pimote user with no saved choice. Changing the default does not replace existing users' selections.
 - **Do not enforce contrast checks.** Accept syntactically valid theme colors without warnings or contrast-based rejection. Keep schema and parse errors separate from color contrast.
+- **Support themed static reports without changing the host contract.** Keep static-host bundles verbatim. Provide a lightweight theme helper that report authors can include. The shipped report guide recommends it for general reports but does not require it or override a requested custom style.
 
 ## Direction
 
-Add a theme picker to the PWA Settings experience. Bundle Pimote's built-in presets, collect extension-provided themes through the current extension system, and load user-defined themes from the host-side JSON catalog. Store the selected full theme per Pimote user. Add a native server `defaultTheme` setting for users without a saved choice. Include shipped theme-authoring documentation for all sessions. Preserve the current default appearance as the initial server default unless the product chooses another value.
+Add a theme picker to the PWA Settings experience. Bundle Pimote's built-in presets, collect extension-provided themes through the current extension system, and load user-defined themes from the host-side JSON catalog. Store the selected full theme per Pimote user. Add a native server `defaultTheme` setting for users without a saved choice. Include shipped theme-authoring documentation for all sessions. Preserve the current default appearance as the initial server default unless the product chooses another value. Provide a lightweight, optional theme helper for static reports; keep custom report styles under the author's control.
 
 The existing extension host loads modules from `$XDG_CONFIG_HOME/pimote/extensions` and user-scope Pi packages' `pimote.extensions` entries. The host currently exposes folder-source and Settings-file registration only. Architecture must define a theme-contribution seam that follows this lifecycle and its failure isolation.
 
@@ -31,3 +32,4 @@ The existing extension host loads modules from `$XDG_CONFIG_HOME/pimote/extensio
 - Choose persistence and delivery for the active theme by Pimote user, including first-run selection and devices that reconnect with stale data.
 - Apply a selection without a flash on startup, and decide how browser chrome and installed-PWA colors respond.
 - Ensure the shipped theme guide is discoverable by any session that can edit the user theme file.
+- Define the static-report helper interface, its active-theme source, how it updates after a selection change, and how it degrades when no theme data is available.
