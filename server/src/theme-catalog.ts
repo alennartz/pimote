@@ -492,8 +492,13 @@ export class ThemeCatalog {
     for (const definition of userDefinitions) entries.push({ definition, source: 'user', path: this.options.userFile, order: order++ });
 
     const themes = resolveDefinitions(entries, diagnostics);
-    const nextSignature = JSON.stringify({ defaultThemeId: this.current.defaultThemeId, themes, diagnostics });
-    const previousSignature = JSON.stringify({ defaultThemeId: this.current.defaultThemeId, themes: this.current.themes, diagnostics: this.current.diagnostics });
+    const nextSignature = JSON.stringify({ defaultThemeId: this.current.defaultThemeId, extensionFiles: this.extensionFiles, themes, diagnostics });
+    const previousSignature = JSON.stringify({
+      defaultThemeId: this.current.defaultThemeId,
+      extensionFiles: this.extensionFiles,
+      themes: this.current.themes,
+      diagnostics: this.current.diagnostics,
+    });
     if (nextSignature === previousSignature && this.current.revision > 0) return this.current;
     this.current = { revision: this.current.revision + 1, defaultThemeId: this.current.defaultThemeId, themes, diagnostics };
     this.publish();
