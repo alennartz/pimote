@@ -122,6 +122,31 @@ afterEach(async () => {
 });
 
 describe('MessageList rendered window', () => {
+  it('shows and mounts a previous user message above the rendered window', async () => {
+    seedSession('s1', 200);
+    const session = sessionRegistry.sessions.s1;
+    session.messages[0] = { role: 'user', entryId: 'u0', content: [{ type: 'text', text: 'old prompt' }] };
+    sessionRegistry.switchTo('s1');
+    mountList();
+    flushSync();
+    await settle();
+    paint();
+    container.dispatchEvent(new Event('scroll'));
+    paint();
+
+    expect(rowKeys()).not.toContain('m0');
+    expect(target.querySelector('.sticky-preview')?.textContent).toContain('old prompt');
+
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    target.querySelector<HTMLButtonElement>('.sticky-preview .jump')!.click();
+    await settle();
+    flushSync();
+
+    expect(rowKeys()).toContain('m0');
+    expect(scrollIntoView).toHaveBeenCalled();
+  });
+
   it('mounts the tail of a long transcript, not every row', () => {
     seedSession('s1', 200);
     sessionRegistry.switchTo('s1');

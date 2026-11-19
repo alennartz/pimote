@@ -244,16 +244,29 @@
       if (!scrollContainer) return;
       const top = scrollContainer.getBoundingClientRect().top;
       const positions = transcriptPositions();
+      const virtualizedTarget = virtualizedPreviousUser();
       // The sticky preview overlays the top of the viewport (~39px tall), so a
       // row is only truly visible once its bottom clears the band it covers.
-      stickyEntryId = previousUserAbove(positions, top, 40);
-      jumpEntryId = previousUserAbove(positions, top, -4);
+      stickyEntryId = previousUserTarget(positions, top, 40, virtualizedTarget);
+      jumpEntryId = previousUserTarget(positions, top, -4, virtualizedTarget);
     });
+  }
+
+  function mountEntryPage(key: string): void {
+    const index = displayEntries.findIndex((entry) => entry.key === key);
+    if (index < 0 || index >= windowStart) return;
+    const anchor = displayEntries[Math.max(0, index - TRANSCRIPT_PREPARE_ROWS)];
+    if (!anchor) return;
+    windowAnchor = { view: windowViewKey, key: anchor.key };
   }
 
   function scrollToEntry(key: string | null): void {
     if (!key) return;
-    rowElements.get(key)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // A jump is an explicit history navigation. Release tail-follow before a
+    // mounted target moves the reader, not only when the target needs mounting.
+    stick.stopScroll();
+    mountEntryPage(key);
+    void tick().then(() => rowElements.get(key)?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
   }
 
   function closeFind(): void {
@@ -268,16 +281,8 @@
     const fallbackEntry = fallbackIndex >= 0 ? displayEntries.find((entry) => entry.kind === 'message' && entry.messageIndex === fallbackIndex) : undefined;
     const key = messageEntryIds.get(match.messageKey) ?? fallbackEntry?.key;
     if (!key) return;
-    // A match above the window has no row to scroll to yet: mount its page first.
-    const index = displayEntries.findIndex((entry) => entry.key === key);
-    if (index >= 0 && index < windowStart) {
-      stick.stopScroll();
-      windowAnchor = {
-        view: windowViewKey,
-        key: displayEntries[Math.max(0, index - TRANSCRIPT_PREPARE_ROWS)].key,
-      };
-    }
-    void tick().then(() => scrollToEntry(key));
+    // scrollToEntry mounts a page before scrolling when the match is outside the window.
+    scrollToEntry(key);
   }
 
   function isActiveFindEntry(entry: DisplayEntry): boolean {
@@ -328,8 +333,10 @@
   });
 
   $effect(() => {
-    // Recompute sticky and jump targets after rows or message layout changes.
+    // Recompute sticky and jump targets after rows, the rendered window, or
+    // message layout changes.
     displayEntries.length;
+    windowStart;
     void tick().then(updateStickyTargets);
   });
 
@@ -445,6 +452,20 @@
     return index >= 0 ? index : tailWindowStart;
   });
   const visibleEntries = $derived(displayEntries.slice(windowStart));
+
+  /** The last user row before the rendered window is the logical previous
+   * message when the nearer rows have been virtualized away. */
+  function virtualizedPreviousUser(): string | null {
+    for (let index = Math.min(windowStart, displayEntries.length) - 1; index >= 0; index -= 1) {
+      const entry = displayEntries[index];
+      if (entry.kind === 'message' && entry.message.role === 'user') return entry.key;
+    }
+    return null;
+  }
+
+  function previousUserTarget(positions: readonly UserMessagePosition[], viewportTop: number, threshold: number, virtualizedTarget: string | null): string | null {
+    return previousUserAbove(positions, viewportTop, threshold) ?? virtualizedTarget;
+  }
 
   function followingTail(): boolean {
     const sc = scrollContainer;
