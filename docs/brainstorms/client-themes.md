@@ -25,9 +25,15 @@ Add an Appearance tab to the PWA Settings experience. Preview the eight built-in
 
 The existing extension host loads modules from `$XDG_CONFIG_HOME/pimote/extensions` and user-scope Pi packages' `pimote.extensions` entries. The host currently exposes folder-source and Settings-file registration only. Architecture must define a theme-contribution seam that follows this lifecycle and its failure isolation.
 
-## Open questions for architecture
+## Open questions
+
+### Sharp questions
 
 - Define the user theme-file schema, UI token names, editor-role names, swatch-reference syntax, and validation.
 - Map the agreed language-neutral editor roles across CodeMirror, Highlight.js, and the ANSI palette.
 - Apply a selection without a flash on startup, and decide how browser chrome and installed-PWA colors respond.
 - Define the shared static-report helper's public CSS variables and fallback when no cached theme snapshot exists.
+
+### Fog
+
+No other unresolved areas were identified.
