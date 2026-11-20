@@ -512,6 +512,7 @@ function thirdParty(
     matchingBracket: string;
     searchMatch: string;
     errorSurface: string;
+    syntaxForegroundRoles?: readonly EditorSyntaxRole[];
   },
 ): ThemeDefinition {
   const green = colors.terminal.green ?? colors.accent;
@@ -602,6 +603,7 @@ function thirdParty(
     deleted: neutral,
     changed: neutral,
   };
+  for (const role of colors.syntaxForegroundRoles ?? []) syntax[role] = colors.foreground;
   return definition(
     id,
     name,
@@ -668,7 +670,7 @@ export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
     selection: '#44475a',
     cursor: '#f8f8f2',
     lineNumber: '#6272a4',
-    matchingBracket: '#ff79c6',
+    matchingBracket: '#343746',
     searchMatch: '#f1fa8c',
     errorSurface: '#343746',
   }),
@@ -785,9 +787,10 @@ export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
     selection: '#504945',
     cursor: '#ebdbb2',
     lineNumber: '#928374',
-    matchingBracket: '#fabd2f',
+    matchingBracket: '#32302f',
     searchMatch: '#fabd2f',
     errorSurface: '#3c1f1e',
+    syntaxForegroundRoles: ['keyword', 'control-keyword', 'definition-keyword', 'operator', 'string', 'doc-string'],
   }),
   thirdParty('solarized/light', 'Solarized Light', 'light', {
     background: '#fdf6e3',
@@ -824,9 +827,10 @@ export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
     selection: '#eee8d5',
     cursor: '#657b83',
     lineNumber: '#93a1a1',
-    matchingBracket: '#b58900',
+    matchingBracket: '#eee8d5',
     searchMatch: '#657b83',
     errorSurface: '#eee8d5',
+    syntaxForegroundRoles: ['keyword', 'control-keyword', 'definition-keyword', 'operator', 'string', 'doc-string'],
   }),
   thirdParty('catppuccin/mocha', 'Catppuccin Mocha', 'dark', {
     background: '#1e1e2e',
@@ -863,7 +867,7 @@ export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
     selection: '#45475a',
     cursor: '#cdd6f4',
     lineNumber: '#6c7086',
-    matchingBracket: '#cba6f7',
+    matchingBracket: '#242436',
     searchMatch: '#f9e2af',
     errorSurface: '#3a222d',
   }),
@@ -905,6 +909,21 @@ export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
     matchingBracket: '#df8e1d',
     searchMatch: '#4c4f69',
     errorSurface: '#e6e9ef',
+    syntaxForegroundRoles: [
+      'keyword',
+      'control-keyword',
+      'definition-keyword',
+      'operator',
+      'string',
+      'doc-string',
+      'number',
+      'boolean',
+      'type',
+      'function',
+      'inserted',
+      'deleted',
+      'changed',
+    ],
   }),
 ];
 
