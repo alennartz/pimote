@@ -216,6 +216,11 @@
     return resultValue(value, key) === true;
   }
 
+  function sendExpectsResponse(block: SubagentContent): boolean {
+    if (block.data.operation !== 'send' || !('parameters' in block.data)) return false;
+    return resultBoolean(block.data.parameters, 'expectResponse');
+  }
+
   function isAgentPath(value: unknown): value is AgentPath {
     return Array.isArray(value) && value.every((part) => typeof part === 'string');
   }
@@ -333,8 +338,14 @@
         {#if resultBoolean(content.data.result, 'responseExpected')}<div class="subagent-meta">Response expected</div>{/if}
       {:else if content.data.operation === 'send'}
         {@const parameters = 'parameters' in content.data ? content.data.parameters : undefined}
+        {@const expectsResponse = sendExpectsResponse(content)}
         <SubagentMarkdown label="Message" text={typeof parameters?.message === 'string' ? parameters.message : resultText(content.data.result, 'request')} streaming={active} />
-        <SubagentMarkdown label="Response" text={resultText(content.data.result, 'response')} streaming={active && resultText(content.data.result, 'phase') === 'responding'} />
+        <SubagentMarkdown
+          label="Response"
+          text={resultText(content.data.result, 'response')}
+          separated={expectsResponse}
+          streaming={active && resultText(content.data.result, 'phase') === 'responding'}
+        />
         <SubagentMarkdown label="Error" text={resultText(content.data.result, 'error')} />
       {:else if content.data.operation === 'respond'}
         {@const parameters = 'parameters' in content.data ? content.data.parameters : undefined}

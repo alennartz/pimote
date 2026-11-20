@@ -314,6 +314,21 @@ describe('subagent transcript cards', () => {
     expect(target.querySelector('[data-subagent-kind="message_received"]')).toBeNull();
   });
 
+  it('separates an expected send response from its message', async () => {
+    const { target, update } = await render(
+      operation({
+        operation: 'send',
+        parameters: { to: ['team', 'worker'], message: 'Check **settings**.', expectResponse: true },
+        result: { response: 'The settings are `valid`.', phase: 'responding' },
+      }),
+    );
+    const sendCard = card(target, 'send');
+    expect(section(sendCard, 'Response').classList.contains('subagent-text-section-separated')).toBe(true);
+
+    await update(operation({ operation: 'send', parameters: { to: ['team', 'worker'], message: 'Send an update.' }, result: { response: 'Delivered.' } }));
+    expect(section(card(target, 'send'), 'Response').classList.contains('subagent-text-section-separated')).toBe(false);
+  });
+
   it('renders all message text through the streaming Markdown renderer', async () => {
     const send = operation(
       {
