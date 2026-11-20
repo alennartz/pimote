@@ -382,13 +382,13 @@
             <CodeBlock content={bashCommand} mode="code" language="bash" streaming={streaming && !isCompleted} copyLabel="Copy command" />
           </div>
         {:else if argsText}
-          <div class="tool-section">
+          <div class="tool-section tool-section-output">
             <BoundedOutput text={argsText} streaming={streaming && !isCompleted} copyable />
           </div>
         {/if}
 
         {#if resultText}
-          <div class="tool-section">
+          <div class="tool-section tool-section-output">
             <BoundedOutput text={resultText} streaming={inProgress} bounded renderAnsi={isBash} copyable />
           </div>
         {/if}
@@ -463,6 +463,10 @@
 
   .tool-section-code {
     padding: 0;
+  }
+
+  .tool-section-output :global(.output-copy-btn) {
+    right: -6px;
   }
 
   .tool-section + .tool-section {
