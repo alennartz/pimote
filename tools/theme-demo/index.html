@@ -412,6 +412,38 @@
       .terminal .cyan {
         color: var(--term-cyan);
       }
+      .ansi-samples {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 4px 10px;
+        margin-top: 8px;
+      }
+      .ansi-sample {
+        display: grid;
+        grid-template-columns: 1.2em minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+      }
+      .ansi-glyph {
+        font-size: 1.25rem;
+        line-height: 1;
+      }
+      .ansi-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .ansi-value {
+        color: var(--ui-muted-foreground);
+        font-size: 0.7rem;
+      }
+      .ansi-background {
+        width: 2.4em;
+        height: 1.2em;
+        border: 1px solid color-mix(in srgb, var(--ui-border) 75%, transparent);
+        border-radius: 3px;
+      }
       .link-samples a {
         color: var(--ui-link);
         text-decoration: underline;
@@ -560,19 +592,9 @@
           <section class="panel">
             <h2>ANSI output surfaces</h2>
             <h3>Bash execution output</h3>
-            <div class="terminal bash-terminal">
-              <span class="green">$ npm run build</span>
-              <span class="cyan">building client and server</span>
-              <span class="yellow">warning: review contrast on selection</span>
-              <span class="red">error: sample failure output</span>
-              <span class="magenta">info: theme demo</span>
-            </div>
+            <div id="bash-terminal" class="terminal bash-terminal"></div>
             <h3 style="margin-top: 14px">Extension status bar</h3>
-            <div class="terminal extension-terminal">
-              <span class="green">extension: connected</span>
-              <span class="cyan">watching theme files</span>
-              <span class="yellow">status: waiting for changes</span>
-            </div>
+            <div id="extension-terminal" class="terminal extension-terminal"></div>
           </section>
         </div>
 
@@ -606,6 +628,8 @@
       const palette = document.querySelector('#palette');
       const ansiPalette = document.querySelector('#ansi-palette');
       const sessionChips = document.querySelector('#session-chips');
+      const bashTerminal = document.querySelector('#bash-terminal');
+      const extensionTerminal = document.querySelector('#extension-terminal');
       const metrics = document.querySelector('#metrics');
       const findings = document.querySelector('#findings');
       const metadata = document.querySelector('#metadata');
@@ -624,6 +648,24 @@
       }
       select.value = localStorage.getItem('pimote-theme-demo') || 'pimote/dark';
 
+      const ansiRoles = [
+        'black',
+        'red',
+        'green',
+        'yellow',
+        'blue',
+        'magenta',
+        'cyan',
+        'white',
+        'bright-black',
+        'bright-red',
+        'bright-green',
+        'bright-yellow',
+        'bright-blue',
+        'bright-magenta',
+        'bright-cyan',
+        'bright-white',
+      ];
       const setToken = (prefix, role, value) => document.documentElement.style.setProperty(`--${prefix}-${role}`, value);
       function applyTheme(theme) {
         document.documentElement.classList.toggle('dark', theme.colorScheme === 'dark');
@@ -636,14 +678,32 @@
         localStorage.setItem('pimote-theme-demo', theme.id);
         renderPalette(theme);
         renderSessionChips();
+        renderAnsi(theme);
         renderAudit(theme);
         metadata.innerHTML = `<p><strong>${theme.name}</strong></p><p><code>${theme.id}</code></p><p>Palette entries: ${Object.keys(theme.palette ?? {}).length}</p><p>Selection foreground: <code>${theme.editor.surface['selection-foreground']}</code></p><p>Diff add: <code>${theme.editor.surface['diff-addition-background']}</code></p><p>Diff remove: <code>${theme.editor.surface['diff-deletion-background']}</code></p>`;
+      }
+      function swatchForeground(value) {
+        const probe = document.createElement('span');
+        probe.style.position = 'fixed';
+        probe.style.backgroundColor = value;
+        probe.style.visibility = 'hidden';
+        document.body.append(probe);
+        const color = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        const channels =
+          color
+            .match(/rgba?\(([^)]+)\)/)?.[1]
+            .split(',')
+            .map((channel) => Number.parseFloat(channel.trim())) ?? [];
+        if (channels.length < 3 || channels.some((channel) => Number.isNaN(channel))) return 'var(--ui-foreground)';
+        const luminance = (0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]) / 255;
+        return luminance > 0.52 ? '#111' : '#fff';
       }
       function renderPalette(theme) {
         const entries = Object.entries(data.palettes[theme.id] ?? {});
         const isAnsi = ([name]) => name.startsWith('ansi-') || name.startsWith('terminal-');
         const swatch = ([name, value]) =>
-          `<div class="swatch" style="--swatch: ${value}; --swatch-fg: var(--ui-foreground)"><small>${name.replace(/^(ansi|terminal)-/, '')}</small><code>${value}</code></div>`;
+          `<div class="swatch" style="--swatch: ${value}; --swatch-fg: ${swatchForeground(value)}"><small>${name.replace(/^(ansi|terminal)-/, '')}</small><code>${value}</code></div>`;
         palette.innerHTML = entries
           .filter(([name]) => !isAnsi([name]))
           .sort(([left], [right]) => left.localeCompare(right))
@@ -669,6 +729,16 @@
             ),
           )
           .join('');
+      }
+      function renderAnsi(theme) {
+        const samples = ansiRoles
+          .map((role) => {
+            const value = theme.editor.terminal[role];
+            return `<span class="ansi-sample"><span class="ansi-glyph" style="color: var(--term-${role})">█</span><span class="ansi-name">${role}</span><span class="ansi-value">${value}</span><span class="ansi-background" style="background: var(--term-${role})"></span></span>`;
+          })
+          .join('');
+        bashTerminal.innerHTML = `<span class="green">$ npm run build</span><br><span class="cyan">ANSI foreground and background slots</span><div class="ansi-samples">${samples}</div>`;
+        extensionTerminal.innerHTML = `<span class="green">extension: connected</span><br><span class="yellow">status: waiting for changes</span><div class="ansi-samples">${samples}</div>`;
       }
       function renderAudit(theme) {
         const list = auditById.get(theme.id) ?? [];
