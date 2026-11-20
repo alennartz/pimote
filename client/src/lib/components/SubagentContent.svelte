@@ -90,7 +90,8 @@
   function titleFor(block: SubagentContent): string {
     if (block.subagentKind === 'delegation') return 'spawn';
     if (block.subagentKind === 'completion') return 'agent';
-    if (block.subagentKind === 'message_received') return 'message';
+    if (block.subagentKind === 'message_received') return resultBoolean(block.data.result, 'responseExpected') ? 'request' : 'message';
+    if (block.subagentKind === 'respond') return 'response';
     if (block.subagentKind === 'protocol_error' || block.data.operation === 'protocol_error') return 'protocol';
     return block.subagentKind;
   }

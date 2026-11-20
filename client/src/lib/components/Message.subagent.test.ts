@@ -243,6 +243,7 @@ describe('subagent transcript cards', () => {
     };
     const { target } = await render(received, { custom: true });
     const messageCard = card(target, 'message_received');
+    expect(messageCard.querySelector('.subagent-name')?.textContent).toBe('message');
     expect(messageCard.querySelector('.subagent-body')).not.toBeNull();
 
     // The reader scrolled the settled card out of view: it stays open.
@@ -368,6 +369,7 @@ describe('subagent transcript cards', () => {
     const respond = operation({ operation: 'respond', parameters: { message: 'All **clear**.' }, result: { message: 'Delivered.' } });
     const { target } = await render(respond);
     const respondCard = card(target, 'respond');
+    expect(respondCard.querySelector('.subagent-name')?.textContent).toBe('response');
     expect(respondCard.querySelector('.tool-section-label')).toBeNull();
     expect(respondCard.querySelector('[data-agent-path="team"]')).not.toBeNull();
     expect(respondCard.querySelector('.subagent-status')?.textContent).toContain('replied');
@@ -383,6 +385,7 @@ describe('subagent transcript cards', () => {
     );
     const { target } = await render(incoming, { custom: true, rootSessionId: 'root-session' });
     const messageCard = card(target, 'message_received');
+    expect(messageCard.querySelector('.subagent-name')?.textContent).toBe('request');
     expect(messageCard.querySelector('.tool-section-label')).toBeNull();
     expect(messageCard.querySelector('[data-agent-path="team/worker"]')).not.toBeNull();
     expect(section(messageCard, 'Message').querySelector('strong')?.textContent).toBe('check');
