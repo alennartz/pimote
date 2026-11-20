@@ -139,6 +139,8 @@
     display: inline-block;
     max-width: 100%;
     overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
     vertical-align: middle;
   }
 
@@ -147,6 +149,13 @@
     max-width: 100%;
     margin: 0.75em 0;
     overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
+  .markdown-content :global(equation-inline::-webkit-scrollbar),
+  .markdown-content :global(equation-block::-webkit-scrollbar) {
+    display: none;
   }
 
   .markdown-content :global(equation-block .katex-display) {
