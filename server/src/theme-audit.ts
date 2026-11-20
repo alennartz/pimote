@@ -82,7 +82,7 @@ const DIFF_ROLES: ReadonlyArray<{ role: EditorSyntaxRole; label: string; backgro
 const COLOR_SPACE = 'oklch';
 const STATUS_TINT_AMOUNT = 0.1;
 const ANSI_TEXT_MINIMUM = 2;
-const HOVER_SURFACE_MINIMUM = 2;
+const HOVER_SURFACE_MINIMUM = 1.2;
 
 const DIFF_MAPPING_CONTRACTS = [
   { rule: 'mapping.editor.diff.addition-background', token: '--pimote-editor-diff-addition-background' },

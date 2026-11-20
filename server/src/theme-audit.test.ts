@@ -103,6 +103,16 @@ describe('theme audit', () => {
     expect(rules).toContain('ui.button.outline-hover');
   });
 
+  it('accepts a menu hover surface at the 1.2:1 minimum', () => {
+    const theme = resolvedTheme('test/light');
+    theme.ui.popover = '#000000';
+    theme.ui.accent = '#202020';
+
+    const report = auditThemes([theme]);
+
+    expect(report.findings.some((finding) => finding.rule === 'ui.menu-item-hover')).toBe(false);
+  });
+
   it('flags diff CSS without dedicated diff background roles', () => {
     expect(auditClientMappings('.hljs-addition { background: var(--pimote-editor-active-line); }')).toEqual([
       expect.objectContaining({ rule: 'mapping.editor.diff.addition-background' }),
