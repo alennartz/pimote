@@ -251,12 +251,13 @@
         padding: 8px 10px;
         border: 1px solid var(--ui-border);
         border-radius: 8px;
-        background: var(--ui-card);
+        background: var(--ui-secondary);
+        color: var(--ui-secondary-foreground);
       }
       .session-chip.selected {
-        border-color: var(--ui-accent);
-        background: var(--ui-accent);
-        color: var(--ui-accent-foreground);
+        border-color: var(--ui-primary);
+        background: var(--ui-primary);
+        color: var(--ui-primary-foreground);
       }
       .status-icon {
         width: 8px;
@@ -597,10 +598,6 @@
             <div id="findings" class="audit-list"></div>
           </section>
           <section class="panel">
-            <h2>Theme metadata</h2>
-            <div id="metadata" class="small"></div>
-          </section>
-          <section class="panel">
             <h2>Review notes</h2>
             <p>
               Use the selector to compare the same context. Focus on whether a color is readable, whether a semantic state remains visible, and whether the role feels intentional.
@@ -624,7 +621,6 @@
       const extensionTerminal = document.querySelector('#extension-terminal');
       const metrics = document.querySelector('#metrics');
       const findings = document.querySelector('#findings');
-      const metadata = document.querySelector('#metadata');
       const themeById = new Map(data.themes.map((theme) => [theme.id, theme]));
       const auditById = new Map();
       for (const finding of data.audit.findings) {
@@ -672,7 +668,6 @@
         renderSessionChips();
         renderAnsi(theme);
         renderAudit(theme);
-        metadata.innerHTML = `<p><strong>${theme.name}</strong></p><p><code>${theme.id}</code></p><p>Palette entries: ${Object.keys(theme.palette ?? {}).length}</p><p>Selection foreground: <code>${theme.editor.surface['selection-foreground']}</code></p><p>Diff add: <code>${theme.editor.surface['diff-addition-background']}</code></p><p>Diff remove: <code>${theme.editor.surface['diff-deletion-background']}</code></p>`;
       }
       function swatchForeground(value) {
         const probe = document.createElement('span');
@@ -709,16 +704,16 @@
       }
       function renderSessionChips() {
         const states = [
-          ['Streaming', 'working', 'var(--ui-status-streaming)'],
-          ['Idle', 'idle', 'var(--ui-muted-foreground)'],
-          ['Needs attention', 'attention', 'var(--ui-status-reconnecting)'],
+          ['Streaming', 'working', () => 'var(--ui-status-streaming)'],
+          ['Idle', 'idle', (selected) => (selected ? 'var(--ui-primary-foreground)' : 'var(--ui-secondary-foreground)')],
+          ['Needs attention', 'attention', () => 'var(--ui-status-reconnecting)'],
         ];
         sessionChips.innerHTML = states
-          .flatMap(([label, detail, color]) =>
-            [false, true].map(
-              (selected) =>
-                `<span class="session-chip${selected ? ' selected' : ''}"><i class="status-icon" style="--status-color: ${color}"></i><span>${label}</span><small>${selected ? 'selected' : detail}</small></span>`,
-            ),
+          .flatMap(([label, detail, colorFor]) =>
+            [false, true].map((selected) => {
+              const color = colorFor(selected);
+              return `<span class="session-chip${selected ? ' selected' : ''}"><i class="status-icon" style="--status-color: ${color}"></i><span>${label}</span><small>${selected ? 'selected' : detail}</small></span>`;
+            }),
           )
           .join('');
       }
