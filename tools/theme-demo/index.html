@@ -1,0 +1,613 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pimote theme demo</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --ui-background: Canvas;
+        --ui-foreground: CanvasText;
+        --ui-card: Canvas;
+        --ui-card-foreground: CanvasText;
+        --ui-popover: Canvas;
+        --ui-popover-foreground: CanvasText;
+        --ui-primary: Highlight;
+        --ui-primary-foreground: HighlightText;
+        --ui-secondary: ButtonFace;
+        --ui-secondary-foreground: ButtonText;
+        --ui-muted: ButtonFace;
+        --ui-muted-foreground: GrayText;
+        --ui-accent: Highlight;
+        --ui-accent-foreground: HighlightText;
+        --ui-destructive: LinkText;
+        --ui-warning: Mark;
+        --ui-border: GrayText;
+        --ui-status-active: LinkText;
+        --ui-status-connected: LinkText;
+        --ui-status-error: LinkText;
+        --ui-status-reconnecting: Mark;
+        --ui-surface-sunken: Canvas;
+        --ui-surface-raised: ButtonFace;
+        --ui-surface-subtle: ButtonFace;
+        --ui-surface-hover: Highlight;
+        --ui-error-accent: LinkText;
+        --ui-error-surface: Canvas;
+        --ui-error-foreground: CanvasText;
+        --ui-skill-accent: LinkText;
+        --ui-skill-surface: Canvas;
+        --ui-skill-foreground: CanvasText;
+        --ui-custom-accent: LinkText;
+        --ui-custom-surface: Canvas;
+        --ui-custom-foreground: CanvasText;
+        --ui-link: LinkText;
+        --ui-link-hover: LinkText;
+        --ui-avatar-bg: Highlight;
+        --ui-avatar-fg: HighlightText;
+        --editor-background: Canvas;
+        --editor-foreground: CanvasText;
+        --editor-selection: Highlight;
+        --editor-selection-foreground: HighlightText;
+        --editor-active-line: ButtonFace;
+        --editor-matching-bracket: Highlight;
+        --editor-search-match: LinkText;
+        --editor-diff-addition-background: Mark;
+        --editor-diff-deletion-background: Mark;
+        --editor-comment: CanvasText;
+        --editor-keyword: LinkText;
+        --editor-string: CanvasText;
+        --editor-number: LinkText;
+        --editor-function: LinkText;
+        --editor-type: CanvasText;
+        --editor-inserted: CanvasText;
+        --editor-deleted: CanvasText;
+        --term-red: red;
+        --term-green: green;
+        --term-yellow: orange;
+        --term-blue: blue;
+        --term-magenta: magenta;
+        --term-cyan: teal;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--ui-background);
+        color: var(--ui-foreground);
+        font:
+          15px/1.5 system-ui,
+          sans-serif;
+      }
+      main {
+        max-width: 1500px;
+        margin: 0 auto;
+        padding: 20px clamp(14px, 3vw, 42px) 56px;
+      }
+      header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: end;
+        justify-content: space-between;
+        gap: 18px;
+        margin-bottom: 18px;
+      }
+      h1,
+      h2,
+      h3 {
+        line-height: 1.15;
+        letter-spacing: -0.02em;
+      }
+      h1 {
+        margin: 0;
+        font-size: clamp(1.8rem, 4vw, 2.8rem);
+      }
+      h2 {
+        margin: 0 0 12px;
+        font-size: 1.1rem;
+      }
+      h3 {
+        margin: 0 0 8px;
+        font-size: 0.95rem;
+      }
+      .subtitle {
+        margin: 5px 0 0;
+        color: var(--ui-muted-foreground);
+      }
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+      }
+      select,
+      button {
+        border: 1px solid var(--ui-border);
+        border-radius: 7px;
+        background: var(--ui-card);
+        color: var(--ui-foreground);
+        padding: 8px 10px;
+        font: inherit;
+      }
+      select:focus-visible,
+      button:focus-visible {
+        outline: 2px solid var(--ui-status-active);
+        outline-offset: 2px;
+      }
+      .scheme {
+        color: var(--ui-muted-foreground);
+        font-size: 0.82rem;
+      }
+      .audit-summary {
+        display: inline-flex;
+        gap: 8px;
+        align-items: center;
+        padding: 7px 10px;
+        border: 1px solid var(--ui-border);
+        border-radius: 999px;
+        background: var(--ui-card);
+        font-size: 0.82rem;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1.3fr) minmax(300px, 0.7fr);
+        gap: 16px;
+      }
+      .stack {
+        display: grid;
+        gap: 16px;
+      }
+      .panel {
+        min-width: 0;
+        padding: 16px;
+        border: 1px solid var(--ui-border);
+        border-radius: 11px;
+        background: var(--ui-card);
+        box-shadow: 0 8px 26px color-mix(in srgb, var(--ui-background) 55%, transparent);
+      }
+      .panel > p {
+        margin: 0 0 12px;
+        color: var(--ui-muted-foreground);
+      }
+      .swatches {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        gap: 8px;
+      }
+      .swatch {
+        min-height: 64px;
+        padding: 9px;
+        border: 1px solid color-mix(in srgb, var(--ui-border) 70%, transparent);
+        border-radius: 8px;
+        background: var(--swatch);
+        color: var(--swatch-fg, var(--ui-foreground));
+      }
+      .swatch small {
+        display: block;
+        opacity: 0.8;
+        font-size: 0.72rem;
+      }
+      .swatch code {
+        display: block;
+        margin-top: 5px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 0.68rem;
+      }
+      .buttons,
+      .chips,
+      .links,
+      .avatars {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+      }
+      .button {
+        border: 1px solid transparent;
+        border-radius: 7px;
+        padding: 8px 12px;
+        font-weight: 650;
+      }
+      .primary {
+        background: var(--ui-primary);
+        color: var(--ui-primary-foreground);
+      }
+      .secondary {
+        background: var(--ui-secondary);
+        color: var(--ui-secondary-foreground);
+        border-color: var(--ui-border);
+      }
+      .destructive {
+        background: color-mix(in srgb, var(--ui-destructive) 16%, var(--ui-background));
+        color: var(--ui-foreground);
+        border-color: color-mix(in srgb, var(--ui-destructive) 50%, var(--ui-border));
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border: 1px solid color-mix(in srgb, var(--chip) 48%, var(--ui-border));
+        border-radius: 999px;
+        padding: 4px 9px;
+        background: color-mix(in srgb, var(--chip) 12%, var(--ui-background));
+        color: var(--ui-foreground);
+        font-size: 0.8rem;
+      }
+      .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--chip);
+      }
+      .callouts {
+        display: grid;
+        gap: 9px;
+      }
+      .callout {
+        padding: 11px 13px;
+        border-left: 3px solid var(--accent);
+        border-radius: 6px;
+        background: color-mix(in srgb, var(--surface) 52%, transparent);
+      }
+      .callout strong {
+        display: block;
+        color: var(--text);
+        font-size: 0.82rem;
+      }
+      .callout span {
+        color: var(--ui-muted-foreground);
+        font-size: 0.84rem;
+      }
+      .editor {
+        overflow: auto;
+        margin: 0;
+        padding: 14px;
+        border: 1px solid var(--ui-border);
+        border-radius: 8px;
+        background: var(--editor-background);
+        color: var(--editor-foreground);
+        font:
+          13px/1.65 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+      }
+      .editor .comment {
+        color: var(--editor-comment);
+      }
+      .editor .keyword {
+        color: var(--editor-keyword);
+      }
+      .editor .string {
+        color: var(--editor-string);
+      }
+      .editor .number {
+        color: var(--editor-number);
+      }
+      .editor .function {
+        color: var(--editor-function);
+      }
+      .editor .type {
+        color: var(--editor-type);
+      }
+      .editor .selection {
+        background: var(--editor-selection);
+        color: var(--editor-selection-foreground);
+      }
+      .editor .search {
+        text-decoration: underline 2px var(--editor-search-match);
+        text-underline-offset: 2px;
+      }
+      .editor .bracket {
+        outline: 1px solid var(--editor-matching-bracket);
+        outline-offset: 1px;
+      }
+      .diff {
+        overflow: auto;
+        border: 1px solid var(--ui-border);
+        border-radius: 8px;
+        background: var(--editor-background);
+        font:
+          13px/1.65 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+      }
+      .diff-line {
+        display: block;
+        padding: 3px 12px;
+        white-space: pre;
+      }
+      .diff-line.add {
+        background: var(--editor-diff-addition-background);
+        color: var(--editor-inserted);
+      }
+      .diff-line.remove {
+        background: var(--editor-diff-deletion-background);
+        color: var(--editor-deleted);
+      }
+      .terminal {
+        overflow: auto;
+        padding: 13px;
+        border-radius: 8px;
+        background: #000;
+        color: #ddd;
+        font:
+          13px/1.7 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+      }
+      .terminal .red {
+        color: var(--term-red);
+      }
+      .terminal .green {
+        color: var(--term-green);
+      }
+      .terminal .yellow {
+        color: var(--term-yellow);
+      }
+      .terminal .blue {
+        color: var(--term-blue);
+      }
+      .terminal .magenta {
+        color: var(--term-magenta);
+      }
+      .terminal .cyan {
+        color: var(--term-cyan);
+      }
+      .link-samples a {
+        color: var(--ui-link);
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+      .link-samples a:hover {
+        color: var(--ui-link-hover);
+      }
+      .audit-list {
+        display: grid;
+        gap: 6px;
+        max-height: 560px;
+        overflow: auto;
+      }
+      .finding {
+        padding: 8px 10px;
+        border-left: 3px solid var(--ui-destructive);
+        border-radius: 5px;
+        background: color-mix(in srgb, var(--ui-destructive) 10%, var(--ui-card));
+        font-size: 0.8rem;
+      }
+      .finding.warn {
+        border-left-color: var(--ui-warning);
+        background: color-mix(in srgb, var(--ui-warning) 10%, var(--ui-card));
+      }
+      .finding code {
+        font-size: 0.75rem;
+      }
+      .empty {
+        color: var(--ui-status-connected);
+      }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .metric {
+        padding: 10px;
+        border-radius: 8px;
+        background: var(--ui-surface-subtle);
+        text-align: center;
+      }
+      .metric b {
+        display: block;
+        font-size: 1.25rem;
+      }
+      .metric small {
+        color: var(--ui-muted-foreground);
+      }
+      @media (max-width: 980px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+      }
+      @media (max-width: 520px) {
+        .metrics {
+          grid-template-columns: 1fr;
+        }
+        .swatches {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>Pimote theme demo</h1>
+          <p class="subtitle">Inspect the same UI, editor, diff, callout, link, and terminal contexts across every built-in theme.</p>
+        </div>
+        <div class="controls">
+          <label for="theme-select">Theme</label>
+          <select id="theme-select"></select>
+          <span id="scheme" class="scheme"></span>
+          <span id="audit-summary" class="audit-summary"></span>
+        </div>
+      </header>
+
+      <div class="layout">
+        <div class="stack">
+          <section class="panel">
+            <h2>UI surfaces and roles</h2>
+            <div id="swatches" class="swatches"></div>
+          </section>
+
+          <section class="panel">
+            <h2>Buttons, statuses, and links</h2>
+            <div class="buttons" style="margin-bottom: 12px">
+              <span class="button primary">Primary action</span>
+              <span class="button secondary">Secondary</span>
+              <span class="button destructive">Destructive</span>
+            </div>
+            <div class="chips" style="margin-bottom: 12px">
+              <span class="chip" style="--chip: var(--ui-status-connected)"><i class="dot"></i>Connected</span>
+              <span class="chip" style="--chip: var(--ui-status-reconnecting)"><i class="dot"></i>Reconnecting</span>
+              <span class="chip" style="--chip: var(--ui-status-error)"><i class="dot"></i>Error</span>
+              <span class="chip" style="--chip: var(--ui-status-active)"><i class="dot"></i>Active</span>
+            </div>
+            <div class="link-samples links">
+              <a href="#">Message link</a>
+              <a href="#">Release link</a>
+              <a href="#">Sunken link</a>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h2>Callouts</h2>
+            <div class="callouts">
+              <div class="callout" style="--accent: var(--ui-error-accent); --surface: var(--ui-error-surface); --text: var(--ui-error-foreground)">
+                <strong>Error callout</strong><span>Provider errors and request metadata.</span>
+              </div>
+              <div class="callout" style="--accent: var(--ui-skill-accent); --surface: var(--ui-skill-surface); --text: var(--ui-skill-foreground)">
+                <strong>Skill callout</strong><span>Expandable skill content and line counts.</span>
+              </div>
+              <div class="callout" style="--accent: var(--ui-custom-accent); --surface: var(--ui-custom-surface); --text: var(--ui-custom-foreground)">
+                <strong>Custom callout</strong><span>Extension-provided content and controls.</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h2>Editor and diff contexts</h2>
+            <pre class="editor"><code><span class="comment">// comments remain readable</span>
+<span class="keyword">const</span> <span class="type">value</span> = <span class="string search">"search match"</span>;
+<span class="keyword">if</span> (value <span class="bracket">[</span><span class="number">0</span><span class="bracket">]</span>) {
+  <span class="function">render</span>(<span class="selection">value</span>);
+}</code></pre>
+            <div style="height: 10px"></div>
+            <div class="diff">
+              <span class="diff-line add">+ const next = calculate();</span>
+              <span class="diff-line remove">- const next = previous;</span>
+              <span class="diff-line"> return next;</span>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h2>Terminal output</h2>
+            <div class="terminal">
+              <span class="green">$ npm run build</span>
+              <span class="cyan">building client and server</span>
+              <span class="yellow">warning: review contrast on selection</span>
+              <span class="red">error: sample failure output</span>
+              <span class="magenta">info: theme demo</span>
+            </div>
+          </section>
+        </div>
+
+        <aside class="stack">
+          <section class="panel">
+            <h2>Audit summary</h2>
+            <div id="metrics" class="metrics"></div>
+            <div id="findings" class="audit-list"></div>
+          </section>
+          <section class="panel">
+            <h2>Theme metadata</h2>
+            <div id="metadata" class="small"></div>
+          </section>
+          <section class="panel">
+            <h2>Review notes</h2>
+            <p>
+              Use the selector to compare the same context. Focus on whether a color is readable, whether a semantic state remains visible, and whether the role feels intentional.
+            </p>
+            <p class="small">This page is a manual review tool. It does not ship in the PWA.</p>
+          </section>
+        </aside>
+      </div>
+
+      <footer>Loaded from the current server theme catalog and client mapping source files. Restart the demo server after source edits.</footer>
+    </main>
+    <script type="module">
+      const data = await fetch('./themes.json').then((response) => response.json());
+      const select = document.querySelector('#theme-select');
+      const scheme = document.querySelector('#scheme');
+      const summary = document.querySelector('#audit-summary');
+      const swatches = document.querySelector('#swatches');
+      const metrics = document.querySelector('#metrics');
+      const findings = document.querySelector('#findings');
+      const metadata = document.querySelector('#metadata');
+      const themeById = new Map(data.themes.map((theme) => [theme.id, theme]));
+      const auditById = new Map();
+      for (const finding of data.audit.findings) {
+        const list = auditById.get(finding.themeId) ?? [];
+        list.push(finding);
+        auditById.set(finding.themeId, list);
+      }
+      for (const theme of data.themes) {
+        const option = document.createElement('option');
+        option.value = theme.id;
+        option.textContent = theme.name;
+        select.append(option);
+      }
+      select.value = localStorage.getItem('pimote-theme-demo') || 'pimote/dark';
+
+      const uiSwatches = [
+        ['background', 'Background', 'foreground'],
+        ['card', 'Card', 'card-foreground'],
+        ['popover', 'Popover', 'popover-foreground'],
+        ['primary', 'Primary', 'primary-foreground'],
+        ['secondary', 'Secondary', 'secondary-foreground'],
+        ['muted', 'Muted', 'muted-foreground'],
+        ['accent', 'Accent', 'accent-foreground'],
+        ['destructive', 'Destructive', 'foreground'],
+        ['warning', 'Warning', 'foreground'],
+        ['surface-sunken', 'Sunken', 'foreground'],
+        ['surface-raised', 'Raised', 'foreground'],
+        ['border', 'Border', 'foreground'],
+      ];
+      const setToken = (prefix, role, value) => document.documentElement.style.setProperty(`--${prefix}-${role}`, value);
+      function applyTheme(theme) {
+        document.documentElement.classList.toggle('dark', theme.colorScheme === 'dark');
+        document.documentElement.style.setProperty('color-scheme', theme.colorScheme);
+        for (const [role, value] of Object.entries(theme.ui)) setToken('ui', role, value);
+        for (const [role, value] of Object.entries(theme.editor.surface)) setToken('editor', role, value);
+        for (const [role, value] of Object.entries(theme.editor.syntax)) setToken('editor', role, value);
+        for (const [role, value] of Object.entries(theme.editor.terminal)) setToken('term', role, value);
+        scheme.textContent = `${theme.colorScheme} · ${theme.source}`;
+        localStorage.setItem('pimote-theme-demo', theme.id);
+        renderSwatches(theme);
+        renderAudit(theme);
+        metadata.innerHTML = `<p><strong>${theme.name}</strong></p><p><code>${theme.id}</code></p><p>Palette entries: ${Object.keys(theme.palette ?? {}).length}</p><p>Selection foreground: <code>${theme.editor.surface['selection-foreground']}</code></p><p>Diff add: <code>${theme.editor.surface['diff-addition-background']}</code></p><p>Diff remove: <code>${theme.editor.surface['diff-deletion-background']}</code></p>`;
+      }
+      function renderSwatches(theme) {
+        swatches.innerHTML = uiSwatches
+          .map(
+            ([role, label, fg]) =>
+              `<div class="swatch" style="--swatch: var(--ui-${role}); --swatch-fg: var(--ui-${fg})"><small>${label}</small><code>${theme.ui[role]}</code></div>`,
+          )
+          .join('');
+      }
+      function renderAudit(theme) {
+        const list = auditById.get(theme.id) ?? [];
+        const errors = list.filter((finding) => finding.severity === 'error').length;
+        const warnings = list.filter((finding) => finding.severity === 'warning').length;
+        metrics.innerHTML = `<div class="metric"><b>${errors}</b><small>errors</small></div><div class="metric"><b>${warnings}</b><small>warnings</small></div><div class="metric"><b>${errors + warnings}</b><small>findings</small></div>`;
+        summary.textContent = errors === 0 && warnings === 0 ? 'Audit clean' : `${errors} errors · ${warnings} warnings`;
+        findings.innerHTML =
+          list.length === 0
+            ? '<p class="empty">No findings for this theme.</p>'
+            : list
+                .map(
+                  (finding) =>
+                    `<div class="finding ${finding.severity === 'warning' ? 'warn' : ''}"><strong>${finding.severity.toUpperCase()}</strong> <code>${finding.rule}</code><br>${finding.relationship} · ${finding.ratio.toFixed(2)}:1 / ${finding.minimum.toFixed(1)}:1</div>`,
+                )
+                .join('');
+      }
+      select.addEventListener('change', () => applyTheme(themeById.get(select.value)));
+      applyTheme(themeById.get(select.value) ?? data.themes[0]);
+    </script>
+  </body>
+</html>

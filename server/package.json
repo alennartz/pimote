@@ -8,7 +8,8 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "test": "vitest",
-    "audit:themes": "tsx src/theme-audit-cli.ts"
+    "audit:themes": "tsx src/theme-audit-cli.ts",
+    "theme-demo": "tsx ../tools/theme-demo/server.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "1.5.2",

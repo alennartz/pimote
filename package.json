@@ -60,7 +60,8 @@
     "test:patches": "node --test scripts/patch-dependencies.test.mjs",
     "version": "node ./scripts/sync-versions.mjs && npm install --package-lock-only",
     "test:versions": "node --test scripts/sync-versions.test.mjs",
-    "audit:themes": "npm run audit:themes --workspace=@pimote/server"
+    "audit:themes": "npm run audit:themes --workspace=@pimote/server",
+    "theme-demo": "npm run theme-demo --workspace=@pimote/server"
   },
   "lint-staged": {
     "*.{ts,js,svelte,css,html,json,md,yaml}": "prettier --write",
