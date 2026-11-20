@@ -31,6 +31,8 @@ export type Animation = ScrollBehavior | SpringAnimation;
 export interface StickToBottomOptions extends SpringAnimation {
   scrollElement: () => HTMLElement | null | undefined;
   contentElement: () => HTMLElement | null | undefined;
+  /** Called after a programmatic scroll write changes the scroll position. */
+  onScrollPositionChange?: () => void;
   /** Animation used for the first follow after mount. */
   initial?: Animation;
   /** Animation used when already-pinned content grows or shrinks. */
@@ -243,10 +245,12 @@ export class StickToBottom {
       StickToBottom.cachedScrollBehavior.set(scrollElement, scrollBehavior);
     }
     const changed = scrollBehavior !== 'auto';
+    const previousScrollTop = scrollElement.scrollTop;
     if (changed) scrollElement.style.scrollBehavior = 'auto';
     scrollElement.scrollTop = scrollTop;
     if (changed) scrollElement.style.scrollBehavior = scrollBehavior;
     this.ignoreScrollToTop = scrollElement.scrollTop;
+    if (scrollElement.scrollTop !== previousScrollTop) this.options.onScrollPositionChange?.();
   }
 
   private static cachedScrollBehavior = new WeakMap<HTMLElement, string>();

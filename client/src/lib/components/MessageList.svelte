@@ -141,6 +141,7 @@
   const stick = new StickToBottom({
     scrollElement: () => scrollContainer,
     contentElement: () => listInner,
+    onScrollPositionChange: updateStickyTargets,
     initial: 'instant',
     resize: 'instant',
   });
