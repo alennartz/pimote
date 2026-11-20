@@ -414,35 +414,27 @@
       }
       .ansi-samples {
         display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 4px 10px;
+        gap: 5px;
         margin-top: 8px;
       }
       .ansi-sample {
         display: grid;
-        grid-template-columns: 1.2em minmax(0, 1fr) auto;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
         align-items: center;
-        gap: 6px;
+        gap: 7px;
         min-width: 0;
       }
-      .ansi-glyph {
-        font-size: 1.25rem;
-        line-height: 1;
-      }
-      .ansi-name {
+      .ansi-text {
+        min-width: 0;
         overflow: hidden;
+        padding: 2px 5px;
+        border-radius: 3px;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
       .ansi-value {
         color: var(--ui-muted-foreground);
         font-size: 0.7rem;
-      }
-      .ansi-background {
-        width: 2.4em;
-        height: 1.2em;
-        border: 1px solid color-mix(in srgb, var(--ui-border) 75%, transparent);
-        border-radius: 3px;
       }
       .link-samples a {
         color: var(--ui-link);
@@ -734,7 +726,7 @@
         const samples = ansiRoles
           .map((role) => {
             const value = theme.editor.terminal[role];
-            return `<span class="ansi-sample"><span class="ansi-glyph" style="color: var(--term-${role})">█</span><span class="ansi-name">${role}</span><span class="ansi-value">${value}</span><span class="ansi-background" style="background: var(--term-${role})"></span></span>`;
+            return `<span class="ansi-sample"><span class="ansi-text" style="color: var(--term-${role})">FG ${role}: The quick brown fox 012345</span><span class="ansi-text" style="background: var(--term-${role}); color: var(--ui-foreground)">BG ${role}: sample text</span><span class="ansi-value">${value}</span></span>`;
           })
           .join('');
         bashTerminal.innerHTML = `<span class="green">$ npm run build</span><br><span class="cyan">ANSI foreground and background slots</span><div class="ansi-samples">${samples}</div>`;
