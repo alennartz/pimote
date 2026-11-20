@@ -463,7 +463,7 @@ const lightTerminal: Partial<Record<AnsiColorName, string>> = {
   'bright-white': '#ffffff',
 };
 const darkTerminal: Partial<Record<AnsiColorName, string>> = {
-  black: '#0d1117',
+  black: '#484f58',
   red: '#ff7b72',
   green: '#7ee787',
   yellow: '#d29922',
@@ -595,6 +595,7 @@ const pimoteLightPalette: Record<string, string> = {
 
 const pimoteDarkPalette: Record<string, string> = {
   background: darkUi.background!,
+  editorBackground: darkEditor.surface.background,
   text: darkUi.foreground!,
   textDark: darkUi['primary-foreground']!,
   panel: darkUi.sidebar!,
