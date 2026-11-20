@@ -84,6 +84,7 @@ const SURFACE_ROLES: readonly EditorSurfaceRole[] = [
   'background',
   'foreground',
   'selection',
+  'selection-foreground',
   'cursor',
   'active-line',
   'gutter-background',
@@ -453,6 +454,7 @@ const lightEditor = {
     background: '#ffffff',
     foreground: '#24292e',
     selection: '#c8e1ff',
+    'selection-foreground': '#24292e',
     cursor: '#24292e',
     'active-line': '#f6f8fa',
     'gutter-background': '#ffffff',
@@ -472,6 +474,7 @@ const darkEditor = {
     background: '#0d1117',
     foreground: '#c9d1d9',
     selection: '#264f78',
+    'selection-foreground': '#c9d1d9',
     cursor: '#c9d1d9',
     'active-line': '#161b22',
     'gutter-background': '#0d1117',
@@ -507,6 +510,7 @@ function thirdParty(
     raised: string;
     hover: string;
     selection: string;
+    selectionForeground?: string;
     cursor: string;
     lineNumber: string;
     matchingBracket: string;
@@ -614,6 +618,7 @@ function thirdParty(
         background: colors.background,
         foreground: colors.foreground,
         selection: colors.selection,
+        'selection-foreground': colors.selectionForeground ?? colors.foreground,
         cursor: colors.cursor,
         'active-line': colors.surface,
         'gutter-background': colors.surface,
@@ -802,6 +807,7 @@ export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
     string: '#2aa198',
     number: '#d33682',
     keyword: '#859900',
+    selectionForeground: '#073642',
     status: { connected: '#859900', warning: '#cb4b16', error: '#dc322f' },
     terminal: {
       black: '#073642',
@@ -903,7 +909,7 @@ export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
     surface: '#e6e9ef',
     raised: '#ccd0da',
     hover: '#bcc0cc',
-    selection: '#acb0be',
+    selection: '#ccd0da',
     cursor: '#4c4f69',
     lineNumber: '#8c8fa1',
     matchingBracket: '#df8e1d',

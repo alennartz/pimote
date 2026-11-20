@@ -166,13 +166,10 @@ function auditPair(
   addFinding(findings, theme, rule, 'pair', relationship, foreground, background, backdrop, minimum);
 }
 
-function auditSyntaxTriple(findings: ThemeAuditFinding[], theme: ResolvedTheme, role: EditorSyntaxRole): void {
+function auditSyntax(findings: ThemeAuditFinding[], theme: ResolvedTheme, role: EditorSyntaxRole): void {
   const foreground = theme.editor.syntax[role];
   const editorBackground = theme.editor.surface.background;
-  const selection = theme.editor.surface.selection;
-  const minimum = 3;
-  addFinding(findings, theme, `editor.syntax.${role}`, 'triple', `${role} on editor background`, foreground, editorBackground, editorBackground, minimum);
-  addFinding(findings, theme, `editor.syntax.${role}`, 'triple', `${role} on selection`, foreground, selection, editorBackground, minimum);
+  auditPair(findings, theme, `editor.syntax.${role}`, `${role} on editor background`, foreground, editorBackground, 3, editorBackground);
 }
 
 function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
@@ -182,11 +179,11 @@ function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
   const ui = theme.ui;
 
   auditPair(findings, theme, 'editor.body', 'editor foreground on background', surface.foreground, surface.background, 4.5, surface.background);
-  auditPair(findings, theme, 'editor.selection', 'editor foreground on selection', surface.foreground, surface.selection, 4.5, surface.background);
+  auditPair(findings, theme, 'editor.selection', 'selection foreground on selection', surface['selection-foreground'], surface.selection, 4.5, surface.background);
   auditPair(findings, theme, 'editor.matching-bracket', 'bracket syntax on matching bracket', syntax.bracket, surface['matching-bracket'], 3, surface.background);
   auditPair(findings, theme, 'editor.search-match-marker', 'search-match marker on editor background', surface['search-match'], surface.background, 3, surface.background);
 
-  for (const role of Object.keys(syntax) as EditorSyntaxRole[]) auditSyntaxTriple(findings, theme, role);
+  for (const role of Object.keys(syntax) as EditorSyntaxRole[]) auditSyntax(findings, theme, role);
 
   for (const { role, label, background } of DIFF_ROLES) {
     const foreground = syntax[role];

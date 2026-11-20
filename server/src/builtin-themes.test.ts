@@ -10,8 +10,20 @@ const CALLOUT_FOREGROUNDS = [
   ['custom-foreground', 'custom-surface'],
 ] as const;
 
+function opaque(value: string, backdrop: Color | string = '#000000'): Color {
+  const color = new Color(value).to('srgb');
+  const alpha = color.alpha ?? 1;
+  if (alpha >= 1) return new Color('srgb', color.coords);
+  const base = typeof backdrop === 'string' ? opaque(backdrop) : backdrop.to('srgb');
+  return new Color(
+    'srgb',
+    color.coords.map((channel, index) => channel * alpha + base.coords[index] * (1 - alpha)),
+  );
+}
+
 function contrast(foreground: string, background: string): number {
-  return new Color(foreground).contrast(new Color(background), 'WCAG21');
+  const opaqueBackground = opaque(background);
+  return opaque(foreground, opaqueBackground).contrast(opaqueBackground, 'WCAG21');
 }
 
 async function resolvedBuiltins() {
@@ -62,13 +74,9 @@ describe('built-in theme mappings', () => {
     }
   });
 
-  it('keeps comments readable on the editor and selection surfaces', async () => {
+  it('keeps the selection foreground readable on the selection surface', async () => {
     for (const theme of await resolvedBuiltins()) {
-      for (const role of ['comment', 'doc-comment'] as const) {
-        const foreground = theme.editor.syntax[role];
-        expect(contrast(foreground, theme.editor.surface.background), `${theme.id} ${role} on editor background`).toBeGreaterThanOrEqual(3);
-        expect(contrast(foreground, theme.editor.surface.selection), `${theme.id} ${role} on selection`).toBeGreaterThanOrEqual(3);
-      }
+      expect(contrast(theme.editor.surface['selection-foreground'], theme.editor.surface.selection), `${theme.id} selection`).toBeGreaterThanOrEqual(4.5);
     }
   });
 });

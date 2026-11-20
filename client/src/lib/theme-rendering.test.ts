@@ -127,6 +127,7 @@ describe('CodeMirror theme rendering', () => {
       expect(matchStyle.backgroundColor).toBe('rgba(0, 0, 0, 0)');
       expect(matchStyle.textDecoration).toContain('underline');
       expect(renderedColor(selected, 'background-color')).toBe(cssColor(light.editor.surface.selection));
+      expect(renderedColor(selected)).toBe(cssColor(light.editor.surface['selection-foreground']));
       expect(getComputedStyle(selected).textDecoration).toBe('none');
     } finally {
       view.destroy();

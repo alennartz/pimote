@@ -67,6 +67,7 @@ const surfaceRoles: EditorSurfaceRole[] = [
   'background',
   'foreground',
   'selection',
+  'selection-foreground',
   'cursor',
   'active-line',
   'gutter-background',

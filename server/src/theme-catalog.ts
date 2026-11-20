@@ -105,6 +105,7 @@ const SURFACE_ROLES: readonly EditorSurfaceRole[] = [
   'background',
   'foreground',
   'selection',
+  'selection-foreground',
   'cursor',
   'active-line',
   'gutter-background',

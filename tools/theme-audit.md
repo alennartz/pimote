@@ -21,7 +21,7 @@ The audit covers:
 - UI foreground and surface pairs.
 - Editor foreground, syntax, selection, search, and bracket pairs.
 - Inserted, deleted, and changed text on the editor and dedicated diff surfaces.
-- Highlighted syntax triples: symbol foreground against the normal editor background and selection background.
+- Selection foreground against the selection surface, with syntax colors audited against the normal editor background.
 - Status text against tinted status surfaces.
 - Client mapping contracts, including dedicated diff background roles.
 
