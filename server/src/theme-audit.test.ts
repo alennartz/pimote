@@ -46,6 +46,33 @@ describe('theme audit', () => {
     expect(report.findings.some((finding) => finding.rule === 'editor.code-surface')).toBe(true);
   });
 
+  it('checks alpha diff highlights against the editor background', () => {
+    const theme = resolvedTheme('test/light');
+    theme.editor.surface.background = '#2D353B';
+    theme.editor.surface['diff-addition-background'] = '#42504733';
+    theme.editor.surface['diff-deletion-background'] = '#51404533';
+
+    const findings = auditThemes([theme]).findings.filter(({ rule }) => rule.startsWith('editor.diff-background.'));
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ rule: 'editor.diff-background.addition', minimum: 1.2, severity: 'error' }),
+        expect.objectContaining({ rule: 'editor.diff-background.deletion', minimum: 1.2, severity: 'error' }),
+      ]),
+    );
+  });
+
+  it('accepts diff highlights with 1.2:1 separation from the editor background', () => {
+    const theme = resolvedTheme('test/light');
+    theme.editor.surface.background = '#000000';
+    theme.editor.surface['diff-addition-background'] = '#1A1A1A';
+    theme.editor.surface['diff-deletion-background'] = '#1A1A1A';
+
+    const findings = auditThemes([theme]).findings.filter(({ rule }) => rule.startsWith('editor.diff-background.'));
+
+    expect(findings).toEqual([]);
+  });
+
   it('does not invent text contracts for accent tokens without a paired consumer', () => {
     const theme = resolvedTheme('test/light');
     theme.ui.background = '#ffffff';

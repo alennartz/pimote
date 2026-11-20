@@ -82,7 +82,7 @@ const DIFF_ROLES: ReadonlyArray<{ role: EditorSyntaxRole; label: string; backgro
 const COLOR_SPACE = 'oklch';
 const STATUS_TINT_AMOUNT = 0.1;
 const ANSI_TEXT_MINIMUM = 2;
-const HOVER_SURFACE_MINIMUM = 1.2;
+const SURFACE_SEPARATION_MINIMUM = 1.2;
 
 const DIFF_MAPPING_CONTRACTS = [
   { rule: 'mapping.editor.diff.addition-background', token: '--pimote-editor-diff-addition-background' },
@@ -206,6 +206,16 @@ function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
     auditPair(findings, theme, `editor.diff.${label}`, `${label} on editor background`, foreground, surface.background, 4.5, surface.background);
     if (background) {
       const diffBackground = background === 'addition' ? surface['diff-addition-background'] : surface['diff-deletion-background'];
+      auditPair(
+        findings,
+        theme,
+        `editor.diff-background.${background}`,
+        `${background} diff surface against editor background`,
+        diffBackground,
+        surface.background,
+        SURFACE_SEPARATION_MINIMUM,
+        surface.background,
+      );
       auditPair(findings, theme, `editor.diff.${label}`, `${label} on ${background} diff surface`, foreground, diffBackground, 4.5, surface.background);
     }
   }
@@ -254,7 +264,7 @@ function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
     auditPair(findings, theme, `ui.session-chip.${label}`, `${label} icon on selected session chip`, ui[role], ui.primary, 3, ui.background, 'warning');
   }
 
-  auditPair(findings, theme, 'ui.menu-item-hover', 'menu hover surface against regular menu item surface', ui.accent, ui.popover, HOVER_SURFACE_MINIMUM, ui.background);
+  auditPair(findings, theme, 'ui.menu-item-hover', 'menu hover surface against regular menu item surface', ui.accent, ui.popover, SURFACE_SEPARATION_MINIMUM, ui.background);
   auditPair(
     findings,
     theme,
@@ -262,7 +272,7 @@ function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
     'primary button hover surface against regular primary surface',
     ui.primary,
     alphaColor(ui.primary, 0.8),
-    HOVER_SURFACE_MINIMUM,
+    SURFACE_SEPARATION_MINIMUM,
     ui.background,
   );
   auditPair(
@@ -272,7 +282,7 @@ function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
     'secondary button hover surface against regular secondary surface',
     ui['surface-hover'],
     ui.secondary,
-    HOVER_SURFACE_MINIMUM,
+    SURFACE_SEPARATION_MINIMUM,
     ui.background,
   );
   auditPair(
@@ -282,7 +292,7 @@ function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
     'ghost button hover surface against regular page surface',
     ui['surface-hover'],
     ui.background,
-    HOVER_SURFACE_MINIMUM,
+    SURFACE_SEPARATION_MINIMUM,
     ui.background,
   );
   const outlineButtonSurface = theme.colorScheme === 'dark' ? alphaColor(ui.input, 0.3) : ui.background;
@@ -294,7 +304,7 @@ function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
     'outline button hover surface against regular outline surface',
     outlineButtonHoverSurface,
     outlineButtonSurface,
-    HOVER_SURFACE_MINIMUM,
+    SURFACE_SEPARATION_MINIMUM,
     ui.background,
   );
 

@@ -22,6 +22,7 @@ The audit covers:
 - Editor foreground on the live editor background and the sunken code/diff surface.
 - Editor syntax, selection, search, and bracket pairs.
 - Inserted, deleted, and changed text on the editor and dedicated diff surfaces.
+- Addition and deletion diff surfaces against the editor background.
 - Selection foreground against the selection surface, with syntax colors audited against the normal editor background.
 - Status text against tinted status surfaces.
 - Streaming and needs-attention session icons against the selected session chip’s primary surface.
@@ -29,4 +30,4 @@ The audit covers:
 - ANSI terminal colors against Bash output and extension status backgrounds.
 - Client mapping contracts, including dedicated diff background roles.
 
-A 4.5:1 ratio is the normal-text target. A 3:1 ratio is the lower screening threshold for small secondary labels and non-text indicators. ANSI foregrounds use a separate 2:1 minimum because terminal palettes intentionally include dim slots. Adjacent hover surfaces use a 1.2:1 minimum because interaction states can use subtle surface changes. Alpha colors are flattened over their owning surface before the WCAG 2.1 ratio is calculated.
+A 4.5:1 ratio is the normal-text target. A 3:1 ratio is the lower screening threshold for small secondary labels and non-text indicators. ANSI foregrounds use a separate 2:1 minimum because terminal palettes intentionally include dim slots. Adjacent surface separation, including hover states and diff highlights, uses a 1.2:1 minimum. Alpha colors are flattened over their owning surface before the WCAG 2.1 ratio is calculated.
