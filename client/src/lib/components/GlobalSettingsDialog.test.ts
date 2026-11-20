@@ -91,7 +91,7 @@ describe('Settings dialog rendering', () => {
     expect(body?.classList.contains('flex-col')).toBe(true);
   });
 
-  it.each(['desktop', 'mobile'] as const)('moves excess settings files into a More files menu on %s', async (viewport) => {
+  it.each(['desktop', 'mobile'] as const)('adapts the direct settings-file limit on %s', async (viewport) => {
     const files = [
       { path: '/one.json', label: 'one.json' },
       { path: '/two.json', label: 'two.json' },
@@ -100,14 +100,14 @@ describe('Settings dialog rendering', () => {
       { path: '/five.json', label: 'five.json' },
       { path: '/six.json', label: 'six.json' },
     ];
+    const directFileCount = viewport === 'mobile' ? 2 : 4;
     const store = await render(viewport, null, files);
     await store.loadManifest();
     await tick();
 
     const tabs = document.querySelector('[aria-label="Settings files"]');
-    expect(tabs?.textContent).toContain('one.json');
-    expect(tabs?.textContent).toContain('four.json');
-    expect(tabs?.textContent).not.toContain('five.json');
+    expect(tabs?.textContent).toContain(files[directFileCount - 1].label);
+    expect(tabs?.textContent).not.toContain(files[directFileCount].label);
 
     const more = document.querySelector<HTMLButtonElement>('button[aria-label^="More settings files"]');
     expect(more).not.toBeNull();
@@ -116,11 +116,12 @@ describe('Settings dialog rendering', () => {
     await tick();
     const menuItems = [...document.querySelectorAll<HTMLElement>('[data-slot="dropdown-menu-item"]')];
     const items = menuItems.map((item) => item.textContent?.trim());
-    expect(items).toEqual(expect.arrayContaining(['five.json', 'six.json']));
-    menuItems.find((item) => item.textContent?.trim() === 'five.json')?.click();
+    expect(items).toEqual(expect.arrayContaining(files.slice(directFileCount).map((file) => file.label)));
+    const selectedFile = files[directFileCount];
+    menuItems.find((item) => item.textContent?.trim() === selectedFile.label)?.click();
     await tick();
-    expect(store.activePath).toBe('/five.json');
-    expect(more?.getAttribute('aria-label')).toContain('current five.json');
+    expect(store.activePath).toBe(selectedFile.path);
+    expect(more?.getAttribute('aria-label')).toContain(`current ${selectedFile.label}`);
     button('User').click();
     await tick();
     expect(more?.getAttribute('aria-label')).toBe('More settings files');

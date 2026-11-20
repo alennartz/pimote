@@ -19,7 +19,7 @@
   import type { ThemeStore } from '../stores/theme-store.svelte.js';
   import { globalSettingsPresentation } from './global-settings-presentation.js';
 
-  const DIRECT_FILE_LIMIT = 4;
+  const DIRECT_FILE_LIMITS = { desktop: 4, mobile: 2 } as const;
 
   let {
     store,
@@ -55,8 +55,9 @@
   let userDirty = $derived(trimmedName !== '' && trimmedName !== persistedUser);
   let currentUser = $derived(persistedUser === '' ? 'default' : persistedUser);
   let adoptedProfileKnown = $derived(profiles.some((profile) => profile.name === trimmedName));
-  let directFiles = $derived(store.files.slice(0, DIRECT_FILE_LIMIT));
-  let overflowFiles = $derived(store.files.slice(DIRECT_FILE_LIMIT));
+  let directFileLimit = $derived(DIRECT_FILE_LIMITS[viewport]);
+  let directFiles = $derived(store.files.slice(0, directFileLimit));
+  let overflowFiles = $derived(store.files.slice(directFileLimit));
   let overflowFileActive = $derived(!userTabActive && !appearanceTabActive && overflowFiles.some((file) => file.path === store.activePath));
   let filesMenuOpen = $state(false);
 
