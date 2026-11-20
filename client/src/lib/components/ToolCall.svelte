@@ -466,7 +466,11 @@
   }
 
   .tool-section-output {
-    padding: 6px 0 6px 12px;
+    padding: 6px 6px 6px 12px;
+  }
+
+  .tool-section-output :global(.output-copy-btn) {
+    right: 0;
   }
 
   .tool-section + .tool-section {
