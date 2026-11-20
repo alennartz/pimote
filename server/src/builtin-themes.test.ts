@@ -40,13 +40,33 @@ async function resolvedBuiltins() {
 }
 
 describe('built-in theme mappings', () => {
-  it('publishes every built-in color through a named palette reference', () => {
+  it('publishes every built-in color through a local named palette reference', () => {
     for (const theme of builtinThemeDefinitions()) {
       expect(Object.keys(theme.palette ?? {}).length, theme.id).toBeGreaterThan(0);
-      for (const value of [...Object.values(theme.ui), ...Object.values(theme.editor.surface), ...Object.values(theme.editor.syntax), ...Object.values(theme.editor.terminal)]) {
-        expect(value, theme.id).toMatchObject({ palette: expect.any(String) });
+      for (const [role, value] of [
+        ...Object.entries(theme.ui),
+        ...Object.entries(theme.editor.surface),
+        ...Object.entries(theme.editor.syntax),
+        ...Object.entries(theme.editor.terminal),
+      ]) {
+        expect(value, `${theme.id}.${role}`).toMatchObject({ palette: expect.any(String) });
+        const paletteKey = (value as { palette: string }).palette;
+        expect(theme.palette?.[paletteKey], `${theme.id}.${role}`).toBeDefined();
       }
     }
+  });
+
+  it('resolves built-in palette references to literal colors in catalog snapshots', async () => {
+    const themes = await resolvedBuiltins();
+    for (const theme of themes) {
+      for (const value of [...Object.values(theme.ui), ...Object.values(theme.editor.surface), ...Object.values(theme.editor.syntax), ...Object.values(theme.editor.terminal)]) {
+        expect(value, theme.id).toEqual(expect.any(String));
+      }
+    }
+    expect(themes.find((theme) => theme.id === 'dracula/dracula')).toMatchObject({
+      ui: { background: '#282a36', primary: '#bd93f9', 'status-connected': '#50fa7b' },
+      editor: { surface: { selection: '#44475a' }, syntax: { string: '#f1fa8c' }, terminal: { green: '#50fa7b' } },
+    });
   });
 
   it('maps third-party accent surfaces to hover while keeping muted surfaces separate', async () => {
