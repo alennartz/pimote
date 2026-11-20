@@ -165,6 +165,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
   const hiddenToolCalls = new Set<string>();
   const hiddenToolSlots = new Map<string, MutableSlot>();
   const hiddenEntrySlots = new Map<string, MutableSlot>();
+  const hiddenEntryToolCalls = new Map<string, string>();
   const hiddenCustomEntries = new Set<string>();
   const operations = new Map<string, OperationRecord>();
   const completedOperations = new Set<string>();
@@ -597,6 +598,24 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     return { ...event, target: { ...event.target, placement: { entryId: parentMessageId } } } as PresentationProviderEvent;
   };
 
+  /** Preserve the hidden tool slot on custom messages stored in that tool result.
+   * This gives the client a stable relation to the await card during live delivery,
+   * before the await target has an entry ID of its own. */
+  const targetWithHiddenToolPlacement = (event: PresentationProviderEvent): PresentationProviderEvent => {
+    const placement = event.target.placement;
+    if (!placement || !('entryId' in placement) || 'toolCallId' in placement) return event;
+    const toolCallId = hiddenEntryToolCalls.get(placement.entryId);
+    const slot = toolCallId ? hiddenToolSlots.get(toolCallId) : undefined;
+    if (!toolCallId || !slot) return event;
+    return {
+      ...event,
+      target: {
+        ...event.target,
+        placement: { toolCallId, contentIndex: slot.contentIndex, entryId: placement.entryId },
+      },
+    } as PresentationProviderEvent;
+  };
+
   const flushPendingCustomOperation = (operationId: string, messageIndex: number): readonly PimoteSessionEvent[] => {
     customOperationRows.set(operationId, messageIndex);
     const pending = pendingCustomEvents.get(operationId) ?? [];
@@ -634,6 +653,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     hiddenToolCalls.clear();
     hiddenToolSlots.clear();
     hiddenEntrySlots.clear();
+    hiddenEntryToolCalls.clear();
     hiddenCustomEntries.clear();
     customProtocolErrors.clear();
     customOperationRows.clear();
@@ -669,8 +689,12 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
       const index = messages.length;
       const visible = visibleContentFor(mapped, index);
       if (mapped.role === 'toolResult' && mapped.entryId && mapped.content[0]?.toolCallId) {
-        const hiddenSlot = hiddenToolSlots.get(mapped.content[0].toolCallId);
-        if (hiddenSlot) hiddenEntrySlots.set(mapped.entryId, hiddenSlot);
+        const toolCallId = mapped.content[0].toolCallId;
+        const hiddenSlot = hiddenToolSlots.get(toolCallId);
+        if (hiddenSlot) {
+          hiddenEntrySlots.set(mapped.entryId, hiddenSlot);
+          hiddenEntryToolCalls.set(mapped.entryId, toolCallId);
+        }
       }
       if (mapped.role === 'toolResult' && visible.content.length === 0) continue;
       const filtered =
@@ -757,8 +781,12 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
     }
     if (event.type === 'entry_appended') {
       if (event.entry.type === 'message' && event.entry.message.role === 'toolResult' && typeof event.entry.id === 'string') {
-        const slot = hiddenToolSlots.get(event.entry.message.toolCallId);
-        if (slot) hiddenEntrySlots.set(event.entry.id, slot);
+        const toolCallId = event.entry.message.toolCallId;
+        const slot = hiddenToolSlots.get(toolCallId);
+        if (slot) {
+          hiddenEntrySlots.set(event.entry.id, slot);
+          hiddenEntryToolCalls.set(event.entry.id, toolCallId);
+        }
         return [];
       }
       if (event.entry.type === 'custom' && hiddenCustomTypes.has(event.entry.customType)) {
@@ -1059,7 +1087,7 @@ export function createSubagentTranscriptProjector(options: SubagentTranscriptPro
       original.target.kind === 'send' && legacyReceivedMessages.has(original.target.operationId)
         ? { ...original, target: { ...original.target, kind: 'message_received' } }
         : original;
-    let routed: PresentationProviderEvent = presentation;
+    let routed: PresentationProviderEvent = targetWithHiddenToolPlacement(presentation);
     if (!presentation.target.placement) {
       const messageIndex = customOperationRows.get(presentation.target.operationId);
       if (messageIndex === undefined) {

@@ -78,6 +78,23 @@ async function render(block: SubagentContent, options: { custom?: boolean; rootS
   };
 }
 
+async function renderAssistantBlocks(blocks: readonly SubagentContent[]) {
+  const messages = writable<PimoteAgentMessage>({ role: 'assistant', entryId: 'assistant-entry', content: [...blocks] });
+  const current = fromStore(messages);
+  const target = document.createElement('div');
+  document.body.append(target);
+  component = mount(Message, {
+    target,
+    props: {
+      get message() {
+        return current.current;
+      },
+    },
+  });
+  await tick();
+  return { target };
+}
+
 function card(target: HTMLElement, kind: SubagentKind): HTMLElement {
   const element = target.querySelector<HTMLElement>(`[data-subagent-kind="${kind}"]`);
   expect(element, `The ${kind} card is rendered`).not.toBeNull();
@@ -268,6 +285,33 @@ describe('subagent transcript cards', () => {
     expect(interruptedCard.querySelector('.subagent-status')?.textContent).toContain('interrupted');
     expect(section(interruptedCard, 'Output').querySelector('strong')?.textContent).toBe('healthy');
     expect(section(interruptedCard, 'Output').querySelectorAll('li')).toHaveLength(2);
+  });
+
+  it('shows an incoming interruption inside its await card', async () => {
+    const awaitBlock = {
+      ...operation(
+        { operation: 'await', parameters: { agents: [['team', 'worker']] }, result: { statuses: [{ path: ['team', 'worker'], state: 'running' }], interrupted: true } },
+        'aborted',
+      ),
+      operationId: 'await-call',
+      placement: { toolCallId: 'await-call', contentIndex: 0 } as const,
+    };
+    const incoming = {
+      ...operation(
+        { operation: 'send', result: { from: ['team', 'worker'], to: [], message: 'Please **review** the failure.', responseExpected: false } },
+        'complete',
+        'message_received',
+      ),
+      operationId: 'incoming-message',
+      placement: { toolCallId: 'await-call', contentIndex: 0, entryId: 'await-result' } as const,
+    };
+
+    const { target } = await renderAssistantBlocks([awaitBlock, incoming]);
+    const awaitCard = card(target, 'await');
+    const messages = section(awaitCard, 'Messages');
+
+    expect(messages.querySelector('strong')?.textContent).toBe('review');
+    expect(target.querySelector('[data-subagent-kind="message_received"]')).toBeNull();
   });
 
   it('renders all message text through the streaming Markdown renderer', async () => {

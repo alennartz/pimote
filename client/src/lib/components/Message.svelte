@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { AgentPath, AssistantRowUsage, PimoteAgentMessage, PimoteImageContent, StreamingMessage } from '@pimote/shared';
+  import type { AgentPath, AssistantRowUsage, PimoteAgentMessage, PimoteImageContent, PimoteMessageContent, StreamingMessage } from '@pimote/shared';
   import TextBlock from './TextBlock.svelte';
   import ThinkingBlock from './ThinkingBlock.svelte';
   import ToolCall from './ToolCall.svelte';
@@ -107,6 +107,37 @@
       return `block-${id}`;
     }
     return `native-${index}`;
+  }
+
+  type SubagentContentBlock = Extract<PimoteMessageContent, { type: 'subagent' }>;
+
+  function placementValue(block: SubagentContentBlock, key: 'entryId' | 'toolCallId'): string | undefined {
+    const placement = block.placement;
+    if (!placement) return undefined;
+    if (key === 'entryId') return 'entryId' in placement && typeof placement.entryId === 'string' ? placement.entryId : undefined;
+    return 'toolCallId' in placement && typeof placement.toolCallId === 'string' ? placement.toolCallId : undefined;
+  }
+
+  function isReceivedMessage(block: PimoteMessageContent): block is SubagentContentBlock {
+    return block.type === 'subagent' && block.subagentKind === 'message_received' && block.data.operation === 'send';
+  }
+
+  function isMessageAttachedToAwait(message: SubagentContentBlock, awaitBlock: SubagentContentBlock): boolean {
+    const messageEntryId = placementValue(message, 'entryId');
+    const awaitEntryId = placementValue(awaitBlock, 'entryId');
+    if (messageEntryId !== undefined && awaitEntryId !== undefined) return messageEntryId === awaitEntryId;
+    const messageToolCallId = placementValue(message, 'toolCallId');
+    const awaitToolCallId = placementValue(awaitBlock, 'toolCallId');
+    return messageToolCallId !== undefined && awaitToolCallId !== undefined && messageToolCallId === awaitToolCallId;
+  }
+
+  function relatedMessagesFor(awaitBlock: SubagentContentBlock, content: readonly PimoteMessageContent[]): SubagentContentBlock[] {
+    return content.filter((candidate): candidate is SubagentContentBlock => isReceivedMessage(candidate) && isMessageAttachedToAwait(candidate, awaitBlock));
+  }
+
+  function isNestedReceivedMessage(block: PimoteMessageContent, content: readonly PimoteMessageContent[]): boolean {
+    if (!isReceivedMessage(block)) return false;
+    return content.some((candidate) => candidate.type === 'subagent' && candidate.subagentKind === 'await' && isMessageAttachedToAwait(block, candidate));
   }
 
   let hasSpeakableText = $derived(message.role === 'assistant' && !streaming && visibleContent.some((c) => c.type === 'text' && c.text));
@@ -356,10 +387,11 @@
              replace its content instead of recreating it. -->
         {#each visibleContent as block, i (block.type === 'subagent' ? `operation:${block.operationId}` : blockKey(block, i))}
           {@const blockStreaming = block.streaming ?? false}
-          {#if block.type === 'subagent'}
+          {#if block.type === 'subagent' && !isNestedReceivedMessage(block, visibleContent)}
             {@const operationToolCallId = block.placement && 'toolCallId' in block.placement ? block.placement.toolCallId : block.toolCallId}
             {@const operationExecution = operationToolCallId ? toolExecutions[operationToolCallId] : undefined}
-            <SubagentContent content={block} rootSessionId={subagentRootSessionId} durationMs={operationExecution?.durationMs} />
+            {@const relatedMessages = block.subagentKind === 'await' ? relatedMessagesFor(block, visibleContent) : []}
+            <SubagentContent content={block} {relatedMessages} rootSessionId={subagentRootSessionId} durationMs={operationExecution?.durationMs} />
           {:else if block.type === 'text'}
             <TextBlock text={block.text ?? ''} streaming={blockStreaming} />
           {:else if block.type === 'thinking'}

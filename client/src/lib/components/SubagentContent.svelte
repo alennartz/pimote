@@ -28,10 +28,12 @@
 
   let {
     content,
+    relatedMessages = [],
     rootSessionId = '',
     durationMs = undefined,
   }: {
     content: SubagentContent;
+    relatedMessages?: readonly SubagentContent[];
     rootSessionId?: string;
     durationMs?: number;
   } = $props();
@@ -346,6 +348,27 @@
           {/each}
           {#if requestedAgents.length === 0}<div class="subagent-meta">Waiting for all agents</div>{/if}
         {/if}
+        {#if relatedMessages.length > 0}
+          <section class="subagent-related-messages" aria-label="Messages">
+            <h3>Messages</h3>
+            {#each relatedMessages as message (message.operationId)}
+              {#if message.data.operation === 'send'}
+                {@const from = pathFrom(resultValue(message.data.result, 'from'))}
+                {@const to = pathFrom(resultValue(message.data.result, 'to'))}
+                <div class="subagent-related-message">
+                  {#if from || to}
+                    <div class="subagent-agent-row subagent-message-route">
+                      {#if from}<span class="route-label">From</span><AgentChip path={from} {rootSessionId} />{/if}
+                      {#if to}<span class="route-label">To</span><AgentChip path={to} {rootSessionId} />{/if}
+                    </div>
+                  {/if}
+                  <SubagentMarkdown label="Message" text={resultText(message.data.result, 'message')} />
+                  {#if resultBoolean(message.data.result, 'responseExpected')}<div class="subagent-meta">Response expected</div>{/if}
+                </div>
+              {/if}
+            {/each}
+          </section>
+        {/if}
         {#if content.data.result.error}<SubagentMarkdown label="Wait error" text={content.data.result.error} />{/if}
       {:else if content.data.operation === 'completion'}
         <SubagentMarkdown text={content.data.result.output} />
@@ -550,6 +573,26 @@
   .subagent-agent-block {
     min-width: 0;
     padding: 0.3rem 0;
+  }
+
+  .subagent-related-messages {
+    min-width: 0;
+    margin-top: 0.55rem;
+    padding-top: 0.55rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .subagent-related-messages h3 {
+    margin: 0;
+    color: var(--muted-foreground);
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  .subagent-related-message + .subagent-related-message {
+    margin-top: 0.45rem;
+    padding-top: 0.45rem;
+    border-top: 1px solid var(--border);
   }
 
   .subagent-child + .subagent-child,
