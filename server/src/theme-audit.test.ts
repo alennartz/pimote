@@ -91,6 +91,7 @@ describe('theme audit', () => {
     theme.ui.accent = '#ffffff';
     theme.ui.primary = '#ffffff';
     theme.ui.secondary = '#ffffff';
+    theme.ui['surface-hover'] = '#ffffff';
     theme.ui.muted = '#ffffff';
 
     const report = auditThemes([theme]);

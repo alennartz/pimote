@@ -268,8 +268,8 @@ function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
     theme,
     'ui.button.secondary-hover',
     'secondary button hover surface against regular secondary surface',
+    ui['surface-hover'],
     ui.secondary,
-    alphaColor(ui.secondary, 0.8),
     HOVER_SURFACE_MINIMUM,
     ui.background,
   );

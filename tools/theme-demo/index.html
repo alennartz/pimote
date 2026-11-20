@@ -233,8 +233,9 @@
         background: var(--pimote-ui-secondary);
         color: var(--pimote-ui-secondary-foreground);
       }
-      .secondary:hover {
-        background: color-mix(in oklch, var(--pimote-ui-secondary) 80%, transparent);
+      .secondary:hover,
+      .secondary.hovered {
+        background: var(--pimote-ui-surface-hover);
       }
       .destructive {
         background: color-mix(in oklch, var(--pimote-ui-destructive) 10%, transparent);
@@ -779,6 +780,7 @@
             <div class="buttons" style="margin-bottom: 12px">
               <button type="button" class="button primary">Primary action</button>
               <button type="button" class="button secondary">Secondary</button>
+              <button type="button" class="button secondary hovered">Secondary hovered</button>
               <button type="button" class="button destructive">Destructive</button>
             </div>
             <div class="status-examples" style="margin-bottom: 12px">
