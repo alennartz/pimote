@@ -1,7 +1,10 @@
 <script lang="ts">
   import type { Card, CardColor } from '@pimote/shared';
+  import { isMobileViewport } from '$lib/mobile-viewport.svelte.js';
+  import { shouldNavigateStaticReportInCurrentTab } from '$lib/static-report-navigation.js';
 
   let { cards, openInNewTab = false }: { cards: Card[]; openInNewTab?: boolean } = $props();
+  const appOrigin = typeof window === 'undefined' ? 'http://localhost' : window.location.origin;
 
   const colorMap: Record<CardColor, string> = {
     accent: 'border-l-primary',
@@ -15,6 +18,7 @@
 
 <div class="flex flex-col gap-2">
   {#each cards as card (card.id)}
+    {@const opensInNewTab = openInNewTab && !shouldNavigateStaticReportInCurrentTab(card.href ?? '', isMobileViewport(), appOrigin)}
     {@const baseClass = `rounded border p-2 ${card.color ? colorMap[card.color] + ' border-l-2' : ''}`}
     {#snippet cardBody()}
       <div class="flex items-center gap-1.5">
@@ -45,12 +49,12 @@
       <!-- eslint-disable svelte/no-navigation-without-resolve -->
       <a
         href={card.href}
-        target={openInNewTab ? '_blank' : undefined}
-        rel={openInNewTab ? 'noopener noreferrer' : undefined}
+        target={opensInNewTab ? '_blank' : undefined}
+        rel={opensInNewTab ? 'noopener noreferrer' : undefined}
         class="{baseClass} text-foreground hover:bg-accent/50 block no-underline transition-colors"
       >
         {@render cardBody()}
-        {#if openInNewTab}<span class="sr-only"> (opens in a new tab)</span>{/if}
+        {#if opensInNewTab}<span class="sr-only"> (opens in a new tab)</span>{/if}
       </a>
       <!-- eslint-enable svelte/no-navigation-without-resolve -->
     {:else}

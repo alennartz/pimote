@@ -61,10 +61,9 @@ export interface ToolDeps {
   /** Push the current panel-card snapshot for this session onto the EventBus. */
   emitPanelCards: () => void;
   /**
-   * Request that the client navigate to `url`. Fired once per successful
+   * Request that the client open `url`. Fired once per successful
    * `pimote_static_host` registration. Not fired on session_start replay —
-   * the user only wants to be ferried over the first time a bundle is
-   * registered, not every time the session reloads.
+   * the user only wants to open the report the first time it is registered.
    */
   emitNavigate: (url: string) => void;
 }

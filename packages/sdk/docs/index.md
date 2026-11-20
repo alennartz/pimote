@@ -77,7 +77,7 @@ Pimote talks to session extensions over pi's EventBus. The SDK wraps most channe
 | `pimote:subagents:response` | Extension to Pimote | `{provider}`                                                        | `registerProvider()`   |
 | `pimote:navigate`           | Extension to Pimote | `{url}`                                                             | None. Emit directly.   |
 
-`pimote:navigate` asks the browser to open a URL in a new tab. Pimote forwards it only for the session the reader is viewing, and a popup blocker can drop it. Emit a path on the Pimote origin, such as `/s/<slug>/`.
+`pimote:navigate` asks the browser to open a URL. Static-host paths such as `/s/<slug>/` open in a new tab on desktop and in the current tab on mobile. A desktop popup blocker can suppress the new tab. Pimote forwards the request only for the session the reader is viewing. Emit a path on the Pimote origin.
 
 Every channel is per session. A message never crosses into another session.
 

@@ -25,7 +25,7 @@ A slug uses lowercase letters, digits, and single hyphens, with 1 to 64 characte
 A registration does three things:
 
 - It adds a card to the session panel, with the title, optional tag, optional color, and the report as its link.
-- It asks the browser to open the report in a new tab. The request reaches the browser only while that session is on screen, and a popup blocker can drop it. The card is the permanent entry point.
+- It opens the report in a new tab on desktop and in the current tab on mobile. A desktop popup blocker can stop it. The request reaches the browser only while that session is on screen. The card remains the permanent entry point.
 - It persists the registration for the session.
 
 The card keeps the metadata from registration. A later title change reaches only the next registration.

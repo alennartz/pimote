@@ -19,6 +19,8 @@ import * as smd from 'streaming-markdown';
 import { createIncrementalHighlighter } from './code-highlight.js';
 import { createMathRenderer } from './math-renderer.js';
 import { setCopyIcon } from './copy-icon.js';
+import { isMobileViewport } from './mobile-viewport.svelte.js';
+import { shouldNavigateStaticReportInCurrentTab } from './static-report-navigation.js';
 
 /**
  * Read the hljs language id from a code element's class list. smd applies the
@@ -41,7 +43,8 @@ function languageFromCodeEl(codeEl: HTMLElement): string | null {
 // Protocol-relative (`//host`) is deliberately excluded — it leaves the
 // origin — as are all other schemes (`javascript:`, `data:`, ...).
 const SAFE_URL_PATTERN = /^(?:https?:\/\/|mailto:|\/[^/])/i;
-// HTTP(S) pages and same-origin root-relative pages open in a new tab.
+// HTTP(S) pages and same-origin root-relative pages open in a new tab, except
+// static reports on mobile, which stay in the current tab.
 const NEW_TAB_URL_PATTERN = /^(?:https?:\/\/|\/[^/])/i;
 
 /**
@@ -122,8 +125,11 @@ export function createRenderer(container: HTMLElement): smd.Default_Renderer & {
       smd.default_set_attr(data, type, value);
       if (type === smd.Attr.Href && NEW_TAB_URL_PATTERN.test(value.trim())) {
         const link = data.nodes[data.index];
-        link.setAttribute('target', '_blank');
-        link.setAttribute('rel', 'noopener noreferrer');
+        const staysInCurrentTab = shouldNavigateStaticReportInCurrentTab(value.trim(), isMobileViewport(), container.ownerDocument.location.origin);
+        if (!staysInCurrentTab) {
+          link.setAttribute('target', '_blank');
+          link.setAttribute('rel', 'noopener noreferrer');
+        }
       }
     },
     add_text(data: smd.Default_Renderer_Data, text: string) {

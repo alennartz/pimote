@@ -76,6 +76,8 @@ import { followDecision, moveChipOrder, projectChipOrder, type UserSessionFacts 
 import { handleDownloadNotificationIntent, type DownloadNotificationIntent } from '../download-notification-intent.js';
 import { getActiveSessions } from './persistence.js';
 import { summarizeAssistantRowUsage, type ToolResultUsageIndex } from '../assistant-row-usage.js';
+import { isMobileViewport } from '../mobile-viewport.svelte.js';
+import { shouldNavigateStaticReportInCurrentTab } from '../static-report-navigation.js';
 import {
   applySubagentContentEvent,
   applySubagentContentDeltaInPlace,
@@ -1813,9 +1815,11 @@ export class SessionRegistry {
         if (sessionId === this.viewedSessionId) {
           const url = (event as NavigateEvent).url;
           if (typeof url === 'string' && url.length > 0) {
-            // Static-host navigation is intentionally new-tab only. A popup
-            // blocker can suppress it; the sidebar card remains available.
-            window.open(url, '_blank', 'noopener,noreferrer');
+            if (shouldNavigateStaticReportInCurrentTab(url, isMobileViewport(), window.location.origin)) {
+              window.location.assign(url);
+            } else {
+              window.open(url, '_blank', 'noopener,noreferrer');
+            }
           }
         }
         break;

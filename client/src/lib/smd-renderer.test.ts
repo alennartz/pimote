@@ -6,8 +6,12 @@ import * as smd from 'streaming-markdown';
 import { createRenderer } from './smd-renderer.js';
 import { ensureHljs } from './code-highlight.js';
 
+const viewport = vi.hoisted(() => ({ mobile: false }));
+vi.mock('$lib/mobile-viewport.svelte.js', () => ({ isMobileViewport: () => viewport.mobile }));
+
 afterEach(() => {
   vi.useRealTimers();
+  viewport.mobile = false;
 });
 
 /** Helper: render complete markdown in one shot */
@@ -103,6 +107,38 @@ describe('createRenderer', () => {
       expect(link!.getAttribute('href')).toBe('/s/hello-pimote/');
       expect(link!.getAttribute('target')).toBe('_blank');
       expect(link!.getAttribute('rel')).toBe('noopener noreferrer');
+    });
+
+    it('opens static reports in the current tab on mobile', () => {
+      viewport.mobile = true;
+      const container = renderComplete('[Report](/s/hello-pimote/)');
+      const link = container.querySelector('a');
+      expect(link?.getAttribute('target')).toBeNull();
+      expect(link?.getAttribute('rel')).toBeNull();
+    });
+
+    it('keeps external links in a new tab on mobile', () => {
+      viewport.mobile = true;
+      const container = renderComplete('[External](https://example.com)');
+      const link = container.querySelector('a');
+      expect(link?.getAttribute('target')).toBe('_blank');
+      expect(link?.getAttribute('rel')).toBe('noopener noreferrer');
+    });
+
+    it('keeps absolute same-origin static report links in the current tab on mobile', () => {
+      viewport.mobile = true;
+      const container = renderComplete(`[Report](${window.location.origin}/s/hello-pimote/)`);
+      const link = container.querySelector('a');
+      expect(link?.getAttribute('target')).toBeNull();
+      expect(link?.getAttribute('rel')).toBeNull();
+    });
+
+    it('keeps non-report same-origin links in a new tab on mobile', () => {
+      viewport.mobile = true;
+      const container = renderComplete('[Download](/d/file-id)');
+      const link = container.querySelector('a');
+      expect(link?.getAttribute('target')).toBe('_blank');
+      expect(link?.getAttribute('rel')).toBe('noopener noreferrer');
     });
 
     it('drops javascript: URLs', () => {

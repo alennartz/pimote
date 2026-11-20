@@ -1,6 +1,6 @@
 # Static report design guide
 
-Design a report for comfortable reading at 360px and at 1440px. A report opens in a new tab from its session card. The reader arrives with no context beyond the card title.
+Design a report for comfortable reading at 360px and at 1440px. A report opens in a new tab from its session card on desktop and in the current tab on mobile. The reader arrives with no context beyond the card title.
 
 `delivery.md` covers hosting, URLs, and the serving rules.
 

@@ -66,7 +66,7 @@ Use `color` for state, not decoration:
 | `muted`   | Low-priority information.         |
 | `accent`  | General emphasis.                 |
 
-`href` opens in a new tab and the session panel is the list that honors it. Pimote does not validate the value, and a cross-origin URL works as a plain anchor. Use a same-origin path, such as `/s/<slug>/` for a bundle served by `pimote_static_host`.
+`href` opens in a new tab in the session panel, except a static-host route such as `/s/<slug>/`, which opens in the current tab on mobile. Pimote does not validate the value, and a cross-origin URL works as a plain anchor.
 
 ## Repaint when the client asks
 
