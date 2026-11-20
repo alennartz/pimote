@@ -490,6 +490,10 @@ const darkEditor = {
   terminal: darkTerminal,
 };
 
+function withAlpha(value: string, alpha = '33'): string {
+  return value.length === 7 && value.startsWith('#') ? `${value}${alpha}` : value;
+}
+
 function thirdParty(
   id: string,
   name: string,
@@ -627,8 +631,8 @@ function thirdParty(
         'active-line-number': colors.foreground,
         'matching-bracket': colors.matchingBracket,
         'search-match': colors.searchMatch,
-        'diff-addition-background': colors.surface,
-        'diff-deletion-background': colors.raised,
+        'diff-addition-background': withAlpha(colors.status.connected),
+        'diff-deletion-background': withAlpha(colors.status.error),
       },
       syntax,
       terminal: colors.terminal,

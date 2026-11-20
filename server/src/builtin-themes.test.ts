@@ -21,8 +21,8 @@ function opaque(value: string, backdrop: Color | string = '#000000'): Color {
   );
 }
 
-function contrast(foreground: string, background: string): number {
-  const opaqueBackground = opaque(background);
+function contrast(foreground: string, background: string, backdrop = '#000000'): number {
+  const opaqueBackground = opaque(background, backdrop);
   return opaque(foreground, opaqueBackground).contrast(opaqueBackground, 'WCAG21');
 }
 
@@ -61,7 +61,7 @@ describe('built-in theme mappings', () => {
             : role === 'deleted'
               ? theme.editor.surface['diff-deletion-background']
               : theme.editor.surface.background;
-        expect(contrast(foreground, diffBackground), `${theme.id} ${role} on diff surface`).toBeGreaterThanOrEqual(4.5);
+        expect(contrast(foreground, diffBackground, theme.editor.surface.background), `${theme.id} ${role} on diff surface`).toBeGreaterThanOrEqual(4.5);
       }
     }
   });
@@ -77,7 +77,10 @@ describe('built-in theme mappings', () => {
 
   it('keeps the selection foreground readable on the selection surface', async () => {
     for (const theme of await resolvedBuiltins()) {
-      expect(contrast(theme.editor.surface['selection-foreground'], theme.editor.surface.selection), `${theme.id} selection`).toBeGreaterThanOrEqual(4.5);
+      expect(
+        contrast(theme.editor.surface['selection-foreground'], theme.editor.surface.selection, theme.editor.surface.background),
+        `${theme.id} selection`,
+      ).toBeGreaterThanOrEqual(4.5);
     }
   });
 });
