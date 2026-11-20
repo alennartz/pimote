@@ -16,7 +16,7 @@ function catalog(overrides: Partial<ThemeCatalogOptions> = {}): ThemeCatalog {
 }
 
 describe('ThemeCatalog', () => {
-  it('ships all nine named built-in themes as complete, valid palettes', async () => {
+  it('ships all eleven named built-in themes as complete, valid palettes', async () => {
     const service = catalog({ builtinThemes: builtinThemeDefinitions() });
     const snapshot = await service.load();
     expect(snapshot.themes.map((entry) => entry.id)).toEqual(
@@ -30,9 +30,11 @@ describe('ThemeCatalog', () => {
         'pimote/solarized-light',
         'pimote/catppuccin-mocha',
         'pimote/catppuccin-latte',
+        'pimote/everforest-medium-dark',
+        'pimote/horizon',
       ]),
     );
-    expect(snapshot.themes.filter((entry) => entry.source === 'builtin')).toHaveLength(9);
+    expect(snapshot.themes.filter((entry) => entry.source === 'builtin')).toHaveLength(11);
     const required = theme('fixture/theme');
     for (const entry of snapshot.themes) {
       expect(Object.keys(entry.ui)).toEqual(expect.arrayContaining(Object.keys(required.ui)));
@@ -50,6 +52,8 @@ describe('ThemeCatalog', () => {
     ['pimote/solarized-light', '#859900', '#cb4b16', '#dc322f', '#859900'],
     ['pimote/catppuccin-mocha', '#a6e3a1', '#fab387', '#f38ba8', '#a6e3a1'],
     ['pimote/catppuccin-latte', '#40a02b', '#fe640b', '#d20f39', '#40a02b'],
+    ['pimote/everforest-medium-dark', '#A7C080', '#DBBC7F', '#E67E80', '#A7C080'],
+    ['pimote/horizon', '#27D796', '#FAB795', '#F43E5C', '#29D398'],
   ] as const)('uses palette-aligned semantic statuses and ANSI green for %s', async (id, success, warning, error, ansiGreen) => {
     const service = catalog({ builtinThemes: builtinThemeDefinitions() });
     const snapshot = await service.load();

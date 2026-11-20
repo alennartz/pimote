@@ -8,7 +8,7 @@ export const LEGACY_BUILTIN_THEME_IDS = {
   'catppuccin/latte': 'pimote/catppuccin-latte',
 } as const;
 
-export const BUILTIN_THEME_IDS = ['pimote/light', 'pimote/dark', ...Object.values(LEGACY_BUILTIN_THEME_IDS)] as const;
+export const BUILTIN_THEME_IDS = ['pimote/light', 'pimote/dark', 'pimote/everforest-medium-dark', 'pimote/horizon', ...Object.values(LEGACY_BUILTIN_THEME_IDS)] as const;
 
 export function normalizeBuiltinThemeId(id: string): string {
   return LEGACY_BUILTIN_THEME_IDS[id as keyof typeof LEGACY_BUILTIN_THEME_IDS] ?? id;

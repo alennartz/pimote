@@ -58,7 +58,7 @@ function usage(): string {
   return [
     'Usage: npm run audit:themes -- [options] [theme-file ...]',
     '',
-    'Audits the nine built-in themes by default. Theme files are loaded as extension sources',
+    'Audits the eleven built-in themes by default. Theme files are loaded as extension sources',
     'and are checked with the built-ins, including inheritance and palette resolution.',
     '',
     'Options:',
