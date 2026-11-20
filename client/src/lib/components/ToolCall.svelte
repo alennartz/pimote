@@ -461,7 +461,10 @@
     padding: 6px 12px;
   }
 
-  .tool-section-code,
+  .tool-section-code {
+    padding: 0;
+  }
+
   .tool-section-output {
     padding: 6px 0;
   }
