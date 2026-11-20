@@ -98,6 +98,14 @@ export const MAX_TOOL_PARTIAL_CHARS = 256 * 1024;
 const bashTextEncoder = new TextEncoder();
 export type SubagentPath = AgentPath;
 
+/** Metadata needed to rebuild a saved child after its live node is gone. */
+export interface SubagentResurrectionDraft {
+  readonly savedSessionId?: string;
+  readonly task?: string;
+  readonly channels?: readonly string[];
+  readonly model?: string;
+}
+
 /** Stable key used for attachment state. JSON preserves path segment identity. */
 export function subagentPathKey(path: AgentPath): string {
   return JSON.stringify(path);
@@ -113,6 +121,84 @@ function pathStartsWith(prefix: AgentPath, path: AgentPath): boolean {
 
 function sameAgentPath(left: AgentPath | null | undefined, right: AgentPath | null | undefined): boolean {
   return left !== null && left !== undefined && right !== null && right !== undefined && left.length === right.length && left.every((part, index) => part === right[index]);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function stringField(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function stringArrayField(value: unknown): readonly string[] | undefined {
+  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) return undefined;
+  return [...value];
+}
+
+function pathField(value: unknown): AgentPath | undefined {
+  if (Array.isArray(value) && value.every((part) => typeof part === 'string')) return copyAgentPath(value);
+  if (typeof value === 'string' && value.length > 0) return copyAgentPath(value.split('/').filter(Boolean));
+  return undefined;
+}
+
+function candidatePath(value: unknown, owner: AgentPath): AgentPath | undefined {
+  const raw = isRecord(value) ? (value.path ?? value.id) : value;
+  const path = pathField(raw);
+  if (!path || path.length === 0) return undefined;
+  if (isRecord(value) && Array.isArray(value.path)) return path;
+  return pathStartsWith(owner, path) ? path : copyAgentPath([...owner, ...path]);
+}
+
+function draftFromCandidate(value: unknown): SubagentResurrectionDraft {
+  if (!isRecord(value)) return {};
+  const sessionId = stringField(value.sessionId);
+  const task = stringField(value.task);
+  const channels = stringArrayField(value.channels);
+  const model = stringField(value.model);
+  return {
+    ...(sessionId ? { savedSessionId: sessionId } : {}),
+    ...(task ? { task } : {}),
+    ...(channels ? { channels } : {}),
+    ...(model ? { model } : {}),
+  };
+}
+
+function mergeResurrectionDraft(first: SubagentResurrectionDraft, second: SubagentResurrectionDraft): SubagentResurrectionDraft {
+  return {
+    ...(first.savedSessionId !== undefined || second.savedSessionId !== undefined ? { savedSessionId: second.savedSessionId ?? first.savedSessionId } : {}),
+    ...(first.task !== undefined || second.task !== undefined ? { task: second.task ?? first.task } : {}),
+    ...(first.channels !== undefined || second.channels !== undefined ? { channels: second.channels ?? first.channels } : {}),
+    ...(first.model !== undefined || second.model !== undefined ? { model: second.model ?? first.model } : {}),
+  };
+}
+
+function draftFromSubagentContent(content: Extract<PimoteMessageContent, { type: 'subagent' }>, target: AgentPath): SubagentResurrectionDraft {
+  if (!isRecord(content.data)) return {};
+  const operation = content.data.operation;
+  if (operation !== 'delegation' && operation !== 'resurrect' && operation !== 'teardown') return {};
+  const owner = content.subagentPath ?? [];
+  const parameters: Record<string, unknown> = isRecord(content.data.parameters) ? content.data.parameters : {};
+  const result: Record<string, unknown> = isRecord(content.data.result) ? content.data.result : {};
+  const parameterAgents = Array.isArray(parameters.agents) ? parameters.agents : [];
+  const resultAgents = operation === 'delegation' ? (Array.isArray(result.children) ? result.children : []) : Array.isArray(result.affectedAgents) ? result.affectedAgents : [];
+  let draft: SubagentResurrectionDraft = {};
+  for (const candidate of [...parameterAgents, ...resultAgents]) {
+    if (!sameAgentPath(candidatePath(candidate, owner), target)) continue;
+    draft = mergeResurrectionDraft(draft, draftFromCandidate(candidate));
+  }
+  return draft;
+}
+
+function draftFromMessages(messages: readonly PimoteAgentMessage[], target: AgentPath): SubagentResurrectionDraft {
+  let draft: SubagentResurrectionDraft = {};
+  for (const message of messages) {
+    for (const content of message.content) {
+      if (content.type !== 'subagent') continue;
+      draft = mergeResurrectionDraft(draft, draftFromSubagentContent(content, target));
+    }
+  }
+  return draft;
 }
 
 function isSubagentTopologyEvent(event: WireSubagentTopologyEvent): boolean {
@@ -151,6 +237,8 @@ export interface SubagentViewClosedNotice {
   readonly reason: SubagentAttachmentCloseReason;
   /** Last known node metadata, when the provider supplied it before removal. */
   readonly node?: SubagentNodeSnapshot;
+  /** Durable teardown metadata, available after reload or reconnect. */
+  readonly resurrection?: SubagentResurrectionDraft;
 }
 
 export type ViewedSurface =
@@ -814,16 +902,33 @@ export class SessionRegistry {
     return notices.at(-1)?.[1] ?? null;
   }
 
-  requestSubagentResurrection(rootSessionId: string, path: AgentPath): void {
+  requestSubagentResurrection(rootSessionId: string, path: AgentPath, supplied: SubagentResurrectionDraft = {}): void {
     const key = this.subagentNoticeKey(rootSessionId, path);
     const stored = this.subagentClosedNotices[key];
     const node = this.getSubagentNode(rootSessionId, path);
-    const notice: SubagentViewClosedNotice = stored ?? {
+    const attachment = this.getSubagentAttachment(rootSessionId, path);
+    const root = this.subagentRoots[rootSessionId];
+    const transcriptDraft = draftFromMessages(
+      [...(this.sessions[rootSessionId] ? [this.sessions[rootSessionId]] : []), ...Object.values(root?.attachments ?? {})].flatMap((session) => session.messages),
+      path,
+    );
+    const nodeDraft: SubagentResurrectionDraft = node
+      ? {
+          savedSessionId: node.sessionId,
+          ...(node.task !== undefined ? { task: node.task } : {}),
+          channels: [...node.channels],
+          ...(node.model !== undefined ? { model: node.model } : {}),
+        }
+      : {};
+    const attachmentDraft = attachment?.sessionId ? { savedSessionId: attachment.sessionId } : {};
+    const resurrection = mergeResurrectionDraft(mergeResurrectionDraft(transcriptDraft, attachmentDraft), mergeResurrectionDraft(nodeDraft, supplied));
+    const base: SubagentViewClosedNotice = stored ?? {
       rootSessionId,
       path: copyAgentPath(path),
       reason: 'teardown',
       ...(node ? { node } : {}),
     };
+    const notice: SubagentViewClosedNotice = Object.keys(resurrection).length > 0 ? { ...base, resurrection } : base;
     this.subagentResurrectionRequests = { ...this.subagentResurrectionRequests, [key]: notice };
     this.subagentNoticeVersion += 1;
     panelStore.revealPanel();

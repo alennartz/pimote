@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
-import type { PimoteResponse } from '@pimote/shared';
+import type { PimoteAgentMessage, PimoteResponse } from '@pimote/shared';
 import Panel from './Panel.svelte';
 import { panelStore } from '$lib/stores/panel-store.svelte.js';
 import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
@@ -603,6 +603,71 @@ describe('Panel lifecycle notices', () => {
     expect(target.querySelector('[role="status"]')).toBeNull();
     expect(target.querySelector('[role="dialog"]')?.textContent).toContain('Resurrect child session');
     expect(sessionRegistry.getPendingSubagentResurrection('root')).not.toBeNull();
+  });
+
+  it('prefills resurrection from the persisted teardown and delegation after reload', async () => {
+    const root = sessionRegistry.sessions.root;
+    sessionRegistry.clearSubagentRoot('root');
+    root.messages = [
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'subagent',
+            operationId: 'spawn-1',
+            subagentKind: 'delegation',
+            subagentState: 'complete',
+            subagentPath: [],
+            data: {
+              operation: 'delegation',
+              parameters: { agents: [{ id: 'worker', task: 'Review the reconnect path', channels: ['parent'], model: 'provider/model' }] },
+              result: { children: [{ path: ['worker'], task: 'Review the reconnect path' }] },
+            },
+          },
+        ],
+      },
+      {
+        role: 'custom',
+        content: [
+          {
+            type: 'subagent',
+            operationId: 'teardown-1',
+            subagentKind: 'teardown',
+            subagentState: 'complete',
+            subagentPath: [],
+            data: {
+              operation: 'teardown',
+              parameters: { agent: ['worker'] },
+              result: {
+                status: 'removed',
+                affectedAgents: [
+                  {
+                    path: ['worker'],
+                    sessionId: 'saved-worker',
+                    incarnation: 'inc-worker',
+                    state: 'idle',
+                    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      },
+    ] as PimoteAgentMessage[];
+    root.messageKeys = ['message-1', 'message-2'];
+
+    const target = render();
+    await tick();
+    sessionRegistry.requestSubagentResurrection('root', ['worker']);
+    await tick();
+
+    const dialog = target.querySelector('[role="dialog"]');
+    expect(dialog?.querySelector<HTMLInputElement>('[aria-label="Saved session ID"]')?.value).toBe('saved-worker');
+    expect(dialog?.querySelector<HTMLInputElement>('[aria-label="Local ID"]')?.value).toBe('worker');
+    expect(dialog?.querySelector<HTMLTextAreaElement>('[aria-label="Task"]')?.value).toBe('Review the reconnect path');
+    expect(dialog?.querySelector<HTMLInputElement>('[aria-label="Communication channels"]')?.value).toBe('parent');
+    expect(dialog?.querySelector<HTMLInputElement>('[aria-label="Model"]')?.value).toBe('provider/model');
   });
 });
 

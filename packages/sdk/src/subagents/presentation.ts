@@ -81,6 +81,12 @@ export type SubagentAffectedAgent = Readonly<{
   incarnation: string;
   state: SubagentAwaitStatus['state'];
   usage: SubagentUsage;
+  /** Original task, retained so a saved teardown can be resurrected later. */
+  task?: string;
+  /** Original communication channels, retained so a saved teardown can be resurrected later. */
+  channels?: readonly string[];
+  /** Resolved model override, when one was selected for the child. */
+  model?: string;
   /** Pre-attach usage the reported delta excludes; present only when non-zero. */
   usageBaseline?: SubagentUsage;
 }>;

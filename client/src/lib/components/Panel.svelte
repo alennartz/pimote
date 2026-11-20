@@ -282,13 +282,14 @@
   function prepareResurrection(closed: SubagentViewClosedNotice): void {
     resurrectionNotice = closed;
     const node = closed.node;
+    const saved = closed.resurrection;
     const path = closed.path;
-    resurrectSavedSessionId = node?.sessionId ?? selectedAttachment?.sessionId ?? '';
+    resurrectSavedSessionId = saved?.savedSessionId ?? node?.sessionId ?? selectedAttachment?.sessionId ?? '';
     resurrectLocalId = path[path.length - 1] ?? '';
     resurrectParentPath = path.slice(0, -1);
-    resurrectTask = node?.task ?? '';
-    resurrectChannels = (node?.channels ?? []).join(', ');
-    resurrectModel = node?.model ?? '';
+    resurrectTask = saved?.task ?? node?.task ?? '';
+    resurrectChannels = (saved?.channels ?? node?.channels ?? []).join(', ');
+    resurrectModel = saved?.model ?? node?.model ?? '';
     resurrectOpen = true;
   }
 

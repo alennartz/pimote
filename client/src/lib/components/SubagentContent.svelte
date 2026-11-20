@@ -3,7 +3,7 @@
   import { formatTokenCount } from '$lib/session-summary.js';
   import { formatCacheHitRate } from '$lib/usage-summary.js';
   import { observeFullyOffscreen } from '$lib/auto-collapse.js';
-  import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
+  import { sessionRegistry, type SubagentResurrectionDraft } from '$lib/stores/session-registry.svelte.js';
   import { panelStore } from '$lib/stores/panel-store.svelte.js';
   import AgentChip from './AgentChip.svelte';
   import SubagentMarkdown from './SubagentMarkdown.svelte';
@@ -23,6 +23,10 @@
   }>;
   type TeardownAgent = Readonly<{
     path: AgentPath;
+    sessionId?: string;
+    task?: string;
+    channels?: readonly string[];
+    model?: string;
     usage?: SubagentUsage;
   }>;
 
@@ -251,9 +255,15 @@
     if (panelStore.isDrawer) panelStore.closePanel();
   }
 
-  function requestResurrection(path: AgentPath): void {
-    if (!rootSessionId || path.length === 0) return;
-    sessionRegistry.requestSubagentResurrection(rootSessionId, path);
+  function requestResurrection(agent: TeardownAgent): void {
+    if (!rootSessionId || agent.path.length === 0) return;
+    const draft: SubagentResurrectionDraft = {
+      ...(agent.sessionId ? { savedSessionId: agent.sessionId } : {}),
+      ...(agent.task ? { task: agent.task } : {}),
+      ...(agent.channels ? { channels: [...agent.channels] } : {}),
+      ...(agent.model ? { model: agent.model } : {}),
+    };
+    sessionRegistry.requestSubagentResurrection(rootSessionId, agent.path, draft);
   }
 </script>
 
@@ -405,7 +415,7 @@
                 class="subagent-view-button subagent-resurrect-button"
                 aria-label={`Resurrect ${agent.path.join('/')}`}
                 title="Resurrect saved session"
-                onclick={() => requestResurrection(agent.path)}
+                onclick={() => requestResurrection(agent)}
               >
                 <RotateCcw size={12} />
                 <span>Resurrect</span>

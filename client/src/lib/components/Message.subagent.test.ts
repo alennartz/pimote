@@ -399,6 +399,9 @@ describe('subagent transcript cards', () => {
               sessionId: 'saved-session',
               incarnation: 'incarnation-2',
               state: 'idle',
+              task: 'Continue the review',
+              channels: ['parent', 'scout'],
+              model: 'provider/model',
               usage: { input: 5, output: 6, cacheRead: 7, cacheWrite: 8, cost: 0.015, turns: 2 },
             },
           ],
@@ -412,7 +415,14 @@ describe('subagent transcript cards', () => {
     expect(resurrect).not.toBeNull();
     resurrect!.click();
     await tick();
-    expect(sessionRegistry.getPendingSubagentResurrection(chipStateRoot)?.path).toEqual(['team', 'worker']);
+    const pending = sessionRegistry.getPendingSubagentResurrection(chipStateRoot);
+    expect(pending?.path).toEqual(['team', 'worker']);
+    expect(pending?.resurrection).toEqual({
+      savedSessionId: 'saved-session',
+      task: 'Continue the review',
+      channels: ['parent', 'scout'],
+      model: 'provider/model',
+    });
   });
 
   it('renders and offers resurrection for a user teardown custom message', async () => {
