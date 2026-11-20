@@ -391,6 +391,37 @@
         color: var(--pimote-ui-muted-foreground);
         font-size: 0.78rem;
       }
+      .menu-demo {
+        width: min(100%, 260px);
+        padding: 4px;
+        border-radius: 8px;
+        background: var(--pimote-ui-popover);
+        color: var(--pimote-ui-popover-foreground);
+        box-shadow: 0 4px 12px color-mix(in oklch, var(--pimote-ui-shadow-color) 65%, transparent);
+        outline: 1px solid color-mix(in oklch, var(--pimote-ui-foreground) 10%, transparent);
+      }
+      .menu-item {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        border-radius: 6px;
+        padding: 4px 6px;
+        font-size: 0.875rem;
+        line-height: 1.4;
+        cursor: default;
+        user-select: none;
+      }
+      .menu-item:hover,
+      .menu-item.hovered {
+        background: var(--pimote-ui-accent);
+        color: var(--pimote-ui-accent-foreground);
+      }
+      .menu-separator {
+        height: 1px;
+        margin: 4px -4px;
+        background: var(--pimote-ui-border);
+      }
       .palette-note {
         margin: -4px 0 12px;
         color: var(--pimote-ui-muted-foreground);
@@ -781,6 +812,18 @@
               <a class="message-link" href="#">Message link</a>
               <a class="release-link" href="#">Release link</a>
               <span class="sunken-link"><a href="#">Sunken link</a></span>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h2>Context menu hover state</h2>
+            <p>Regular menu items use the popover surface. The hovered item uses the accent surface.</p>
+            <div class="menu-demo" role="menu" aria-label="Theme demo context menu">
+              <div class="menu-item" role="menuitem">Open session</div>
+              <div class="menu-item hovered" role="menuitem">Rename session</div>
+              <div class="menu-item" role="menuitem">Archive session</div>
+              <div class="menu-separator" role="separator"></div>
+              <div class="menu-item" role="menuitem">Session details</div>
             </div>
           </section>
 

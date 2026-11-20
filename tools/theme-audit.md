@@ -24,6 +24,8 @@ The audit covers:
 - Inserted, deleted, and changed text on the editor and dedicated diff surfaces.
 - Selection foreground against the selection surface, with syntax colors audited against the normal editor background.
 - Status text against tinted status surfaces.
+- Streaming and needs-attention session icons against the selected session chip’s primary surface.
+- Hover-surface separation for menu items and button variants.
 - ANSI terminal colors against Bash output and extension status backgrounds.
 - Client mapping contracts, including dedicated diff background roles.
 

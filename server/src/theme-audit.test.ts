@@ -72,6 +72,37 @@ describe('theme audit', () => {
     expect(report.findings.some((finding) => finding.rule === 'terminal.extension-status.red')).toBe(true);
   });
 
+  it('checks streaming and needs-attention icons on selected session chips', () => {
+    const theme = resolvedTheme('test/light');
+    theme.ui.primary = '#ffffff';
+    theme.ui['status-streaming'] = '#ffffff';
+    theme.ui['status-reconnecting'] = '#ffffff';
+
+    const report = auditThemes([theme]);
+
+    expect(report.findings.some((finding) => finding.rule === 'ui.session-chip.streaming')).toBe(true);
+    expect(report.findings.some((finding) => finding.rule === 'ui.session-chip.needs-attention')).toBe(true);
+  });
+
+  it('checks hover surfaces for menus and buttons', () => {
+    const theme = resolvedTheme('test/light');
+    theme.ui.background = '#ffffff';
+    theme.ui.popover = '#ffffff';
+    theme.ui.accent = '#ffffff';
+    theme.ui.primary = '#ffffff';
+    theme.ui.secondary = '#ffffff';
+    theme.ui.muted = '#ffffff';
+
+    const report = auditThemes([theme]);
+    const rules = report.findings.map((finding) => finding.rule);
+
+    expect(rules).toContain('ui.menu-item-hover');
+    expect(rules).toContain('ui.button.primary-hover');
+    expect(rules).toContain('ui.button.secondary-hover');
+    expect(rules).toContain('ui.button.ghost-hover');
+    expect(rules).toContain('ui.button.outline-hover');
+  });
+
   it('flags diff CSS without dedicated diff background roles', () => {
     expect(auditClientMappings('.hljs-addition { background: var(--pimote-editor-active-line); }')).toEqual([
       expect.objectContaining({ rule: 'mapping.editor.diff.addition-background' }),

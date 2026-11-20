@@ -68,6 +68,11 @@ const STATUS_TEXT_ROLES: ReadonlyArray<{ role: UiColorToken; label: string }> = 
   { role: 'status-reconnecting', label: 'reconnecting' },
 ];
 
+const SELECTED_SESSION_ICON_ROLES: ReadonlyArray<{ role: UiColorToken; label: string }> = [
+  { role: 'status-streaming', label: 'streaming' },
+  { role: 'status-reconnecting', label: 'needs-attention' },
+];
+
 const DIFF_ROLES: ReadonlyArray<{ role: EditorSyntaxRole; label: string; background?: 'addition' | 'deletion' }> = [
   { role: 'inserted', label: 'inserted', background: 'addition' },
   { role: 'deleted', label: 'deleted', background: 'deletion' },
@@ -77,6 +82,7 @@ const DIFF_ROLES: ReadonlyArray<{ role: EditorSyntaxRole; label: string; backgro
 const COLOR_SPACE = 'oklch';
 const STATUS_TINT_AMOUNT = 0.1;
 const ANSI_TEXT_MINIMUM = 2;
+const HOVER_SURFACE_MINIMUM = 2;
 
 const DIFF_MAPPING_CONTRACTS = [
   { rule: 'mapping.editor.diff.addition-background', token: '--pimote-editor-diff-addition-background' },
@@ -113,6 +119,12 @@ function contrastRatio(foreground: string, background: string, backdrop: string)
   const opaqueBackground = opaqueColor(background, backdrop);
   const opaqueForeground = opaqueColor(foreground, opaqueBackground);
   return opaqueForeground.contrast(opaqueBackground, 'WCAG21');
+}
+
+function alphaColor(value: string, alpha: number): string {
+  const color = new Color(value).to('srgb');
+  color.alpha = alpha;
+  return color.toString();
 }
 
 function mixOklch(base: string, overlay: string, amount: number): string {
@@ -236,6 +248,43 @@ function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
     const tintedSurface = mixOklch(ui.background, ui[role], STATUS_TINT_AMOUNT);
     auditPair(findings, theme, `ui.status.${label}`, `foreground on ${label} status tint`, ui.foreground, tintedSurface, 4.5, ui.background);
   }
+  for (const { role, label } of SELECTED_SESSION_ICON_ROLES) {
+    auditPair(findings, theme, `ui.session-chip.${label}`, `${label} icon on selected session chip`, ui[role], ui.primary, 3, ui.background);
+  }
+
+  auditPair(findings, theme, 'ui.menu-item-hover', 'menu hover surface against regular menu item surface', ui.accent, ui.popover, HOVER_SURFACE_MINIMUM, ui.background);
+  auditPair(
+    findings,
+    theme,
+    'ui.button.primary-hover',
+    'primary button hover surface against regular primary surface',
+    ui.primary,
+    alphaColor(ui.primary, 0.8),
+    HOVER_SURFACE_MINIMUM,
+    ui.background,
+  );
+  auditPair(
+    findings,
+    theme,
+    'ui.button.secondary-hover',
+    'secondary button hover surface against regular secondary surface',
+    ui.secondary,
+    alphaColor(ui.secondary, 0.8),
+    HOVER_SURFACE_MINIMUM,
+    ui.background,
+  );
+  auditPair(findings, theme, 'ui.button.ghost-hover', 'ghost button hover surface against regular page surface', ui.muted, ui.background, HOVER_SURFACE_MINIMUM, ui.background);
+  const outlineButtonSurface = theme.colorScheme === 'dark' ? alphaColor(ui.input, 0.3) : ui.background;
+  auditPair(
+    findings,
+    theme,
+    'ui.button.outline-hover',
+    'outline button hover surface against regular outline surface',
+    ui.muted,
+    outlineButtonSurface,
+    HOVER_SURFACE_MINIMUM,
+    ui.background,
+  );
 
   const terminalSurfaces = [
     ['bash', mixOklch(ui.background, ui['skill-surface'], 0.52)],
