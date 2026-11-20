@@ -597,11 +597,20 @@ describe('Panel lifecycle notices', () => {
     const target = render();
     await tick();
 
-    sessionRegistry.requestSubagentResurrection('root', ['worker']);
+    sessionRegistry.requestSubagentResurrection('root', ['worker'], {
+      savedSessionId: 'saved-worker',
+      task: 'Continue the review',
+      channels: ['parent'],
+      model: 'provider/model',
+    });
     await tick();
 
     expect(target.querySelector('[role="status"]')).toBeNull();
     expect(target.querySelector('[role="dialog"]')?.textContent).toContain('Resurrect child session');
+    expect(target.querySelector<HTMLInputElement>('[aria-label="Saved session ID"]')?.value).toBe('saved-worker');
+    expect(target.querySelector<HTMLTextAreaElement>('[aria-label="Task"]')?.value).toBe('Continue the review');
+    expect(target.querySelector<HTMLInputElement>('[aria-label="Communication channels"]')?.value).toBe('parent');
+    expect(target.querySelector<HTMLInputElement>('[aria-label="Model"]')?.value).toBe('provider/model');
     expect(sessionRegistry.getPendingSubagentResurrection('root')).not.toBeNull();
   });
 

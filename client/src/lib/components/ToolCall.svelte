@@ -466,7 +466,7 @@
   }
 
   .tool-section-output {
-    padding: 6px 0;
+    padding: 6px 0 6px 12px;
   }
 
   .tool-section + .tool-section {
