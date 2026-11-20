@@ -12,6 +12,7 @@ import type {
   UiColorToken,
 } from '../../shared/dist/index.js';
 import { builtinThemeDefinitions } from './builtin-themes.js';
+import { BUILTIN_THEME_IDS, normalizeBuiltinThemeId } from './theme-ids.js';
 
 /** Read boundary used by the catalog for extension and user JSON files. */
 export interface ThemeCatalogReader {
@@ -191,17 +192,7 @@ const TERMINAL_ROLES: readonly AnsiColorName[] = [
   'bright-cyan',
   'bright-white',
 ];
-const BUILTIN_IDS = new Set([
-  'pimote/light',
-  'pimote/dark',
-  'dracula/dracula',
-  'tokyo-night/tokyo-night',
-  'nord/nord',
-  'gruvbox/dark',
-  'solarized/light',
-  'catppuccin/mocha',
-  'catppuccin/latte',
-]);
+const BUILTIN_IDS: ReadonlySet<string> = new Set(BUILTIN_THEME_IDS);
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 /** The complete set of shipped theme definitions. */
@@ -278,7 +269,7 @@ function validateDefinition(value: unknown): { definition?: ThemeDefinition; mes
       id: value.id,
       name: value.name,
       colorScheme: value.colorScheme,
-      ...(value.extends ? { extends: value.extends } : {}),
+      ...(value.extends ? { extends: normalizeBuiltinThemeId(value.extends) } : {}),
       ...(value.palette ? { palette: { ...(value.palette as Record<string, string>) } } : {}),
       ui: { ...(value.ui as Record<UiColorToken, ThemeColorValue>) },
       editor: {
@@ -427,7 +418,7 @@ export class ThemeCatalog {
 
   constructor(private readonly options: ThemeCatalogOptions) {
     this.extensionFiles = [...options.extensionFiles];
-    this.current = emptySnapshot(options.defaultThemeId);
+    this.current = emptySnapshot(normalizeBuiltinThemeId(options.defaultThemeId));
   }
 
   async load(): Promise<ThemeCatalogSnapshot> {
@@ -453,6 +444,7 @@ export class ThemeCatalog {
   }
 
   async setDefaultTheme(defaultThemeId: string): Promise<ThemeCatalogSnapshot> {
+    defaultThemeId = normalizeBuiltinThemeId(defaultThemeId);
     if (defaultThemeId === this.current.defaultThemeId) return this.current;
     this.current = { ...this.current, defaultThemeId, revision: this.current.revision + 1 };
     this.publish();

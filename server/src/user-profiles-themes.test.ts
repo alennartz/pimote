@@ -31,12 +31,21 @@ describe('UserProfiles — theme selection', () => {
     const profiles = new UserProfiles(path);
     await profiles.load();
 
-    await expect(profiles.setSelectedTheme('alice', 'dracula/dracula')).resolves.toBe(true);
-    expect(profiles.selectedTheme('alice')).toBe('dracula/dracula');
+    await expect(profiles.setSelectedTheme('alice', 'pimote/dracula')).resolves.toBe(true);
+    expect(profiles.selectedTheme('alice')).toBe('pimote/dracula');
 
     const reloaded = new UserProfiles(path);
     await reloaded.load();
-    expect(reloaded.selectedTheme('alice')).toBe('dracula/dracula');
+    expect(reloaded.selectedTheme('alice')).toBe('pimote/dracula');
+  });
+
+  it('migrates legacy built-in selections when loading profiles', async () => {
+    const path = storePath();
+    await writeFile(path, JSON.stringify({ version: 1, users: { alice: { sessions: [], selectedThemeId: 'dracula/dracula' } } }), 'utf8');
+    const profiles = new UserProfiles(path);
+    await profiles.load();
+
+    expect(profiles.selectedTheme('alice')).toBe('pimote/dracula');
   });
 
   it('clears an override with null without deleting the user profile', async () => {
@@ -56,10 +65,10 @@ describe('UserProfiles — theme selection', () => {
     await profiles.load();
 
     await profiles.setSelectedTheme('alice', 'pimote/dark');
-    await profiles.setSelectedTheme('bob', 'nord/nord');
+    await profiles.setSelectedTheme('bob', 'pimote/nord');
 
     expect(profiles.selectedTheme('alice')).toBe('pimote/dark');
-    expect(profiles.selectedTheme('bob')).toBe('nord/nord');
+    expect(profiles.selectedTheme('bob')).toBe('pimote/nord');
   });
 
   it('loads existing profiles without theme fields and preserves their sessions', async () => {

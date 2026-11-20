@@ -23,13 +23,13 @@ describe('ThemeCatalog', () => {
       expect.arrayContaining([
         'pimote/light',
         'pimote/dark',
-        'dracula/dracula',
-        'tokyo-night/tokyo-night',
-        'nord/nord',
-        'gruvbox/dark',
-        'solarized/light',
-        'catppuccin/mocha',
-        'catppuccin/latte',
+        'pimote/dracula',
+        'pimote/tokyo-night',
+        'pimote/nord',
+        'pimote/gruvbox-dark',
+        'pimote/solarized-light',
+        'pimote/catppuccin-mocha',
+        'pimote/catppuccin-latte',
       ]),
     );
     expect(snapshot.themes.filter((entry) => entry.source === 'builtin')).toHaveLength(9);
@@ -43,13 +43,13 @@ describe('ThemeCatalog', () => {
   });
 
   it.each([
-    ['dracula/dracula', '#50fa7b', '#ffb86c', '#ff5555', '#50fa7b'],
-    ['tokyo-night/tokyo-night', '#9ece6a', '#e0af68', '#f7768e', '#73daca'],
-    ['nord/nord', '#a3be8c', '#ebcb8b', '#bf616a', '#a3be8c'],
-    ['gruvbox/dark', '#b8bb26', '#fe8019', '#fb4934', '#98971a'],
-    ['solarized/light', '#859900', '#cb4b16', '#dc322f', '#859900'],
-    ['catppuccin/mocha', '#a6e3a1', '#fab387', '#f38ba8', '#a6e3a1'],
-    ['catppuccin/latte', '#40a02b', '#fe640b', '#d20f39', '#40a02b'],
+    ['pimote/dracula', '#50fa7b', '#ffb86c', '#ff5555', '#50fa7b'],
+    ['pimote/tokyo-night', '#9ece6a', '#e0af68', '#f7768e', '#73daca'],
+    ['pimote/nord', '#a3be8c', '#ebcb8b', '#bf616a', '#a3be8c'],
+    ['pimote/gruvbox-dark', '#b8bb26', '#fe8019', '#fb4934', '#98971a'],
+    ['pimote/solarized-light', '#859900', '#cb4b16', '#dc322f', '#859900'],
+    ['pimote/catppuccin-mocha', '#a6e3a1', '#fab387', '#f38ba8', '#a6e3a1'],
+    ['pimote/catppuccin-latte', '#40a02b', '#fe640b', '#d20f39', '#40a02b'],
   ] as const)('uses palette-aligned semantic statuses and ANSI green for %s', async (id, success, warning, error, ansiGreen) => {
     const service = catalog({ builtinThemes: builtinThemeDefinitions() });
     const snapshot = await service.load();
@@ -63,6 +63,24 @@ describe('ThemeCatalog', () => {
       'status-error': error,
     });
     expect(theme?.editor.terminal.green).toBe(ansiGreen);
+  });
+
+  it('resolves an extension theme that extends a built-in through its legacy ID', async () => {
+    const child = {
+      ...theme('alice/dracula-child'),
+      extends: 'dracula/dracula',
+      ui: {},
+      editor: { surface: {}, syntax: {}, terminal: {} },
+    };
+    const service = catalog({
+      builtinThemes: builtinThemeDefinitions(),
+      extensionFiles: ['/extensions/child.json'],
+      reader: { read: async (path: string) => (path === '/extensions/child.json' ? JSON.stringify({ version: 1, themes: [child] }) : JSON.stringify({ version: 1, themes: [] })) },
+    });
+
+    await expect(service.load()).resolves.toMatchObject({
+      themes: expect.arrayContaining([expect.objectContaining({ id: 'alice/dracula-child', ui: expect.objectContaining({ background: '#282a36' }) })]),
+    });
   });
 
   it('publishes built-ins, extensions, and user themes in source order', async () => {

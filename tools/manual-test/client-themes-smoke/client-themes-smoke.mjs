@@ -191,7 +191,7 @@ async function main() {
   const fallbackFiles = await writeReportBundle(fallbackReportDir, false);
   const port = await freePort();
   const configPath = join(configDir, 'config.json');
-  await writeFile(configPath, JSON.stringify({ roots: [projectDir], port, bufferSize: 100, updateCheck: false, defaultTheme: 'dracula/dracula' }, null, 2));
+  await writeFile(configPath, JSON.stringify({ roots: [projectDir], port, bufferSize: 100, updateCheck: false, defaultTheme: 'pimote/dracula' }, null, 2));
   await writeFile(
     join(staticHostDir, `${sessionId}.json`),
     JSON.stringify(
@@ -235,7 +235,7 @@ async function main() {
     const lightTheme = themes.find((theme) => theme.id === 'pimote/light');
     const darkTheme = themes.find((theme) => theme.id === 'pimote/dark');
     assert(themes.length >= 8, 'catalog exposes all built-in paired themes');
-    assert(defaultTheme?.id === 'dracula/dracula', 'isolated server default is Dracula');
+    assert(defaultTheme?.id === 'pimote/dracula', 'isolated server default is Dracula');
     assert(lightTheme && darkTheme, 'catalog contains light and dark fixtures for preview assertions');
     const opened = await probe.send({ type: 'open_session', sessionId, folderPath: projectDir });
     assert(opened.success === true, 'isolated session opens for the test user');

@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import { PIMOTE_CONFIG_PATH, PIMOTE_STATE_DIR } from './paths.js';
 import { DEFAULT_APP_NAME } from './branding.js';
+import { normalizeBuiltinThemeId } from './theme-ids.js';
 
 export interface ModelRef {
   provider: string;
@@ -143,7 +144,7 @@ function parseConfigObject(obj: Record<string, unknown>, configPath: string, hom
     bufferSize: typeof obj.bufferSize === 'number' ? obj.bufferSize : DEFAULTS.bufferSize,
     port: typeof obj.port === 'number' ? obj.port : DEFAULTS.port,
     appName: typeof obj.appName === 'string' ? obj.appName : undefined,
-    defaultTheme: typeof obj.defaultTheme === 'string' && obj.defaultTheme.trim() ? obj.defaultTheme : 'pimote/light',
+    defaultTheme: normalizeBuiltinThemeId(typeof obj.defaultTheme === 'string' && obj.defaultTheme.trim() ? obj.defaultTheme : 'pimote/light'),
     defaultInterpreterModel: normalizeModelRef(obj.defaultInterpreterModel),
     defaultWorkerModel: normalizeModelRef(obj.defaultWorkerModel),
     voice: parseVoiceConfig(obj.voice),

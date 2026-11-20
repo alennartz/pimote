@@ -42,7 +42,7 @@ The `editor.terminal` map defines `black`, `red`, `green`, `yellow`, `blue`, `ma
 
 Pimote loads built-ins, extension files in deterministic discovery order, then `$XDG_CONFIG_HOME/pimote/themes.json` (normally `~/.config/pimote/themes.json`). The first valid definition for an ID wins. Extension and user definitions cannot replace a built-in ID. Invalid entries produce diagnostics and do not block other sources. An invalid user edit leaves its last valid contribution active. Cycles, missing inheritance bases, unknown palette swatches, missing roles, and invalid CSS colors reject only the affected theme. Contrast is not checked.
 
-The nine built-ins are `pimote/light`, `pimote/dark`, `dracula/dracula`, `tokyo-night/tokyo-night`, `nord/nord`, `gruvbox/dark`, `solarized/light`, `catppuccin/mocha`, and `catppuccin/latte`. IDs use the stable `publisher/theme-name` form.
+The nine built-ins are `pimote/light`, `pimote/dark`, `pimote/dracula`, `pimote/tokyo-night`, `pimote/nord`, `pimote/gruvbox-dark`, `pimote/solarized-light`, `pimote/catppuccin-mocha`, and `pimote/catppuccin-latte`. Their IDs use `pimote` as publisher, regardless of palette origin, in the stable `publisher/theme-name` form. Previous IDs remain accepted in native defaults, saved selections, and inheritance references.
 
 ## Defaults and profiles
 

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { normalizeBuiltinThemeId } from './theme-ids.js';
 
 /** One open session in a user's profile. */
 export interface SessionRef {
@@ -80,7 +81,7 @@ function parseDocument(raw: string): ProfileDocument {
         views: parseViews(profile.views),
         order: normalizeOrder(sessions, profile.order),
         selectedSessionId: normalizeSelection(sessions, profile.selectedSessionId),
-        selectedThemeId: typeof profile.selectedThemeId === 'string' && profile.selectedThemeId.trim() ? profile.selectedThemeId : null,
+        selectedThemeId: typeof profile.selectedThemeId === 'string' && profile.selectedThemeId.trim() ? normalizeBuiltinThemeId(profile.selectedThemeId) : null,
         orderVersion: typeof profile.orderVersion === 'number' && profile.orderVersion >= 0 ? profile.orderVersion : 0,
       };
     }

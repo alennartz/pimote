@@ -40,6 +40,20 @@ async function resolvedBuiltins() {
 }
 
 describe('built-in theme mappings', () => {
+  it('publishes every built-in under the Pimote publisher', () => {
+    expect(builtinThemeDefinitions().map((theme) => theme.id)).toEqual([
+      'pimote/light',
+      'pimote/dark',
+      'pimote/dracula',
+      'pimote/tokyo-night',
+      'pimote/nord',
+      'pimote/gruvbox-dark',
+      'pimote/solarized-light',
+      'pimote/catppuccin-mocha',
+      'pimote/catppuccin-latte',
+    ]);
+  });
+
   it('publishes every built-in color through a local named palette reference', () => {
     for (const theme of builtinThemeDefinitions()) {
       expect(Object.keys(theme.palette ?? {}).length, theme.id).toBeGreaterThan(0);
@@ -63,7 +77,7 @@ describe('built-in theme mappings', () => {
         expect(value, theme.id).toEqual(expect.any(String));
       }
     }
-    expect(themes.find((theme) => theme.id === 'dracula/dracula')).toMatchObject({
+    expect(themes.find((theme) => theme.id === 'pimote/dracula')).toMatchObject({
       ui: { background: '#282a36', primary: '#bd93f9', 'status-connected': '#50fa7b' },
       editor: { surface: { selection: '#44475a' }, syntax: { string: '#f1fa8c' }, terminal: { green: '#50fa7b' } },
     });
@@ -71,7 +85,15 @@ describe('built-in theme mappings', () => {
 
   it('maps third-party accent surfaces consistently while keeping muted surfaces separate', async () => {
     const themes = await resolvedBuiltins();
-    for (const id of ['dracula/dracula', 'tokyo-night/tokyo-night', 'nord/nord', 'gruvbox/dark', 'solarized/light', 'catppuccin/mocha', 'catppuccin/latte']) {
+    for (const id of [
+      'pimote/dracula',
+      'pimote/tokyo-night',
+      'pimote/nord',
+      'pimote/gruvbox-dark',
+      'pimote/solarized-light',
+      'pimote/catppuccin-mocha',
+      'pimote/catppuccin-latte',
+    ]) {
       const theme = themes.find((entry) => entry.id === id)!;
       expect(theme.ui.accent, id).toBe(theme.ui['sidebar-accent']);
       expect(theme.ui.muted, id).toBe(theme.ui.secondary);

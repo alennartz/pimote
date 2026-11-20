@@ -683,7 +683,7 @@ const pimoteLightTheme = definition(
 const pimoteDarkTheme = definition('pimote/dark', 'Pimote Dark', 'dark', darkUi, darkEditor, { surface: '#0d1117', syntax: '#c9d1d9', terminal: '#c9d1d9' }, pimoteDarkPalette);
 
 const draculaTheme = definePaletteTheme(
-  'dracula/dracula',
+  'pimote/dracula',
   'Dracula',
   'dark',
   {
@@ -851,7 +851,7 @@ const draculaTheme = definePaletteTheme(
 );
 
 const tokyoNightTheme = definePaletteTheme(
-  'tokyo-night/tokyo-night',
+  'pimote/tokyo-night',
   'Tokyo Night',
   'dark',
   {
@@ -1011,7 +1011,7 @@ const tokyoNightTheme = definePaletteTheme(
 );
 
 const nordTheme = definePaletteTheme(
-  'nord/nord',
+  'pimote/nord',
   'Nord',
   'dark',
   {
@@ -1172,7 +1172,7 @@ const nordTheme = definePaletteTheme(
 );
 
 const gruvboxTheme = definePaletteTheme(
-  'gruvbox/dark',
+  'pimote/gruvbox-dark',
   'Gruvbox Dark',
   'dark',
   {
@@ -1329,7 +1329,7 @@ const gruvboxTheme = definePaletteTheme(
 );
 
 const solarizedTheme = definePaletteTheme(
-  'solarized/light',
+  'pimote/solarized-light',
   'Solarized Light',
   'light',
   {
@@ -1486,7 +1486,7 @@ const solarizedTheme = definePaletteTheme(
 );
 
 const catppuccinMochaTheme = definePaletteTheme(
-  'catppuccin/mocha',
+  'pimote/catppuccin-mocha',
   'Catppuccin Mocha',
   'dark',
   {
@@ -1646,7 +1646,7 @@ const catppuccinMochaTheme = definePaletteTheme(
 );
 
 const catppuccinLatteTheme = definePaletteTheme(
-  'catppuccin/latte',
+  'pimote/catppuccin-latte',
   'Catppuccin Latte',
   'light',
   {

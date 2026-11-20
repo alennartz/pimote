@@ -16,14 +16,18 @@ describe('native theme configuration', () => {
   });
 
   it('accepts a configured default theme ID', () => {
-    expect(parseConfig('{"roots":["/workspace"],"defaultTheme":"nord/nord"}', '/tmp/config.json', '/home/user').defaultTheme).toBe('nord/nord');
+    expect(parseConfig('{"roots":["/workspace"],"defaultTheme":"pimote/nord"}', '/tmp/config.json', '/home/user').defaultTheme).toBe('pimote/nord');
+  });
+
+  it('migrates a legacy built-in default theme ID', () => {
+    expect(parseConfig('{"roots":["/workspace"],"defaultTheme":"nord/nord"}', '/tmp/config.json', '/home/user').defaultTheme).toBe('pimote/nord');
   });
 
   it('keeps the live default theme when unrelated native fields reload', () => {
     const runtime = new ConfigRuntime({ configPath: '/tmp/config.json', config: { ...base, defaultTheme: 'pimote/light' } });
 
-    runtime.apply({ ...base, defaultTheme: 'nord/nord', tagSnippets: ['context'] });
+    runtime.apply({ ...base, defaultTheme: 'pimote/nord', tagSnippets: ['context'] });
 
-    expect(runtime.snapshot().defaultTheme).toBe('nord/nord');
+    expect(runtime.snapshot().defaultTheme).toBe('pimote/nord');
   });
 });
