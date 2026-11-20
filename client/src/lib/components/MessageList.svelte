@@ -230,6 +230,8 @@
     }
   }
 
+  // Sticky selection is geometry-driven. Optimistic prompts are appended at the
+  // transcript tail, so they cannot qualify for the top preview at creation.
   function transcriptPositions(): UserMessagePosition[] {
     const positions: UserMessagePosition[] = [];
     for (const entry of displayEntries) {

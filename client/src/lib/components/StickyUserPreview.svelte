@@ -29,9 +29,9 @@
   );
 </script>
 
-<div class="sticky-preview">
-  <span class="avatar-anchor">
-    {#if entryId}
+{#if entryId}
+  <div class="sticky-preview">
+    <span class="avatar-anchor">
       <button type="button" class="avatar" aria-label="Message actions" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>
         <User size={15} />
       </button>
@@ -40,17 +40,13 @@
           <MessageActionMenu open {entryId} {sessionId} {abandonedBranchCount} {manager} {readOnly} {store} {onRedo} {onFork} onClose={() => (menuOpen = false)} />
         </div>
       {/if}
-    {:else}
-      <span class="avatar avatar-static" aria-hidden="true">
-        <User size={15} />
-      </span>
-    {/if}
-  </span>
-  <span class="line" title={text}>{text.split('\n')[0]}</span>
-  <button type="button" class="jump" aria-label="Jump to previous message" title="Jump to previous message" onclick={() => onJump?.()}>
-    <ArrowUp size={15} />
-  </button>
-</div>
+    </span>
+    <span class="line" title={text}>{text.split('\n')[0]}</span>
+    <button type="button" class="jump" aria-label="Jump to previous message" title="Jump to previous message" onclick={() => onJump?.()}>
+      <ArrowUp size={15} />
+    </button>
+  </div>
+{/if}
 
 <style>
   /* Centers within .sticky-host, which spans the scroll container's client
@@ -89,10 +85,6 @@
     background: var(--avatar-bg);
     color: var(--avatar-fg);
     cursor: pointer;
-  }
-
-  .avatar-static {
-    cursor: default;
   }
 
   .menu-pop {
