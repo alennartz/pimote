@@ -52,4 +52,19 @@ Load the theme helper after the report's fallback CSS by default. Omit it only w
 <script type="module" src="/pwa/theme-bridge.js"></script>
 ```
 
-The helper discovers `pimote:user` and applies the user-scoped cache. A report can override any resulting property after the helper runs. The helper does not rewrite report HTML or change the static-host route.
+The helper discovers `pimote:user` and applies the user-scoped cache. Loading the helper alone does not theme a report. It writes `--pimote-ui-*`, `--pimote-editor-*`, and `--pimote-terminal-*` custom properties. Report styles must consume those properties, directly or through report-local aliases:
+
+```css
+:root {
+  --report-background: var(--pimote-ui-background, #f7f8fa);
+  --report-foreground: var(--pimote-ui-foreground, #20242b);
+  --report-accent: var(--pimote-ui-primary, #5b55d6);
+}
+
+body {
+  background: var(--report-background);
+  color: var(--report-foreground);
+}
+```
+
+A report that uses only private variables such as `--background` or `--accent` keeps its fallback palette even when the helper loads. A report can override any resulting property after the helper runs. The helper does not rewrite report HTML or change the static-host route.
