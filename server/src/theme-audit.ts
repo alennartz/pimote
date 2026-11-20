@@ -235,6 +235,16 @@ function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
     auditPair(findings, theme, `ui.status.${label}`, `foreground on ${label} status tint`, ui.foreground, tintedSurface, 4.5, ui.background);
   }
 
+  const terminalSurfaces = [
+    ['bash', mixOklch(ui.background, ui['skill-surface'], 0.52)],
+    ['extension-status', mixOklch(ui.background, ui.muted, 0.5)],
+  ] as const;
+  for (const [context, background] of terminalSurfaces) {
+    for (const [role, foreground] of Object.entries(theme.editor.terminal) as Array<[string, string]>) {
+      auditPair(findings, theme, `terminal.${context}.${role}`, `${role} on ${context} background`, foreground, background, 4.5, ui.background);
+    }
+  }
+
   return findings;
 }
 

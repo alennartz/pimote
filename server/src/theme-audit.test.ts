@@ -49,6 +49,19 @@ describe('theme audit', () => {
     expect(report.findings.some((finding) => finding.rule === 'ui.warning')).toBe(false);
   });
 
+  it('checks ANSI colors against both terminal output surfaces', () => {
+    const theme = resolvedTheme('test/light');
+    theme.ui.background = '#ffffff';
+    theme.ui['skill-surface'] = '#ffffff';
+    theme.ui.muted = '#ffffff';
+    theme.editor.terminal.red = '#ffffff';
+
+    const report = auditThemes([theme]);
+
+    expect(report.findings.some((finding) => finding.rule === 'terminal.bash.red')).toBe(true);
+    expect(report.findings.some((finding) => finding.rule === 'terminal.extension-status.red')).toBe(true);
+  });
+
   it('flags diff CSS without dedicated diff background roles', () => {
     expect(auditClientMappings('.hljs-addition { background: var(--pimote-editor-active-line); }')).toEqual([
       expect.objectContaining({ rule: 'mapping.editor.diff.addition-background' }),
