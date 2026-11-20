@@ -157,7 +157,8 @@ describe('Panel hierarchy navigation', () => {
     const mainRowButton = mainRow?.querySelector<HTMLButtonElement>('button[aria-label="Inspect worker"]');
     expect(mainRowButton?.getAttribute('aria-expanded')).toBe('false');
     expect(mainRowButton?.textContent?.match(/worker/g)).toHaveLength(1);
-    expect(mainRowButton?.textContent).toContain('waiting');
+    expect(mainRowButton?.textContent).not.toContain('waiting');
+    expect(mainRowButton?.querySelector('[data-agent-chip]')?.getAttribute('aria-label')).toContain(', waiting');
     const mainContext = mainRow?.querySelector('.tree-row-meta');
     const mainOpenButton = mainRow?.querySelector('[data-open-node="worker"]');
     expect(mainContext?.textContent).toContain('31%');

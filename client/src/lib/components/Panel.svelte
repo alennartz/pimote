@@ -420,11 +420,8 @@
       aria-label={`Inspect ${pathLabel(row.path)}`}
       onclick={() => inspect(row.path)}
     >
-      <span class="min-w-0 flex-1">
-        <span class="block min-w-0 truncate">
-          <AgentChip path={row.path} rootSessionId={rootSessionId ?? ''} name={row.label} persona={row.metadata.persona} personaIcon={row.metadata.personaIcon} />
-        </span>
-        <span class="text-muted-foreground block truncate text-[11px]">{row.metadata.state}</span>
+      <span class="flex min-w-0 flex-1 items-center">
+        <AgentChip path={row.path} rootSessionId={rootSessionId ?? ''} name={row.label} persona={row.metadata.persona} personaIcon={row.metadata.personaIcon} />
       </span>
     </button>
     <div class="tree-row-meta text-muted-foreground flex shrink-0 items-center gap-1 font-mono text-[10px]">
@@ -687,7 +684,7 @@
     min-width: 0;
     margin: 0;
     padding: 0.3rem 0.35rem 0.4rem calc(0.5rem + var(--tree-indent));
-    border-top: 1px solid color-mix(in oklch, var(--sidebar-border) 60%, transparent);
+    border-bottom: 1px solid color-mix(in oklch, var(--sidebar-border) 60%, transparent);
   }
   .tree-row-command dd {
     min-width: 0;
