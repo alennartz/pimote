@@ -488,13 +488,11 @@
         <div class="stack">
           <section class="panel">
             <h2>Theme palette</h2>
-            <p class="palette-note">These are the source palette names declared by this theme. Semantic roles below point to these swatches.</p>
+            <p class="palette-note">These are the source palette names declared by this theme.</p>
+            <h3>Named colors</h3>
             <div id="palette" class="swatches"></div>
-          </section>
-
-          <section class="panel">
-            <h2>UI surfaces and roles</h2>
-            <div id="ui-swatches" class="swatches"></div>
+            <h3 style="margin-top: 18px">ANSI colors</h3>
+            <div id="ansi-palette" class="swatches"></div>
           </section>
 
           <section class="panel">
@@ -510,13 +508,7 @@
               <span class="chip" style="--chip: var(--ui-status-error)"><i class="dot"></i>Error</span>
               <span class="chip" style="--chip: var(--ui-status-active)"><i class="dot"></i>Active</span>
             </div>
-            <div class="session-chips" style="margin-bottom: 10px">
-              <span class="session-chip"><i class="status-icon" style="--status-color: var(--ui-status-connected)"></i><span>main</span><small>idle</small></span>
-              <span class="session-chip selected"
-                ><i class="status-icon" style="--status-color: var(--ui-status-streaming)"></i><span>feature/theme</span><small>working</small></span
-              >
-              <span class="session-chip"><i class="status-icon" style="--status-color: var(--ui-status-reconnecting)"></i><span>review</span><small>waiting</small></span>
-            </div>
+            <div id="session-chips" class="session-chips" style="margin-bottom: 10px"></div>
             <pre class="status-code"><code>&lt;span class="session-chip selected"&gt;
   &lt;span class="status-icon status-streaming" /&gt;
 &lt;/span&gt;</code></pre>
@@ -597,7 +589,8 @@
       const scheme = document.querySelector('#scheme');
       const summary = document.querySelector('#audit-summary');
       const palette = document.querySelector('#palette');
-      const uiSwatches = document.querySelector('#ui-swatches');
+      const ansiPalette = document.querySelector('#ansi-palette');
+      const sessionChips = document.querySelector('#session-chips');
       const metrics = document.querySelector('#metrics');
       const findings = document.querySelector('#findings');
       const metadata = document.querySelector('#metadata');
@@ -616,20 +609,6 @@
       }
       select.value = localStorage.getItem('pimote-theme-demo') || 'pimote/dark';
 
-      const uiSwatchesRoles = [
-        ['background', 'Background', 'foreground'],
-        ['card', 'Card', 'card-foreground'],
-        ['popover', 'Popover', 'popover-foreground'],
-        ['primary', 'Primary', 'primary-foreground'],
-        ['secondary', 'Secondary', 'secondary-foreground'],
-        ['muted', 'Muted', 'muted-foreground'],
-        ['accent', 'Accent', 'accent-foreground'],
-        ['destructive', 'Destructive', 'foreground'],
-        ['warning', 'Warning', 'foreground'],
-        ['surface-sunken', 'Sunken', 'foreground'],
-        ['surface-raised', 'Raised', 'foreground'],
-        ['border', 'Border', 'foreground'],
-      ];
       const setToken = (prefix, role, value) => document.documentElement.style.setProperty(`--${prefix}-${role}`, value);
       function applyTheme(theme) {
         document.documentElement.classList.toggle('dark', theme.colorScheme === 'dark');
@@ -641,21 +620,38 @@
         scheme.textContent = `${theme.colorScheme} · ${theme.source}`;
         localStorage.setItem('pimote-theme-demo', theme.id);
         renderPalette(theme);
-        renderSwatches(theme);
+        renderSessionChips();
         renderAudit(theme);
         metadata.innerHTML = `<p><strong>${theme.name}</strong></p><p><code>${theme.id}</code></p><p>Palette entries: ${Object.keys(theme.palette ?? {}).length}</p><p>Selection foreground: <code>${theme.editor.surface['selection-foreground']}</code></p><p>Diff add: <code>${theme.editor.surface['diff-addition-background']}</code></p><p>Diff remove: <code>${theme.editor.surface['diff-deletion-background']}</code></p>`;
       }
       function renderPalette(theme) {
-        const entries = Object.entries(data.palettes[theme.id] ?? {}).sort(([left], [right]) => left.localeCompare(right));
+        const entries = Object.entries(data.palettes[theme.id] ?? {});
+        const isAnsi = ([name]) => name.startsWith('ansi-') || name.startsWith('terminal-');
+        const swatch = ([name, value]) =>
+          `<div class="swatch" style="--swatch: ${value}; --swatch-fg: var(--ui-foreground)"><small>${name.replace(/^(ansi|terminal)-/, '')}</small><code>${value}</code></div>`;
         palette.innerHTML = entries
-          .map(([name, value]) => `<div class="swatch" style="--swatch: ${value}; --swatch-fg: var(--ui-foreground)"><small>${name}</small><code>${value}</code></div>`)
+          .filter(([name]) => !isAnsi([name]))
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(swatch)
+          .join('');
+        ansiPalette.innerHTML = entries
+          .filter(isAnsi)
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(swatch)
           .join('');
       }
-      function renderSwatches(theme) {
-        uiSwatches.innerHTML = uiSwatchesRoles
-          .map(
-            ([role, label, fg]) =>
-              `<div class="swatch" style="--swatch: var(--ui-${role}); --swatch-fg: var(--ui-${fg})"><small>${label}</small><code>${theme.ui[role]}</code></div>`,
+      function renderSessionChips() {
+        const states = [
+          ['Streaming', 'working', 'var(--ui-status-streaming)'],
+          ['Idle', 'idle', 'var(--ui-muted-foreground)'],
+          ['Needs attention', 'attention', 'var(--ui-status-reconnecting)'],
+        ];
+        sessionChips.innerHTML = states
+          .flatMap(([label, detail, color]) =>
+            [false, true].map(
+              (selected) =>
+                `<span class="session-chip${selected ? ' selected' : ''}"><i class="status-icon" style="--status-color: ${color}"></i><span>${label}</span><small>${selected ? 'selected' : detail}</small></span>`,
+            ),
           )
           .join('');
       }
