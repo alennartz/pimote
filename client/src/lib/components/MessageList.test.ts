@@ -115,6 +115,36 @@ function settle() {
 }
 
 describe('MessageList streaming menus', () => {
+  it('shows and updates the previous optimistic user message while streaming', async () => {
+    const session = sessionRegistry.viewed!;
+    session.messages = [
+      { role: 'user', content: [{ type: 'text', text: 'the first prompt' }] },
+      { role: 'assistant', entryId: 'a1', content: [{ type: 'text', text: 'answer' }] },
+      { role: 'user', content: [{ type: 'text', text: 'the active prompt' }] },
+    ];
+    session.messageKeys = ['m1', 'm2', 'm3'];
+    session.isStreaming = true;
+    session.streamingKey = 'm4';
+    session.streamingMessage = { role: 'assistant', content: [{ type: 'text', text: 'live answer' }] };
+    flushSync();
+    await settle();
+    paintFrame();
+
+    const rows = [...target.querySelectorAll<HTMLElement>('.transcript-row')];
+    rows[0].getBoundingClientRect = () => ({ bottom: -100 }) as DOMRect;
+    rows[2].getBoundingClientRect = () => ({ bottom: 100 }) as DOMRect;
+    container.dispatchEvent(new Event('scroll'));
+    paintFrame();
+
+    expect(target.querySelector('.sticky-preview')?.textContent).toContain('the first prompt');
+
+    rows[2].getBoundingClientRect = () => ({ bottom: -100 }) as DOMRect;
+    container.dispatchEvent(new Event('scroll'));
+    paintFrame();
+
+    expect(target.querySelector('.sticky-preview')?.textContent).toContain('the active prompt');
+  });
+
   it.each([true, false])('keeps finalized message menus open while streaming, pinned=%s', async (pinned) => {
     const session = sessionRegistry.viewed!;
     session.messages = [
