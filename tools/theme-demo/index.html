@@ -199,7 +199,8 @@
       .buttons,
       .chips,
       .links,
-      .avatars {
+      .avatars,
+      .session-chips {
         display: flex;
         flex-wrap: wrap;
         gap: 8px;
@@ -241,6 +242,50 @@
         height: 7px;
         border-radius: 50%;
         background: var(--chip);
+      }
+      .session-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        min-width: 150px;
+        padding: 8px 10px;
+        border: 1px solid var(--ui-border);
+        border-radius: 8px;
+        background: var(--ui-card);
+      }
+      .session-chip.selected {
+        border-color: var(--ui-accent);
+        background: var(--ui-accent);
+        color: var(--ui-accent-foreground);
+      }
+      .status-icon {
+        width: 8px;
+        height: 8px;
+        flex: none;
+        border-radius: 50%;
+        background: var(--status-color);
+      }
+      .session-chip small {
+        margin-left: auto;
+        color: var(--ui-muted-foreground);
+      }
+      .session-chip.selected small {
+        color: inherit;
+        opacity: 0.75;
+      }
+      .status-code {
+        margin: 10px 0 0;
+        padding: 10px;
+        overflow: auto;
+        border-radius: 7px;
+        background: var(--ui-surface-sunken);
+        color: var(--ui-muted-foreground);
+        font-size: 0.78rem;
+      }
+      .palette-note {
+        margin: -4px 0 12px;
+        color: var(--ui-muted-foreground);
+        font-size: 0.85rem;
       }
       .callouts {
         display: grid;
@@ -442,12 +487,18 @@
       <div class="layout">
         <div class="stack">
           <section class="panel">
-            <h2>UI surfaces and roles</h2>
-            <div id="swatches" class="swatches"></div>
+            <h2>Theme palette</h2>
+            <p class="palette-note">These are the source palette names declared by this theme. Semantic roles below point to these swatches.</p>
+            <div id="palette" class="swatches"></div>
           </section>
 
           <section class="panel">
-            <h2>Buttons, statuses, and links</h2>
+            <h2>UI surfaces and roles</h2>
+            <div id="ui-swatches" class="swatches"></div>
+          </section>
+
+          <section class="panel">
+            <h2>Buttons, session chips, statuses, and links</h2>
             <div class="buttons" style="margin-bottom: 12px">
               <span class="button primary">Primary action</span>
               <span class="button secondary">Secondary</span>
@@ -459,6 +510,16 @@
               <span class="chip" style="--chip: var(--ui-status-error)"><i class="dot"></i>Error</span>
               <span class="chip" style="--chip: var(--ui-status-active)"><i class="dot"></i>Active</span>
             </div>
+            <div class="session-chips" style="margin-bottom: 10px">
+              <span class="session-chip"><i class="status-icon" style="--status-color: var(--ui-status-connected)"></i><span>main</span><small>idle</small></span>
+              <span class="session-chip selected"
+                ><i class="status-icon" style="--status-color: var(--ui-status-streaming)"></i><span>feature/theme</span><small>working</small></span
+              >
+              <span class="session-chip"><i class="status-icon" style="--status-color: var(--ui-status-reconnecting)"></i><span>review</span><small>waiting</small></span>
+            </div>
+            <pre class="status-code"><code>&lt;span class="session-chip selected"&gt;
+  &lt;span class="status-icon status-streaming" /&gt;
+&lt;/span&gt;</code></pre>
             <div class="link-samples links">
               <a href="#">Message link</a>
               <a href="#">Release link</a>
@@ -535,7 +596,8 @@
       const select = document.querySelector('#theme-select');
       const scheme = document.querySelector('#scheme');
       const summary = document.querySelector('#audit-summary');
-      const swatches = document.querySelector('#swatches');
+      const palette = document.querySelector('#palette');
+      const uiSwatches = document.querySelector('#ui-swatches');
       const metrics = document.querySelector('#metrics');
       const findings = document.querySelector('#findings');
       const metadata = document.querySelector('#metadata');
@@ -554,7 +616,7 @@
       }
       select.value = localStorage.getItem('pimote-theme-demo') || 'pimote/dark';
 
-      const uiSwatches = [
+      const uiSwatchesRoles = [
         ['background', 'Background', 'foreground'],
         ['card', 'Card', 'card-foreground'],
         ['popover', 'Popover', 'popover-foreground'],
@@ -578,12 +640,19 @@
         for (const [role, value] of Object.entries(theme.editor.terminal)) setToken('term', role, value);
         scheme.textContent = `${theme.colorScheme} · ${theme.source}`;
         localStorage.setItem('pimote-theme-demo', theme.id);
+        renderPalette(theme);
         renderSwatches(theme);
         renderAudit(theme);
         metadata.innerHTML = `<p><strong>${theme.name}</strong></p><p><code>${theme.id}</code></p><p>Palette entries: ${Object.keys(theme.palette ?? {}).length}</p><p>Selection foreground: <code>${theme.editor.surface['selection-foreground']}</code></p><p>Diff add: <code>${theme.editor.surface['diff-addition-background']}</code></p><p>Diff remove: <code>${theme.editor.surface['diff-deletion-background']}</code></p>`;
       }
+      function renderPalette(theme) {
+        const entries = Object.entries(data.palettes[theme.id] ?? {}).sort(([left], [right]) => left.localeCompare(right));
+        palette.innerHTML = entries
+          .map(([name, value]) => `<div class="swatch" style="--swatch: ${value}; --swatch-fg: var(--ui-foreground)"><small>${name}</small><code>${value}</code></div>`)
+          .join('');
+      }
       function renderSwatches(theme) {
-        swatches.innerHTML = uiSwatches
+        uiSwatches.innerHTML = uiSwatchesRoles
           .map(
             ([role, label, fg]) =>
               `<div class="swatch" style="--swatch: var(--ui-${role}); --swatch-fg: var(--ui-${fg})"><small>${label}</small><code>${theme.ui[role]}</code></div>`,

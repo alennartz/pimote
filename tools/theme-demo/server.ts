@@ -19,9 +19,11 @@ async function loadPayload(): Promise<object> {
     reader: { read: async () => emptyThemeFile },
   });
   const snapshot = await catalog.load();
+  const definitions = builtinThemeDefinitions();
   const css = await readFile(join(root, '../../client/src/lib/highlight-theme.css'), 'utf8');
   const payload = {
     themes: snapshot.themes,
+    palettes: Object.fromEntries(definitions.map((definition) => [definition.id, definition.palette ?? {}])),
     audit: auditThemes(snapshot.themes),
     mappingFindings: auditClientMappings(css),
   };
