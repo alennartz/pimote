@@ -134,6 +134,26 @@ describe('CodeMirror theme rendering', () => {
     }
   });
 
+  it('overrides CodeMirror’s focused selection layer with the theme selection color', () => {
+    const parent = host();
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({ doc: 'selected text', extensions: [createCodeMirrorTheme(light)] }),
+    });
+    const layer = document.createElement('div');
+    layer.className = 'cm-selectionLayer';
+    const selection = document.createElement('div');
+    selection.className = 'cm-selectionBackground';
+    layer.append(selection);
+    view.dom.querySelector('.cm-scroller')!.append(layer);
+    view.dom.classList.add('cm-focused');
+    try {
+      expect(renderedColor(selection, 'background-color')).toBe(cssColor(light.editor.surface.selection));
+    } finally {
+      view.destroy();
+    }
+  });
+
   it('updates the editor color scheme when reconfigured', () => {
     const parent = host();
     const compartment = new Compartment();

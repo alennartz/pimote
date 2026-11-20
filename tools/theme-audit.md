@@ -19,7 +19,8 @@ The audit only checks pairings declared by current consumers. A token name does 
 The audit covers:
 
 - UI foreground and surface pairs.
-- Editor foreground, syntax, selection, search, and bracket pairs.
+- Editor foreground on the live editor background and the sunken code/diff surface.
+- Editor syntax, selection, search, and bracket pairs.
 - Inserted, deleted, and changed text on the editor and dedicated diff surfaces.
 - Selection foreground against the selection surface, with syntax colors audited against the normal editor background.
 - Status text against tinted status surfaces.

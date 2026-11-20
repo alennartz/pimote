@@ -88,10 +88,10 @@
 
 .hljs-addition {
   color: var(--pimote-editor-inserted, var(--pimote-editor-foreground, #24292f));
-  background-color: var(--pimote-editor-diff-addition-background, var(--pimote-editor-active-line, #dafbe1));
+  background-color: var(--pimote-editor-diff-addition-background, #dafbe1);
 }
 
 .hljs-deletion {
   color: var(--pimote-editor-deleted, var(--pimote-editor-foreground, #24292f));
-  background-color: var(--pimote-editor-diff-deletion-background, var(--pimote-editor-search-match, #ffebe9));
+  background-color: var(--pimote-editor-diff-deletion-background, #ffebe9);
 }

@@ -180,6 +180,7 @@ function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
   const ui = theme.ui;
 
   auditPair(findings, theme, 'editor.body', 'editor foreground on background', surface.foreground, surface.background, 4.5, surface.background);
+  auditPair(findings, theme, 'editor.code-surface', 'editor foreground on sunken code surface', surface.foreground, ui['surface-sunken'], 4.5, ui.background);
   auditPair(findings, theme, 'editor.selection', 'selection foreground on selection', surface['selection-foreground'], surface.selection, 4.5, surface.background);
   auditPair(findings, theme, 'editor.matching-bracket', 'bracket syntax on matching bracket', syntax.bracket, surface['matching-bracket'], 3, surface.background);
   auditPair(findings, theme, 'editor.search-match-marker', 'search-match marker on editor background', surface['search-match'], surface.background, 3, surface.background);

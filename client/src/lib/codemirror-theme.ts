@@ -73,7 +73,9 @@ export function createCodeMirrorTheme(theme: ResolvedTheme): Extension {
         '&': { color: surface.foreground, backgroundColor: surface.background },
         '.cm-content': { caretColor: surface.cursor },
         '.cm-cursor, .cm-dropCursor': { borderLeftColor: surface.cursor },
-        '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': { backgroundColor: surface.selection },
+        '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, &.cm-focused .cm-selectionBackground, & .cm-selectionBackground': {
+          backgroundColor: surface.selection,
+        },
         '::selection': { backgroundColor: surface.selection, color: surface['selection-foreground'] },
         '.cm-activeLine': { backgroundColor: surface['active-line'] },
         '.cm-gutters': { backgroundColor: surface['gutter-background'], color: surface['gutter-foreground'], border: 'none' },

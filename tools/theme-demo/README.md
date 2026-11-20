@@ -16,4 +16,4 @@ npm run theme-demo -- 4174
 
 The server loads the current built-in definitions from `server/src/builtin-themes.ts`, resolves them through the real `ThemeCatalog`, and reads the current client mapping from `client/src/lib/highlight-theme.css`. It does not copy color values into the demo. Restart the server after source edits.
 
-The page includes UI surfaces, buttons, status chips, callouts, links, editor syntax, selection, search markers, matching brackets, diffs, terminal output, and the current audit findings for the selected theme.
+The page mirrors the current consumer contracts from the button, status bar, session rail, message callout, markdown link, CodeMirror editor, edit diff, Bash output, and extension status components. It includes their UI surfaces, status states, editor syntax, selection, search markers, matching brackets, diffs, terminal output, and the current audit findings for the selected theme.

@@ -7,75 +7,76 @@
     <style>
       :root {
         color-scheme: light dark;
-        --ui-background: Canvas;
-        --ui-foreground: CanvasText;
-        --ui-card: Canvas;
-        --ui-card-foreground: CanvasText;
-        --ui-popover: Canvas;
-        --ui-popover-foreground: CanvasText;
-        --ui-primary: Highlight;
-        --ui-primary-foreground: HighlightText;
-        --ui-secondary: ButtonFace;
-        --ui-secondary-foreground: ButtonText;
-        --ui-muted: ButtonFace;
-        --ui-muted-foreground: GrayText;
-        --ui-accent: Highlight;
-        --ui-accent-foreground: HighlightText;
-        --ui-destructive: LinkText;
-        --ui-warning: Mark;
-        --ui-border: GrayText;
-        --ui-status-active: LinkText;
-        --ui-status-connected: LinkText;
-        --ui-status-error: LinkText;
-        --ui-status-reconnecting: Mark;
-        --ui-surface-sunken: Canvas;
-        --ui-surface-raised: ButtonFace;
-        --ui-surface-subtle: ButtonFace;
-        --ui-surface-hover: Highlight;
-        --ui-error-accent: LinkText;
-        --ui-error-surface: Canvas;
-        --ui-error-foreground: CanvasText;
-        --ui-skill-accent: LinkText;
-        --ui-skill-surface: Canvas;
-        --ui-skill-foreground: CanvasText;
-        --ui-custom-accent: LinkText;
-        --ui-custom-surface: Canvas;
-        --ui-custom-foreground: CanvasText;
-        --ui-link: LinkText;
-        --ui-link-hover: LinkText;
-        --ui-avatar-bg: Highlight;
-        --ui-avatar-fg: HighlightText;
-        --editor-background: Canvas;
-        --editor-foreground: CanvasText;
-        --editor-selection: Highlight;
-        --editor-selection-foreground: HighlightText;
-        --editor-active-line: ButtonFace;
-        --editor-matching-bracket: Highlight;
-        --editor-search-match: LinkText;
-        --editor-diff-addition-background: Mark;
-        --editor-diff-deletion-background: Mark;
-        --editor-comment: CanvasText;
-        --editor-keyword: LinkText;
-        --editor-string: CanvasText;
-        --editor-number: LinkText;
-        --editor-function: LinkText;
-        --editor-type: CanvasText;
-        --editor-inserted: CanvasText;
-        --editor-deleted: CanvasText;
-        --term-red: red;
-        --term-green: green;
-        --term-yellow: orange;
-        --term-blue: blue;
-        --term-magenta: magenta;
-        --term-cyan: teal;
+        --pimote-ui-background: Canvas;
+        --pimote-ui-foreground: CanvasText;
+        --pimote-ui-card: Canvas;
+        --pimote-ui-card-foreground: CanvasText;
+        --pimote-ui-popover: Canvas;
+        --pimote-ui-popover-foreground: CanvasText;
+        --pimote-ui-primary: Highlight;
+        --pimote-ui-primary-foreground: HighlightText;
+        --pimote-ui-secondary: ButtonFace;
+        --pimote-ui-secondary-foreground: ButtonText;
+        --pimote-ui-muted: ButtonFace;
+        --pimote-ui-muted-foreground: GrayText;
+        --pimote-ui-accent: Highlight;
+        --pimote-ui-accent-foreground: HighlightText;
+        --pimote-ui-destructive: LinkText;
+        --pimote-ui-warning: Mark;
+        --pimote-ui-border: GrayText;
+        --pimote-ui-status-active: LinkText;
+        --pimote-ui-status-streaming: LinkText;
+        --pimote-ui-status-connected: LinkText;
+        --pimote-ui-status-error: LinkText;
+        --pimote-ui-status-reconnecting: Mark;
+        --pimote-ui-surface-sunken: Canvas;
+        --pimote-ui-surface-raised: ButtonFace;
+        --pimote-ui-surface-subtle: ButtonFace;
+        --pimote-ui-surface-hover: Highlight;
+        --pimote-ui-error-accent: LinkText;
+        --pimote-ui-error-surface: Canvas;
+        --pimote-ui-error-foreground: CanvasText;
+        --pimote-ui-skill-accent: LinkText;
+        --pimote-ui-skill-surface: Canvas;
+        --pimote-ui-skill-foreground: CanvasText;
+        --pimote-ui-custom-accent: LinkText;
+        --pimote-ui-custom-surface: Canvas;
+        --pimote-ui-custom-foreground: CanvasText;
+        --pimote-ui-link: LinkText;
+        --pimote-ui-link-hover: LinkText;
+        --pimote-ui-avatar-bg: Highlight;
+        --pimote-ui-avatar-fg: HighlightText;
+        --pimote-editor-background: Canvas;
+        --pimote-editor-foreground: CanvasText;
+        --pimote-editor-selection: Highlight;
+        --pimote-editor-selection-foreground: HighlightText;
+        --pimote-editor-active-line: ButtonFace;
+        --pimote-editor-matching-bracket: Highlight;
+        --pimote-editor-search-match: LinkText;
+        --pimote-editor-diff-addition-background: Mark;
+        --pimote-editor-diff-deletion-background: Mark;
+        --pimote-editor-comment: CanvasText;
+        --pimote-editor-keyword: LinkText;
+        --pimote-editor-string: CanvasText;
+        --pimote-editor-number: LinkText;
+        --pimote-editor-function: LinkText;
+        --pimote-editor-type: CanvasText;
+        --pimote-editor-inserted: CanvasText;
+        --pimote-editor-deleted: CanvasText;
+        --pimote-terminal-red: red;
+        --pimote-terminal-green: green;
+        --pimote-terminal-yellow: orange;
+        --pimote-terminal-blue: blue;
+        --pimote-terminal-magenta: magenta;
+        --pimote-terminal-cyan: teal;
       }
       * {
         box-sizing: border-box;
       }
       body {
         margin: 0;
-        background: var(--ui-background);
-        color: var(--ui-foreground);
+        background: var(--pimote-ui-background);
+        color: var(--pimote-ui-foreground);
         font:
           15px/1.5 system-ui,
           sans-serif;
@@ -113,7 +114,7 @@
       }
       .subtitle {
         margin: 5px 0 0;
-        color: var(--ui-muted-foreground);
+        color: var(--pimote-ui-muted-foreground);
       }
       .controls {
         display: flex;
@@ -123,20 +124,20 @@
       }
       select,
       button {
-        border: 1px solid var(--ui-border);
+        border: 1px solid var(--pimote-ui-border);
         border-radius: 7px;
-        background: var(--ui-card);
-        color: var(--ui-foreground);
+        background: var(--pimote-ui-card);
+        color: var(--pimote-ui-foreground);
         padding: 8px 10px;
         font: inherit;
       }
       select:focus-visible,
       button:focus-visible {
-        outline: 2px solid var(--ui-status-active);
+        outline: 2px solid var(--pimote-ui-status-active);
         outline-offset: 2px;
       }
       .scheme {
-        color: var(--ui-muted-foreground);
+        color: var(--pimote-ui-muted-foreground);
         font-size: 0.82rem;
       }
       .audit-summary {
@@ -144,9 +145,9 @@
         gap: 8px;
         align-items: center;
         padding: 7px 10px;
-        border: 1px solid var(--ui-border);
+        border: 1px solid var(--pimote-ui-border);
         border-radius: 999px;
-        background: var(--ui-card);
+        background: var(--pimote-ui-card);
         font-size: 0.82rem;
       }
       .layout {
@@ -161,14 +162,14 @@
       .panel {
         min-width: 0;
         padding: 16px;
-        border: 1px solid var(--ui-border);
+        border: 1px solid var(--pimote-ui-border);
         border-radius: 11px;
-        background: var(--ui-card);
-        box-shadow: 0 8px 26px color-mix(in srgb, var(--ui-background) 55%, transparent);
+        background: var(--pimote-ui-card);
+        box-shadow: 0 8px 26px color-mix(in srgb, var(--pimote-ui-background) 55%, transparent);
       }
       .panel > p {
         margin: 0 0 12px;
-        color: var(--ui-muted-foreground);
+        color: var(--pimote-ui-muted-foreground);
       }
       .swatches {
         display: grid;
@@ -178,10 +179,10 @@
       .swatch {
         min-height: 64px;
         padding: 9px;
-        border: 1px solid color-mix(in srgb, var(--ui-border) 70%, transparent);
+        border: 1px solid color-mix(in srgb, var(--pimote-ui-border) 70%, transparent);
         border-radius: 8px;
         background: var(--swatch);
-        color: var(--swatch-fg, var(--ui-foreground));
+        color: var(--swatch-fg, var(--pimote-ui-foreground));
       }
       .swatch small {
         display: block;
@@ -197,95 +198,202 @@
         font-size: 0.68rem;
       }
       .buttons,
-      .chips,
-      .links,
-      .avatars,
-      .session-chips {
+      .status-examples,
+      .links {
         display: flex;
         flex-wrap: wrap;
         gap: 8px;
         align-items: center;
       }
       .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        height: 32px;
+        gap: 6px;
+        flex-shrink: 0;
+        padding: 0 10px;
         border: 1px solid transparent;
-        border-radius: 7px;
-        padding: 8px 12px;
-        font-weight: 650;
+        border-radius: 8px;
+        background-clip: padding-box;
+        font-size: 0.875rem;
+        font-weight: 500;
+        line-height: 1;
+        white-space: nowrap;
+        transition: all 0.15s;
+      }
+      .button:active {
+        transform: translateY(1px);
       }
       .primary {
-        background: var(--ui-primary);
-        color: var(--ui-primary-foreground);
+        background: var(--pimote-ui-primary);
+        color: var(--pimote-ui-primary-foreground);
       }
       .secondary {
-        background: var(--ui-secondary);
-        color: var(--ui-secondary-foreground);
-        border-color: var(--ui-border);
+        background: var(--pimote-ui-secondary);
+        color: var(--pimote-ui-secondary-foreground);
+      }
+      .secondary:hover {
+        background: color-mix(in oklch, var(--pimote-ui-secondary) 80%, transparent);
       }
       .destructive {
-        background: color-mix(in srgb, var(--ui-destructive) 16%, var(--ui-background));
-        color: var(--ui-foreground);
-        border-color: color-mix(in srgb, var(--ui-destructive) 50%, var(--ui-border));
+        background: color-mix(in oklch, var(--pimote-ui-destructive) 10%, transparent);
+        color: var(--pimote-ui-destructive);
       }
-      .chip {
+      .destructive:hover {
+        background: color-mix(in oklch, var(--pimote-ui-destructive) 20%, transparent);
+      }
+      .dark .destructive {
+        background: color-mix(in oklch, var(--pimote-ui-destructive) 20%, transparent);
+      }
+      .dark .destructive:hover {
+        background: color-mix(in oklch, var(--pimote-ui-destructive) 30%, transparent);
+      }
+      .status-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: fit-content;
+        height: 20px;
+        gap: 6px;
+        flex-shrink: 0;
+        padding: 2px 8px;
+        overflow: hidden;
+        border: 1px solid transparent;
+        border-radius: 999px;
+        background: var(--pimote-ui-secondary);
+        color: var(--pimote-ui-secondary-foreground);
+        font-size: 0.75rem;
+        font-weight: 500;
+        line-height: 1;
+        white-space: nowrap;
+      }
+      .status-connection {
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        border: 1px solid color-mix(in srgb, var(--chip) 48%, var(--ui-border));
-        border-radius: 999px;
-        padding: 4px 9px;
-        background: color-mix(in srgb, var(--chip) 12%, var(--ui-background));
-        color: var(--ui-foreground);
-        font-size: 0.8rem;
+        color: var(--pimote-ui-foreground);
+        font-size: 0.75rem;
       }
-      .dot {
-        width: 7px;
-        height: 7px;
+      .status-pulse {
+        position: relative;
+        display: inline-flex;
+        width: 8px;
+        height: 8px;
+        flex: none;
+      }
+      .status-pulse .ping,
+      .status-pulse .core {
+        position: absolute;
+        display: inline-flex;
+        width: 8px;
+        height: 8px;
         border-radius: 50%;
-        background: var(--chip);
+      }
+      .status-pulse .ping {
+        opacity: 0.75;
+        animation: status-ping 1.5s ease-out infinite;
+      }
+      .status-pulse .core {
+        position: relative;
+      }
+      .status-pulse .status-connected {
+        background: var(--pimote-ui-status-connected);
+      }
+      .status-pulse .status-active {
+        background: var(--pimote-ui-status-active);
+      }
+      .status-pulse .status-reconnecting {
+        background: var(--pimote-ui-status-reconnecting);
+      }
+      .status-pulse .status-error {
+        background: var(--pimote-ui-status-error);
+      }
+      @keyframes status-ping {
+        75%,
+        100% {
+          transform: scale(2);
+          opacity: 0;
+        }
+      }
+      .session-chips {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        gap: 12px 16px;
+      }
+      .session-chip-example {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
       }
       .session-chip {
         display: inline-flex;
         align-items: center;
-        gap: 7px;
-        min-width: 150px;
-        padding: 8px 10px;
-        border: 1px solid var(--ui-border);
-        border-radius: 8px;
-        background: var(--ui-secondary);
-        color: var(--ui-secondary-foreground);
+        gap: 6px;
+        flex-shrink: 0;
+        padding: 4px 12px 4px 4px;
+        border: 0;
+        border-radius: 999px;
+        background: var(--pimote-ui-secondary);
+        color: var(--pimote-ui-secondary-foreground);
+        font-size: 0.75rem;
+        font-weight: 500;
+        line-height: 1.5;
+        white-space: nowrap;
       }
       .session-chip.selected {
-        border-color: var(--ui-primary);
-        background: var(--ui-primary);
-        color: var(--ui-primary-foreground);
+        background: var(--pimote-ui-primary);
+        color: var(--pimote-ui-primary-foreground);
       }
-      .status-icon {
-        width: 8px;
-        height: 8px;
+      .session-chip-icon {
+        position: relative;
+        display: inline-flex;
+        width: 18px;
+        height: 18px;
         flex: none;
+        align-items: center;
+        justify-content: center;
+      }
+      .session-chip-icon .folder-icon {
+        position: relative;
+        width: 18px;
+        height: 18px;
+        z-index: 1;
+        fill: none;
+        stroke: currentColor;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        stroke-width: 2.75;
+      }
+      .session-chip-icon .ping {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 10px;
+        height: 10px;
         border-radius: 50%;
-        background: var(--status-color);
+        background: color-mix(in oklch, var(--pimote-ui-status-streaming) 60%, transparent);
+        transform: translate(-50%, -50%);
+        animation: status-ping 1.5s ease-out infinite;
       }
-      .session-chip small {
-        margin-left: auto;
-        color: var(--ui-muted-foreground);
-      }
-      .session-chip.selected small {
-        color: inherit;
-        opacity: 0.75;
+      .session-chip-caption {
+        color: var(--pimote-ui-muted-foreground);
+        font-size: 0.7rem;
       }
       .status-code {
         margin: 10px 0 0;
         padding: 10px;
         overflow: auto;
         border-radius: 7px;
-        background: var(--ui-surface-sunken);
-        color: var(--ui-muted-foreground);
+        background: var(--pimote-ui-surface-sunken);
+        color: var(--pimote-ui-muted-foreground);
         font-size: 0.78rem;
       }
       .palette-note {
         margin: -4px 0 12px;
-        color: var(--ui-muted-foreground);
+        color: var(--pimote-ui-muted-foreground);
         font-size: 0.85rem;
       }
       .callouts {
@@ -293,125 +401,217 @@
         gap: 9px;
       }
       .callout {
-        padding: 11px 13px;
-        border-left: 3px solid var(--accent);
-        border-radius: 6px;
-        background: color-mix(in srgb, var(--surface) 52%, transparent);
+        border-left: 3px solid var(--callout-accent);
+        border-radius: 4px;
       }
-      .callout strong {
-        display: block;
-        color: var(--text);
-        font-size: 0.82rem;
+      .callout.error {
+        padding: 8px 10px;
+        background: color-mix(in oklch, var(--pimote-ui-error-surface) 55%, transparent);
       }
-      .callout span {
-        color: var(--ui-muted-foreground);
-        font-size: 0.84rem;
+      .callout.skill,
+      .callout.custom {
+        overflow: hidden;
+        background: color-mix(in oklch, var(--callout-surface) 50%, transparent);
+      }
+      .callout-header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        width: 100%;
+        padding: 6px 10px;
+        color: var(--callout-foreground);
+        font-size: 0.75rem;
+        font-weight: 600;
+        line-height: 1.4;
+        text-align: left;
+      }
+      .callout.error .callout-header {
+        padding: 0;
+        color: var(--pimote-ui-error-foreground);
+        text-transform: lowercase;
+      }
+      .callout-content {
+        padding: 0 10px 8px;
+        color: var(--pimote-ui-foreground);
+        font-size: 0.85rem;
+        line-height: 1.45;
+      }
+      .callout-summary {
+        margin-top: 4px;
+        color: var(--pimote-ui-foreground);
+        line-height: 1.45;
+      }
+      .callout-meta {
+        margin-top: 6px;
+        color: var(--pimote-ui-muted-foreground);
+        font-family: ui-monospace, monospace;
+        font-size: 0.75rem;
+      }
+      .callout-line-count {
+        margin-left: auto;
+        color: var(--pimote-ui-muted-foreground);
+        font-size: 0.75rem;
+        font-weight: 400;
       }
       .editor {
         overflow: auto;
         margin: 0;
-        padding: 14px;
-        border: 1px solid var(--ui-border);
+        padding: 1rem 0;
+        border: 1px solid var(--pimote-ui-border);
         border-radius: 8px;
-        background: var(--editor-background);
-        color: var(--editor-foreground);
+        background: var(--pimote-editor-background);
+        color: var(--pimote-editor-foreground);
         font:
-          13px/1.65 ui-monospace,
+          13px/1.6 ui-monospace,
           SFMono-Regular,
           Menlo,
           monospace;
       }
+      .editor code {
+        display: block;
+        white-space: pre;
+      }
+      .editor-line {
+        display: block;
+        padding: 0 1rem;
+      }
+      .editor-line.active {
+        background: var(--pimote-editor-active-line);
+      }
       .editor .comment {
-        color: var(--editor-comment);
+        color: var(--pimote-editor-comment);
       }
       .editor .keyword {
-        color: var(--editor-keyword);
+        color: var(--pimote-editor-keyword);
       }
       .editor .string {
-        color: var(--editor-string);
+        color: var(--pimote-editor-string);
       }
       .editor .number {
-        color: var(--editor-number);
+        color: var(--pimote-editor-number);
       }
       .editor .function {
-        color: var(--editor-function);
+        color: var(--pimote-editor-function);
       }
       .editor .type {
-        color: var(--editor-type);
+        color: var(--pimote-editor-type);
       }
       .editor .selection {
-        background: var(--editor-selection);
-        color: var(--editor-selection-foreground);
+        background: var(--pimote-editor-selection);
+        color: var(--pimote-editor-selection-foreground);
       }
       .editor .search {
-        text-decoration: underline 2px var(--editor-search-match);
+        background: transparent;
+        text-decoration: underline 2px var(--pimote-editor-search-match);
         text-underline-offset: 2px;
       }
       .editor .bracket {
-        outline: 1px solid var(--editor-matching-bracket);
-        outline-offset: 1px;
+        background: var(--pimote-editor-matching-bracket);
       }
       .diff {
         overflow: auto;
-        border: 1px solid var(--ui-border);
+        margin: 0;
+        padding: 12px;
+        border: 1px solid var(--pimote-ui-border);
         border-radius: 8px;
-        background: var(--editor-background);
+        background: var(--pimote-ui-surface-sunken);
         font:
-          13px/1.65 ui-monospace,
+          13px/1.5 ui-monospace,
           SFMono-Regular,
           Menlo,
           monospace;
       }
-      .diff-line {
+      .diff code {
         display: block;
-        padding: 3px 12px;
+        white-space: pre;
+      }
+      .diff-line {
         white-space: pre;
       }
       .diff-line.add {
-        background: var(--editor-diff-addition-background);
-        color: var(--editor-inserted);
+        background: var(--pimote-editor-diff-addition-background);
+        color: var(--pimote-editor-inserted);
       }
       .diff-line.remove {
-        background: var(--editor-diff-deletion-background);
-        color: var(--editor-deleted);
+        background: var(--pimote-editor-diff-deletion-background);
+        color: var(--pimote-editor-deleted);
       }
-      .terminal {
+      .diff-line.context {
+        color: var(--pimote-editor-foreground);
+      }
+      .bash-execution-demo {
+        margin: 8px 0;
+        border-left: 3px solid var(--pimote-ui-bash-accent);
+        border-radius: 6px;
+        background: color-mix(in oklch, var(--pimote-ui-skill-surface) 52%, transparent);
+        padding: 8px 10px;
+        color: var(--pimote-ui-foreground);
+        font-size: 0.85rem;
+      }
+      .bash-header-demo {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .bash-header-demo code {
+        min-width: 0;
+        overflow-wrap: anywhere;
+        font-family: ui-monospace, monospace;
+        font-size: 0.82rem;
+        font-weight: 600;
+      }
+      .bash-output-demo {
+        margin: 6px 0 0;
+      }
+      .bash-status-demo {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 6px;
+        color: var(--pimote-ui-muted-foreground);
+        font-size: 0.72rem;
+      }
+      .extension-status-demo {
         overflow: auto;
-        padding: 13px;
-        border: 1px solid var(--ui-border);
-        border-radius: 8px;
-        color: var(--ui-foreground);
-        font:
-          13px/1.7 ui-monospace,
-          SFMono-Regular,
-          Menlo,
-          monospace;
+        border-top: 1px solid var(--pimote-ui-border);
+        background: color-mix(in oklch, var(--pimote-ui-muted) 50%, transparent);
+        color: var(--pimote-ui-muted-foreground);
+        font-size: 0.75rem;
       }
-      .bash-terminal {
-        border-left: 3px solid var(--ui-bash-accent);
-        background: color-mix(in oklch, var(--ui-skill-surface) 52%, transparent);
+      .extension-status-line {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-height: 30px;
+        padding: 6px 16px;
+        white-space: nowrap;
       }
-      .extension-terminal {
-        border-top: 2px solid var(--ui-border);
-        background: color-mix(in oklch, var(--ui-muted) 50%, transparent);
+      .extension-status-demo .ansi-samples {
+        min-width: 620px;
+        margin: 0;
+        padding: 0 16px 6px;
       }
-      .terminal .red {
-        color: var(--term-red);
+      .ansi-output-demo {
+        margin: 0;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        color: var(--pimote-ui-foreground);
+        font-family: ui-monospace, monospace;
+        font-size: 0.8rem;
+        line-height: 1.5;
       }
-      .terminal .green {
-        color: var(--term-green);
+      .ansi-output-demo .ansi-samples {
+        margin-top: 0;
       }
-      .terminal .yellow {
-        color: var(--term-yellow);
+      .ansi-output-demo .ansi-sample {
+        padding: 0;
       }
-      .terminal .blue {
-        color: var(--term-blue);
+      .ansi-output-demo .ansi-text {
+        padding: 0;
       }
-      .terminal .magenta {
-        color: var(--term-magenta);
-      }
-      .terminal .cyan {
-        color: var(--term-cyan);
+      .ansi-output-demo .ansi-value {
+        color: var(--pimote-ui-muted-foreground);
       }
       .ansi-samples {
         display: grid;
@@ -434,16 +634,31 @@
         white-space: nowrap;
       }
       .ansi-value {
-        color: var(--ui-muted-foreground);
+        color: var(--pimote-ui-muted-foreground);
         font-size: 0.7rem;
       }
       .link-samples a {
-        color: var(--ui-link);
         text-decoration: underline;
         text-underline-offset: 2px;
       }
-      .link-samples a:hover {
-        color: var(--ui-link-hover);
+      .message-link,
+      .sunken-link a {
+        color: var(--pimote-ui-link);
+      }
+      .message-link:hover,
+      .sunken-link a:hover {
+        color: var(--pimote-ui-link-hover);
+      }
+      .release-link {
+        color: var(--pimote-ui-primary);
+      }
+      .release-link:hover {
+        color: color-mix(in oklch, var(--pimote-ui-primary) 85%, transparent);
+      }
+      .sunken-link {
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: var(--pimote-ui-surface-sunken);
       }
       .audit-list {
         display: grid;
@@ -453,20 +668,20 @@
       }
       .finding {
         padding: 8px 10px;
-        border-left: 3px solid var(--ui-destructive);
+        border-left: 3px solid var(--pimote-ui-destructive);
         border-radius: 5px;
-        background: color-mix(in srgb, var(--ui-destructive) 10%, var(--ui-card));
+        background: color-mix(in srgb, var(--pimote-ui-destructive) 10%, var(--pimote-ui-card));
         font-size: 0.8rem;
       }
       .finding.warn {
-        border-left-color: var(--ui-warning);
-        background: color-mix(in srgb, var(--ui-warning) 10%, var(--ui-card));
+        border-left-color: var(--pimote-ui-warning);
+        background: color-mix(in srgb, var(--pimote-ui-warning) 10%, var(--pimote-ui-card));
       }
       .finding code {
         font-size: 0.75rem;
       }
       .empty {
-        color: var(--ui-status-connected);
+        color: var(--pimote-ui-status-connected);
       }
       .metrics {
         display: grid;
@@ -477,7 +692,7 @@
       .metric {
         padding: 10px;
         border-radius: 8px;
-        background: var(--ui-surface-subtle);
+        background: var(--pimote-ui-surface-subtle);
         text-align: center;
       }
       .metric b {
@@ -485,7 +700,7 @@
         font-size: 1.25rem;
       }
       .metric small {
-        color: var(--ui-muted-foreground);
+        color: var(--pimote-ui-muted-foreground);
       }
       @media (max-width: 980px) {
         .layout {
@@ -531,63 +746,90 @@
           <section class="panel">
             <h2>Buttons, session chips, statuses, and links</h2>
             <div class="buttons" style="margin-bottom: 12px">
-              <span class="button primary">Primary action</span>
-              <span class="button secondary">Secondary</span>
-              <span class="button destructive">Destructive</span>
+              <button type="button" class="button primary">Primary action</button>
+              <button type="button" class="button secondary">Secondary</button>
+              <button type="button" class="button destructive">Destructive</button>
             </div>
-            <div class="chips" style="margin-bottom: 12px">
-              <span class="chip" style="--chip: var(--ui-status-connected)"><i class="dot"></i>Connected</span>
-              <span class="chip" style="--chip: var(--ui-status-reconnecting)"><i class="dot"></i>Reconnecting</span>
-              <span class="chip" style="--chip: var(--ui-status-error)"><i class="dot"></i>Error</span>
-              <span class="chip" style="--chip: var(--ui-status-active)"><i class="dot"></i>Active</span>
+            <div class="status-examples" style="margin-bottom: 12px">
+              <span class="status-badge">
+                <span class="status-pulse"><span class="ping status-connected"></span><span class="core status-connected"></span></span>
+                Streaming
+              </span>
+              <span class="status-connection">
+                <span class="status-pulse"><span class="core status-connected"></span></span>
+                Connected
+              </span>
+              <span class="status-connection">
+                <span class="status-pulse"><span class="ping status-reconnecting"></span><span class="core status-reconnecting"></span></span>
+                Reconnecting
+              </span>
+              <span class="status-connection">
+                <span class="status-pulse"><span class="core status-error"></span></span>
+                Error
+              </span>
+              <span class="status-connection">
+                <span class="status-pulse"><span class="ping status-active"></span><span class="core status-active"></span></span>
+                Syncing
+              </span>
             </div>
             <div id="session-chips" class="session-chips" style="margin-bottom: 10px"></div>
-            <pre class="status-code"><code>&lt;span class="session-chip selected"&gt;
-  &lt;span class="status-icon status-streaming" /&gt;
-&lt;/span&gt;</code></pre>
+            <pre class="status-code"><code>&lt;button class="bg-primary text-primary-foreground rounded-full py-1 pr-3 pl-1"&gt;
+  &lt;svg class="text-status-streaming size-4.5" /&gt;
+  Project
+&lt;/button&gt;</code></pre>
             <div class="link-samples links">
-              <a href="#">Message link</a>
-              <a href="#">Release link</a>
-              <a href="#">Sunken link</a>
+              <a class="message-link" href="#">Message link</a>
+              <a class="release-link" href="#">Release link</a>
+              <span class="sunken-link"><a href="#">Sunken link</a></span>
             </div>
           </section>
 
           <section class="panel">
             <h2>Callouts</h2>
             <div class="callouts">
-              <div class="callout" style="--accent: var(--ui-error-accent); --surface: var(--ui-error-surface); --text: var(--ui-error-foreground)">
-                <strong>Error callout</strong><span>Provider errors and request metadata.</span>
+              <div class="callout error" style="--callout-accent: var(--pimote-ui-error-accent)">
+                <div class="callout-header">error</div>
+                <div class="callout-summary">Provider errors and request metadata.</div>
+                <div class="callout-meta">request failed · retry available</div>
               </div>
-              <div class="callout" style="--accent: var(--ui-skill-accent); --surface: var(--ui-skill-surface); --text: var(--ui-skill-foreground)">
-                <strong>Skill callout</strong><span>Expandable skill content and line counts.</span>
+              <div
+                class="callout skill"
+                style="--callout-accent: var(--pimote-ui-skill-accent); --callout-surface: var(--pimote-ui-skill-surface); --callout-foreground: var(--pimote-ui-skill-foreground)"
+              >
+                <div class="callout-header">&lt;skill name="review"&gt; <span class="callout-line-count">3 lines</span></div>
+                <div class="callout-content">Expandable skill content and line counts.</div>
               </div>
-              <div class="callout" style="--accent: var(--ui-custom-accent); --surface: var(--ui-custom-surface); --text: var(--ui-custom-foreground)">
-                <strong>Custom callout</strong><span>Extension-provided content and controls.</span>
+              <div
+                class="callout custom"
+                style="
+                  --callout-accent: var(--pimote-ui-custom-accent);
+                  --callout-surface: var(--pimote-ui-custom-surface);
+                  --callout-foreground: var(--pimote-ui-custom-foreground);
+                "
+              >
+                <div class="callout-header">Extension message</div>
+                <div class="callout-content">Extension-provided content and controls.</div>
               </div>
             </div>
           </section>
 
           <section class="panel">
             <h2>Editor and diff contexts</h2>
-            <pre class="editor"><code><span class="comment">// comments remain readable</span>
-<span class="keyword">const</span> <span class="type">value</span> = <span class="string search">"search match"</span>;
-<span class="keyword">if</span> (value <span class="bracket">[</span><span class="number">0</span><span class="bracket">]</span>) {
-  <span class="function">render</span>(<span class="selection">value</span>);
-}</code></pre>
+            <pre
+              class="editor"
+            ><code><span class="editor-line"><span class="comment">// comments remain readable</span></span><span class="editor-line"><span class="keyword">const</span> <span class="type">value</span> = <span class="string search">"search match"</span>;</span><span class="editor-line active"><span class="keyword">if</span> (value <span class="bracket">[</span><span class="number">0</span><span class="bracket">]</span>) {</span><span class="editor-line">  <span class="function">render</span>(<span class="selection">value</span>);</span><span class="editor-line">}</span></code></pre>
             <div style="height: 10px"></div>
-            <div class="diff">
-              <span class="diff-line add">+ const next = calculate();</span>
-              <span class="diff-line remove">- const next = previous;</span>
-              <span class="diff-line"> return next;</span>
-            </div>
+            <pre class="diff"><code><span class="diff-line add">+ const next = calculate();</span>
+<span class="diff-line remove">- const next = previous;</span>
+<span class="diff-line context"> return next;</span></code></pre>
           </section>
 
           <section class="panel">
             <h2>ANSI output surfaces</h2>
             <h3>Bash execution output</h3>
-            <div id="bash-terminal" class="terminal bash-terminal"></div>
+            <div id="bash-terminal" class="bash-execution-demo"></div>
             <h3 style="margin-top: 14px">Extension status bar</h3>
-            <div id="extension-terminal" class="terminal extension-terminal"></div>
+            <div id="extension-terminal" class="extension-status-demo"></div>
           </section>
         </div>
 
@@ -658,10 +900,10 @@
       function applyTheme(theme) {
         document.documentElement.classList.toggle('dark', theme.colorScheme === 'dark');
         document.documentElement.style.setProperty('color-scheme', theme.colorScheme);
-        for (const [role, value] of Object.entries(theme.ui)) setToken('ui', role, value);
-        for (const [role, value] of Object.entries(theme.editor.surface)) setToken('editor', role, value);
-        for (const [role, value] of Object.entries(theme.editor.syntax)) setToken('editor', role, value);
-        for (const [role, value] of Object.entries(theme.editor.terminal)) setToken('term', role, value);
+        for (const [role, value] of Object.entries(theme.ui)) setToken('pimote-ui', role, value);
+        for (const [role, value] of Object.entries(theme.editor.surface)) setToken('pimote-editor', role, value);
+        for (const [role, value] of Object.entries(theme.editor.syntax)) setToken('pimote-editor', role, value);
+        for (const [role, value] of Object.entries(theme.editor.terminal)) setToken('pimote-terminal', role, value);
         scheme.textContent = `${theme.colorScheme} · ${theme.source}`;
         localStorage.setItem('pimote-theme-demo', theme.id);
         renderPalette(theme);
@@ -682,7 +924,7 @@
             .match(/rgba?\(([^)]+)\)/)?.[1]
             .split(',')
             .map((channel) => Number.parseFloat(channel.trim())) ?? [];
-        if (channels.length < 3 || channels.some((channel) => Number.isNaN(channel))) return 'var(--ui-foreground)';
+        if (channels.length < 3 || channels.some((channel) => Number.isNaN(channel))) return 'var(--pimote-ui-foreground)';
         const luminance = (0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]) / 255;
         return luminance > 0.52 ? '#111' : '#fff';
       }
@@ -702,17 +944,19 @@
           .map(swatch)
           .join('');
       }
+      const sessionFolderIcon = `<svg class="folder-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 6-5 6 5 6" /><path d="m16 6 5 6-5 6" /><path d="m13.5 4-3 16" /></svg>`;
       function renderSessionChips() {
         const states = [
-          ['Streaming', 'working', () => 'var(--ui-status-streaming)'],
-          ['Idle', 'idle', (selected) => (selected ? 'var(--ui-primary-foreground)' : 'var(--ui-secondary-foreground)')],
-          ['Needs attention', 'attention', () => 'var(--ui-status-reconnecting)'],
+          ['Streaming', 'working', () => 'var(--pimote-ui-status-streaming)', true],
+          ['Idle', 'idle', (selected) => (selected ? 'var(--pimote-ui-primary-foreground)' : 'var(--pimote-ui-secondary-foreground)'), false],
+          ['Needs attention', 'attention', () => 'var(--pimote-ui-status-reconnecting)', false],
         ];
         sessionChips.innerHTML = states
-          .flatMap(([label, detail, colorFor]) =>
+          .flatMap(([label, detail, colorFor, pulse]) =>
             [false, true].map((selected) => {
               const color = colorFor(selected);
-              return `<span class="session-chip${selected ? ' selected' : ''}"><i class="status-icon" style="--status-color: ${color}"></i><span>${label}</span><small>${selected ? 'selected' : detail}</small></span>`;
+              const pulseMarkup = pulse ? '<span class="ping"></span>' : '';
+              return `<div class="session-chip-example"><span class="session-chip${selected ? ' selected' : ''}"><span class="session-chip-icon" style="color: ${color}">${pulseMarkup}${sessionFolderIcon}</span><span>Project</span></span><span class="session-chip-caption">${selected ? 'selected' : 'unselected'} · ${detail}</span></div>`;
             }),
           )
           .join('');
@@ -721,11 +965,11 @@
         const samples = ansiRoles
           .map((role) => {
             const value = theme.editor.terminal[role];
-            return `<span class="ansi-sample"><span class="ansi-text" style="color: var(--term-${role})">FG ${role}: The quick brown fox 012345</span><span class="ansi-text" style="background: var(--term-${role}); color: var(--ui-foreground)">BG ${role}: sample text</span><span class="ansi-value">${value}</span></span>`;
+            return `<span class="ansi-sample"><span class="ansi-text" style="color: var(--pimote-terminal-${role})">FG ${role}: The quick brown fox 012345</span><span class="ansi-text" style="background: var(--pimote-terminal-${role}); color: var(--pimote-ui-foreground)">BG ${role}: sample text</span><span class="ansi-value">${value}</span></span>`;
           })
           .join('');
-        bashTerminal.innerHTML = `<span class="green">$ npm run build</span><br><span class="cyan">ANSI foreground and background slots</span><div class="ansi-samples">${samples}</div>`;
-        extensionTerminal.innerHTML = `<span class="green">extension: connected</span><br><span class="yellow">status: waiting for changes</span><div class="ansi-samples">${samples}</div>`;
+        bashTerminal.innerHTML = `<div class="bash-header-demo"><code>$ npm run build</code></div><div class="bash-output-demo"><pre class="ansi-output-demo"><span>ANSI foreground and background slots</span><span class="ansi-samples">${samples}</span></pre></div><div class="bash-status-demo"><span>complete</span><span>output rendered</span></div>`;
+        extensionTerminal.innerHTML = `<div class="extension-status-line"><span>extension: connected</span><span>status: waiting for changes</span></div><div class="ansi-samples">${samples}</div>`;
       }
       function renderAudit(theme) {
         const list = auditById.get(theme.id) ?? [];

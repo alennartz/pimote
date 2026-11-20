@@ -36,6 +36,16 @@ describe('theme audit', () => {
     expect(report.findings.some((finding) => finding.rule === 'editor.syntax.variable')).toBe(false);
   });
 
+  it('checks editor text on the sunken code and diff surface', () => {
+    const theme = resolvedTheme('test/light');
+    theme.ui['surface-sunken'] = '#ffffff';
+    theme.editor.surface.foreground = '#ffffff';
+
+    const report = auditThemes([theme]);
+
+    expect(report.findings.some((finding) => finding.rule === 'editor.code-surface')).toBe(true);
+  });
+
   it('does not invent text contracts for accent tokens without a paired consumer', () => {
     const theme = resolvedTheme('test/light');
     theme.ui.background = '#ffffff';
