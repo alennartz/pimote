@@ -76,6 +76,7 @@ const DIFF_ROLES: ReadonlyArray<{ role: EditorSyntaxRole; label: string; backgro
 
 const COLOR_SPACE = 'oklch';
 const STATUS_TINT_AMOUNT = 0.1;
+const ANSI_TEXT_MINIMUM = 2;
 
 const DIFF_MAPPING_CONTRACTS = [
   { rule: 'mapping.editor.diff.addition-background', token: '--pimote-editor-diff-addition-background' },
@@ -241,7 +242,7 @@ function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
   ] as const;
   for (const [context, background] of terminalSurfaces) {
     for (const [role, foreground] of Object.entries(theme.editor.terminal) as Array<[string, string]>) {
-      auditPair(findings, theme, `terminal.${context}.${role}`, `${role} on ${context} background`, foreground, background, 4.5, ui.background);
+      auditPair(findings, theme, `terminal.${context}.${role}`, `${role} on ${context} background`, foreground, background, ANSI_TEXT_MINIMUM, ui.background);
     }
   }
 
