@@ -109,14 +109,30 @@ function section(target: Element, label: string): HTMLElement {
 
 describe('subagent transcript cards', () => {
   it('uses the tool-call header with active, success, failure, and duration states', async () => {
-    const active = operation({ operation: 'send', parameters: { to: ['team', 'worker'], message: 'Check the config.' }, result: { response: '', phase: 'waiting' } }, 'active');
-    const { target } = await render(active);
+    const active = operation(
+      { operation: 'send', parameters: { to: ['team', 'worker'], message: 'Check the config.', expectResponse: true }, result: { response: '', phase: 'waiting' } },
+      'active',
+    );
+    const { target, update } = await render(active);
     const activeCard = card(target, 'send');
+    expect(activeCard.querySelector('[aria-label="Response"]')).toBeNull();
     expect(activeCard.querySelector('.subagent-name')?.textContent).toBe('send');
     expect(activeCard.querySelector('.subagent-state-icon.spinning')).not.toBeNull();
     expect(activeCard.querySelector('.subagent-status')?.textContent).toContain('waiting');
     expect(activeCard.querySelector('.subagent-header')?.getAttribute('aria-expanded')).toBe('true');
     expect(activeCard.querySelector('.agent-chip[data-agent-path="team/worker"]')).not.toBeNull();
+
+    await update(
+      operation(
+        {
+          operation: 'send',
+          parameters: { to: ['team', 'worker'], message: 'Check the config.', expectResponse: true },
+          result: { response: 'The config is valid.', phase: 'responding' },
+        },
+        'active',
+      ),
+    );
+    expect(card(target, 'send').querySelector('[aria-label="Response"]')).not.toBeNull();
 
     const { target: completeTarget } = await render({
       ...operation({ operation: 'send', parameters: { to: ['worker'], message: 'check' }, result: { response: 'done' } }),

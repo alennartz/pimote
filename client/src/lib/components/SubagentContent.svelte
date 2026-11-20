@@ -338,11 +338,12 @@
         {#if resultBoolean(content.data.result, 'responseExpected')}<div class="subagent-meta">Response expected</div>{/if}
       {:else if content.data.operation === 'send'}
         {@const parameters = 'parameters' in content.data ? content.data.parameters : undefined}
+        {@const response = resultText(content.data.result, 'response')}
         {@const expectsResponse = sendExpectsResponse(content)}
         <SubagentMarkdown label="Message" text={typeof parameters?.message === 'string' ? parameters.message : resultText(content.data.result, 'request')} streaming={active} />
         <SubagentMarkdown
           label="Response"
-          text={resultText(content.data.result, 'response')}
+          text={response === '' ? undefined : response}
           separated={expectsResponse}
           streaming={active && resultText(content.data.result, 'phase') === 'responding'}
         />
@@ -633,8 +634,6 @@
 
   .subagent-message-route {
     flex-wrap: wrap;
-    padding-bottom: 0.4rem;
-    border-bottom: 1px solid var(--border);
   }
 
   .route-label,
