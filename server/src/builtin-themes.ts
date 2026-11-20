@@ -234,6 +234,18 @@ function editor(
 }
 
 /** Keep the Pimote project-token definitions while storing local palette references. */
+function canonicalPalette(entries: Readonly<Record<string, string>>): { palette: Record<string, string>; aliases: Map<string, string> } {
+  const palette: Record<string, string> = {};
+  const aliases = new Map<string, string>();
+  for (const [name, value] of Object.entries(entries)) {
+    const existing = aliases.get(value);
+    if (existing) continue;
+    palette[name] = value;
+    aliases.set(value, name);
+  }
+  return { palette, aliases };
+}
+
 function definition(
   id: string,
   name: string,
@@ -241,26 +253,27 @@ function definition(
   uiValues: Partial<Record<UiColorToken, string>>,
   editorValues: Parameters<typeof editor>[0],
   fallback: Parameters<typeof editor>[1],
+  sourcePalette: Readonly<Record<string, string>>,
 ): ThemeDefinition {
   const values = {
     ui: ui(uiValues, fallback.surface),
     editor: editor(editorValues, fallback),
   };
-  const palette: Record<string, string> = {};
-  const references = <K extends string>(entries: Readonly<Record<K, string>>, prefix: string): Record<K, string> =>
+  const { palette, aliases } = canonicalPalette(sourcePalette);
+  const references = <K extends string>(entries: Readonly<Record<K, string>>): Record<K, string> =>
     Object.fromEntries(
       (Object.entries(entries) as [string, string][]).map(([role, value]) => {
-        const key = `${prefix}-${role}`;
-        palette[key] = value;
-        return [role, key];
+        const alias = aliases.get(value);
+        if (!alias) throw new Error(`missing Pimote palette swatch for ${role}: ${value}`);
+        return [role, alias];
       }),
     ) as Record<K, string>;
   return definePaletteTheme(id, name, colorScheme, palette, {
-    ui: references(values.ui, 'ui'),
+    ui: references(values.ui),
     editor: {
-      surface: references(values.editor.surface, 'editor-surface'),
-      syntax: references(values.editor.syntax, 'editor-syntax'),
-      terminal: references(values.editor.terminal, 'terminal'),
+      surface: references(values.editor.surface),
+      syntax: references(values.editor.syntax),
+      terminal: references(values.editor.terminal),
     },
   });
 }
@@ -508,6 +521,164 @@ const darkEditor = {
   syntax: darkSyntax,
   terminal: darkTerminal,
 };
+
+const pimoteLightPalette: Record<string, string> = {
+  white: lightUi.background!,
+  ink: lightUi.foreground!,
+  inkStrong: lightUi.primary!,
+  whiteSoft: lightUi.sidebar!,
+  mist: lightUi.muted!,
+  mutedInk: lightUi['muted-foreground']!,
+  red: lightUi.destructive!,
+  amber: lightUi.warning!,
+  amberInk: lightUi['warning-foreground']!,
+  line: lightUi.border!,
+  ring: lightUi.ring!,
+  chartBlue1: lightUi['chart-1']!,
+  chartBlue2: lightUi['chart-2']!,
+  chartBlue3: lightUi['chart-3']!,
+  chartBlue4: lightUi['chart-4']!,
+  chartBlue5: lightUi['chart-5']!,
+  statusBlue: lightUi['status-active']!,
+  statusGreen: lightUi['status-connected']!,
+  statusRed: lightUi['status-error']!,
+  statusOrange: lightUi['status-reconnecting']!,
+  surfaceSunken: lightUi['surface-sunken']!,
+  surfaceRaised: lightUi['surface-raised']!,
+  surfaceSubtle: lightUi['surface-subtle']!,
+  surfaceHover: lightUi['surface-hover']!,
+  errorAccent: lightUi['error-accent']!,
+  errorSurface: lightUi['error-surface']!,
+  errorInk: lightUi['error-foreground']!,
+  errorAvatar: lightUi['error-avatar-fg']!,
+  skillAccent: lightUi['skill-accent']!,
+  skillSurface: lightUi['skill-surface']!,
+  skillInk: lightUi['skill-foreground']!,
+  skillInkHover: lightUi['skill-foreground-hover']!,
+  bashAccent: lightUi['bash-accent']!,
+  customAccent: lightUi['custom-accent']!,
+  customSurface: lightUi['custom-surface']!,
+  customInk: lightUi['custom-foreground']!,
+  customInkHover: lightUi['custom-foreground-hover']!,
+  link: lightUi.link!,
+  linkHover: lightUi['link-hover']!,
+  avatarBackground: lightUi['avatar-bg']!,
+  avatarForeground: lightUi['avatar-fg']!,
+  shadow: lightUi['shadow-color']!,
+  editorInk: lightEditor.surface.foreground,
+  editorMuted: lightEditor.surface['gutter-foreground'],
+  editorSelection: lightEditor.surface.selection,
+  editorLine: lightEditor.surface['active-line'],
+  editorBracket: lightEditor.surface['matching-bracket'],
+  editorSearch: lightEditor.surface['search-match'],
+  diffAdd: lightEditor.surface['diff-addition-background'],
+  diffDelete: lightEditor.surface['diff-deletion-background'],
+  syntaxInserted: lightSyntax.inserted!,
+  syntaxDeleted: lightSyntax.deleted!,
+  syntaxRed: lightSyntax.keyword!,
+  syntaxDeepBlue: lightSyntax.string!,
+  syntaxBlue: lightSyntax.number!,
+  syntaxPurple: lightSyntax.function!,
+  terminalGreen: lightTerminal.green!,
+  terminalYellow: lightTerminal.yellow!,
+  terminalCyan: lightTerminal.cyan!,
+  terminalWhite: lightTerminal.white!,
+  terminalBrightBlack: lightTerminal['bright-black']!,
+  terminalBrightRed: lightTerminal['bright-red']!,
+  terminalBrightGreen: lightTerminal['bright-green']!,
+  terminalBrightYellow: lightTerminal['bright-yellow']!,
+  terminalBrightBlue: lightTerminal['bright-blue']!,
+  terminalBrightMagenta: lightTerminal['bright-magenta']!,
+  terminalBrightCyan: lightTerminal['bright-cyan']!,
+  terminalBrightWhite: lightTerminal['bright-white']!,
+};
+
+const pimoteDarkPalette: Record<string, string> = {
+  background: darkUi.background!,
+  text: darkUi.foreground!,
+  textDark: darkUi['primary-foreground']!,
+  panel: darkUi.sidebar!,
+  muted: darkUi.muted!,
+  mutedInk: darkUi['muted-foreground']!,
+  red: darkUi.destructive!,
+  orange: darkUi.warning!,
+  orangeInk: darkUi['warning-foreground']!,
+  line: darkUi.border!,
+  ring: darkUi.ring!,
+  chartBlue1: darkUi['chart-1']!,
+  chartBlue2: darkUi['chart-2']!,
+  chartBlue3: darkUi['chart-3']!,
+  chartBlue4: darkUi['chart-4']!,
+  chartBlue5: darkUi['chart-5']!,
+  statusBlue: darkUi['status-active']!,
+  statusGreen: darkUi['status-connected']!,
+  statusRed: darkUi['status-error']!,
+  statusOrange: darkUi['status-reconnecting']!,
+  surfaceSunken: darkUi['surface-sunken']!,
+  surfaceRaised: darkUi['surface-raised']!,
+  surfaceSubtle: darkUi['surface-subtle']!,
+  surfaceHover: darkUi['surface-hover']!,
+  errorAccent: darkUi['error-accent']!,
+  errorSurface: darkUi['error-surface']!,
+  errorInk: darkUi['error-foreground']!,
+  errorAvatar: darkUi['error-avatar-fg']!,
+  skillAccent: darkUi['skill-accent']!,
+  skillSurface: darkUi['skill-surface']!,
+  skillInk: darkUi['skill-foreground']!,
+  skillInkHover: darkUi['skill-foreground-hover']!,
+  bashAccent: darkUi['bash-accent']!,
+  customAccent: darkUi['custom-accent']!,
+  customSurface: darkUi['custom-surface']!,
+  customInk: darkUi['custom-foreground']!,
+  customInkHover: darkUi['custom-foreground-hover']!,
+  link: darkUi.link!,
+  linkHover: darkUi['link-hover']!,
+  avatarBackground: darkUi['avatar-bg']!,
+  avatarForeground: darkUi['avatar-fg']!,
+  shadow: darkUi['shadow-color']!,
+  editorText: darkEditor.surface.foreground,
+  editorMuted: darkEditor.surface['gutter-foreground'],
+  editorSelection: darkEditor.surface.selection,
+  editorLine: darkEditor.surface['active-line'],
+  editorBracket: darkEditor.surface['matching-bracket'],
+  editorSearch: darkEditor.surface['search-match'],
+  diffAdd: darkEditor.surface['diff-addition-background'],
+  diffDelete: darkEditor.surface['diff-deletion-background'],
+  syntaxInserted: darkSyntax.inserted!,
+  syntaxDeleted: darkSyntax.deleted!,
+  syntaxRed: darkSyntax.keyword!,
+  syntaxString: darkSyntax.string!,
+  syntaxNumber: darkSyntax.number!,
+  syntaxFunction: darkSyntax.function!,
+  syntaxType: darkSyntax.type!,
+  terminalBlack: darkTerminal.black!,
+  terminalRed: darkTerminal.red!,
+  terminalGreen: darkTerminal.green!,
+  terminalYellow: darkTerminal.yellow!,
+  terminalBlue: darkTerminal.blue!,
+  terminalMagenta: darkTerminal.magenta!,
+  terminalCyan: darkTerminal.cyan!,
+  terminalWhite: darkTerminal.white!,
+  terminalBrightBlack: darkTerminal['bright-black']!,
+  terminalBrightRed: darkTerminal['bright-red']!,
+  terminalBrightGreen: darkTerminal['bright-green']!,
+  terminalBrightYellow: darkTerminal['bright-yellow']!,
+  terminalBrightBlue: darkTerminal['bright-blue']!,
+  terminalBrightMagenta: darkTerminal['bright-magenta']!,
+  terminalBrightCyan: darkTerminal['bright-cyan']!,
+  terminalBrightWhite: darkTerminal['bright-white']!,
+};
+
+const pimoteLightTheme = definition(
+  'pimote/light',
+  'Pimote Light',
+  'light',
+  lightUi,
+  lightEditor,
+  { surface: '#ffffff', syntax: '#24292e', terminal: '#24292e' },
+  pimoteLightPalette,
+);
+const pimoteDarkTheme = definition('pimote/dark', 'Pimote Dark', 'dark', darkUi, darkEditor, { surface: '#0d1117', syntax: '#c9d1d9', terminal: '#c9d1d9' }, pimoteDarkPalette);
 
 const draculaTheme = definePaletteTheme(
   'dracula/dracula',
@@ -1623,8 +1794,8 @@ const catppuccinLatteTheme = definePaletteTheme(
 );
 
 export const BUILTIN_THEME_DEFINITIONS: readonly ThemeDefinition[] = [
-  definition('pimote/light', 'Pimote Light', 'light', lightUi, lightEditor, { surface: '#ffffff', syntax: '#24292e', terminal: '#24292e' }),
-  definition('pimote/dark', 'Pimote Dark', 'dark', darkUi, darkEditor, { surface: '#0d1117', syntax: '#c9d1d9', terminal: '#c9d1d9' }),
+  pimoteLightTheme,
+  pimoteDarkTheme,
   draculaTheme,
   tokyoNightTheme,
   nordTheme,
