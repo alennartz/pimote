@@ -51,6 +51,7 @@ describe('built-in theme mappings', () => {
 
   it('keeps every diff syntax role readable on editor and diff surfaces', async () => {
     for (const theme of await resolvedBuiltins()) {
+      expect(theme.editor.surface['diff-addition-background'], `${theme.id} addition diff background`).not.toBe(theme.editor.surface['diff-deletion-background']);
       for (const role of DIFF_ROLES) {
         const foreground = theme.editor.syntax[role];
         expect(contrast(foreground, theme.editor.surface.background), `${theme.id} ${role} on editor background`).toBeGreaterThanOrEqual(4.5);

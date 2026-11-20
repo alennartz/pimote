@@ -628,7 +628,7 @@ function thirdParty(
         'matching-bracket': colors.matchingBracket,
         'search-match': colors.searchMatch,
         'diff-addition-background': colors.surface,
-        'diff-deletion-background': colors.surface,
+        'diff-deletion-background': colors.raised,
       },
       syntax,
       terminal: colors.terminal,
