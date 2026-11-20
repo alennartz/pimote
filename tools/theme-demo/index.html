@@ -377,14 +377,22 @@
       .terminal {
         overflow: auto;
         padding: 13px;
+        border: 1px solid var(--ui-border);
         border-radius: 8px;
-        background: #000;
-        color: #ddd;
+        color: var(--ui-foreground);
         font:
           13px/1.7 ui-monospace,
           SFMono-Regular,
           Menlo,
           monospace;
+      }
+      .bash-terminal {
+        border-left: 3px solid var(--ui-bash-accent);
+        background: color-mix(in oklch, var(--ui-skill-surface) 52%, transparent);
+      }
+      .extension-terminal {
+        border-top: 2px solid var(--ui-border);
+        background: color-mix(in oklch, var(--ui-muted) 50%, transparent);
       }
       .terminal .red {
         color: var(--term-red);
@@ -550,13 +558,20 @@
           </section>
 
           <section class="panel">
-            <h2>Terminal output</h2>
-            <div class="terminal">
+            <h2>ANSI output surfaces</h2>
+            <h3>Bash execution output</h3>
+            <div class="terminal bash-terminal">
               <span class="green">$ npm run build</span>
               <span class="cyan">building client and server</span>
               <span class="yellow">warning: review contrast on selection</span>
               <span class="red">error: sample failure output</span>
               <span class="magenta">info: theme demo</span>
+            </div>
+            <h3 style="margin-top: 14px">Extension status bar</h3>
+            <div class="terminal extension-terminal">
+              <span class="green">extension: connected</span>
+              <span class="cyan">watching theme files</span>
+              <span class="yellow">status: waiting for changes</span>
             </div>
           </section>
         </div>
