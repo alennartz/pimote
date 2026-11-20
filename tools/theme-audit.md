@@ -29,4 +29,4 @@ The audit covers:
 - ANSI terminal colors against Bash output and extension status backgrounds.
 - Client mapping contracts, including dedicated diff background roles.
 
-A 4.5:1 ratio is the normal-text target. A 3:1 ratio is the lower screening threshold for small secondary labels and non-text indicators. ANSI foregrounds use a separate 2:1 minimum because terminal palettes intentionally include dim slots. Alpha colors are flattened over their owning surface before the WCAG 2.1 ratio is calculated.
+A 4.5:1 ratio is the normal-text target. A 3:1 ratio is the lower screening threshold for small secondary labels and non-text indicators. ANSI foregrounds and adjacent hover surfaces use a separate 2:1 minimum because terminal palettes and interaction states intentionally use dim slots. Alpha colors are flattened over their owning surface before the WCAG 2.1 ratio is calculated.
