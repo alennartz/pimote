@@ -438,7 +438,7 @@
       disabled={busy}
       onclick={() => showView(row.path)}
     >
-      <ExternalLink class="size-3.5" />
+      <ExternalLink class="size-3.5 -translate-y-px" />
       <span class="hidden max-md:inline">{row.viewOpen ? 'View' : 'Open'}</span>
     </Button>
     {#if row.metadata.activity && !samePath(inspectorNode?.path, row.path)}
