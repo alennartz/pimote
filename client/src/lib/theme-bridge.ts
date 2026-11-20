@@ -1,4 +1,4 @@
-import type { ResolvedTheme } from '@pimote/shared';
+import { OPTIONAL_UI_ROLE_FALLBACKS, type ResolvedTheme } from '@pimote/shared';
 import type { ThemeApplicationTarget } from './theme-application.js';
 import { applyResolvedTheme } from './theme-application.js';
 
@@ -52,9 +52,11 @@ const UI_KEYS = [
   'sidebar-ring',
   'status-active',
   'status-streaming',
+  'status-streaming-on-primary',
   'status-connected',
   'status-error',
   'status-reconnecting',
+  'status-reconnecting-on-primary',
   'surface-sunken',
   'surface-raised',
   'surface-subtle',
@@ -175,15 +177,25 @@ function completeMap(value: unknown, keys: readonly string[]): value is Record<s
   return keys.every((key) => typeof map[key] === 'string' && map[key].length > 0);
 }
 
-function isResolvedTheme(value: unknown): value is ResolvedTheme {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+const REQUIRED_UI_KEYS = UI_KEYS.filter((key) => !(key in OPTIONAL_UI_ROLE_FALLBACKS));
+
+function normalizeCachedTheme(value: unknown): ResolvedTheme | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const candidate = value as Record<string, unknown>;
-  if (typeof candidate.id !== 'string' || !candidate.id || typeof candidate.name !== 'string' || !candidate.name) return false;
-  if (candidate.source !== 'builtin' && candidate.source !== 'extension' && candidate.source !== 'user') return false;
-  if (candidate.colorScheme !== 'light' && candidate.colorScheme !== 'dark') return false;
-  if (!candidate.editor || typeof candidate.editor !== 'object' || Array.isArray(candidate.editor)) return false;
+  if (typeof candidate.id !== 'string' || !candidate.id || typeof candidate.name !== 'string' || !candidate.name) return null;
+  if (candidate.source !== 'builtin' && candidate.source !== 'extension' && candidate.source !== 'user') return null;
+  if (candidate.colorScheme !== 'light' && candidate.colorScheme !== 'dark') return null;
+  if (!candidate.editor || typeof candidate.editor !== 'object' || Array.isArray(candidate.editor)) return null;
   const editor = candidate.editor as Record<string, unknown>;
-  return completeMap(candidate.ui, UI_KEYS) && completeMap(editor.surface, SURFACE_KEYS) && completeMap(editor.syntax, SYNTAX_KEYS) && completeMap(editor.terminal, TERMINAL_KEYS);
+  if (!completeMap(candidate.ui, REQUIRED_UI_KEYS)) return null;
+  if (!completeMap(editor.surface, SURFACE_KEYS) || !completeMap(editor.syntax, SYNTAX_KEYS) || !completeMap(editor.terminal, TERMINAL_KEYS)) return null;
+
+  const ui: Record<string, string> = { ...candidate.ui };
+  for (const [role, fallback] of Object.entries(OPTIONAL_UI_ROLE_FALLBACKS)) {
+    if (typeof ui[role] !== 'string' || !ui[role]) ui[role] = ui[fallback];
+  }
+  if (!completeMap(ui, UI_KEYS)) return null;
+  return { ...candidate, ui } as unknown as ResolvedTheme;
 }
 
 const cacheProperties = [
@@ -232,7 +244,7 @@ export function readCachedTheme(user: string, storage: ThemeBridgeStorage): Reso
     const raw = storage.getItem(themeCacheKey(user));
     if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
-    return isResolvedTheme(parsed) ? parsed : null;
+    return normalizeCachedTheme(parsed);
   } catch {
     return null;
   }
@@ -279,7 +291,7 @@ export class ThemeBridge {
 function parseTheme(raw: string): ResolvedTheme | null {
   try {
     const parsed: unknown = JSON.parse(raw);
-    return isResolvedTheme(parsed) ? parsed : null;
+    return normalizeCachedTheme(parsed);
   } catch {
     return null;
   }

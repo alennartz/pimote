@@ -55,9 +55,11 @@ const UI_TOKENS: readonly UiColorToken[] = [
   'sidebar-ring',
   'status-active',
   'status-streaming',
+  'status-streaming-on-primary',
   'status-connected',
   'status-error',
   'status-reconnecting',
+  'status-reconnecting-on-primary',
   'surface-sunken',
   'surface-raised',
   'surface-subtle',
@@ -199,7 +201,11 @@ function definePaletteTheme(id: string, name: string, colorScheme: 'light' | 'da
     name,
     colorScheme,
     palette: { ...palette },
-    ui: paletteRefs(UI_TOKENS, mappings.ui),
+    ui: paletteRefs(UI_TOKENS, {
+      ...mappings.ui,
+      'status-streaming-on-primary': mappings.ui['primary-foreground'],
+      'status-reconnecting-on-primary': mappings.ui['primary-foreground'],
+    }),
     editor: {
       surface: paletteRefs(SURFACE_ROLES, mappings.editor.surface),
       syntax: paletteRefs(SYNTAX_ROLES, mappings.editor.syntax),
@@ -213,7 +219,10 @@ function fill<K extends string>(keys: readonly K[], value: string): Record<K, st
 }
 
 function ui(values: Partial<Record<UiColorToken, string>>, fallback: string): Record<UiColorToken, string> {
-  return Object.fromEntries(UI_TOKENS.map((token) => [token, values[token] ?? fallback])) as Record<UiColorToken, string>;
+  const result = Object.fromEntries(UI_TOKENS.map((token) => [token, values[token] ?? fallback])) as Record<UiColorToken, string>;
+  result['status-streaming-on-primary'] = result['primary-foreground'];
+  result['status-reconnecting-on-primary'] = result['primary-foreground'];
+  return result;
 }
 
 function editor(
@@ -526,6 +535,7 @@ const darkEditor = {
 
 const pimoteLightPalette: Record<string, string> = {
   white: lightUi.background!,
+  primaryForeground: lightUi['primary-foreground']!,
   editorBackground: lightEditor.surface.background,
   ink: lightUi.foreground!,
   inkStrong: lightUi.primary!,

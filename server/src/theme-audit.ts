@@ -69,8 +69,8 @@ const STATUS_TEXT_ROLES: ReadonlyArray<{ role: UiColorToken; label: string }> = 
 ];
 
 const SELECTED_SESSION_ICON_ROLES: ReadonlyArray<{ role: UiColorToken; label: string }> = [
-  { role: 'status-streaming', label: 'streaming' },
-  { role: 'status-reconnecting', label: 'needs-attention' },
+  { role: 'status-streaming-on-primary', label: 'streaming' },
+  { role: 'status-reconnecting-on-primary', label: 'needs-attention' },
 ];
 
 const DIFF_ROLES: ReadonlyArray<{ role: EditorSyntaxRole; label: string; background?: 'addition' | 'deletion' }> = [

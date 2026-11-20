@@ -102,8 +102,8 @@ describe('theme audit', () => {
   it('checks streaming and needs-attention icons on selected session chips', () => {
     const theme = resolvedTheme('test/light');
     theme.ui.primary = '#ffffff';
-    theme.ui['status-streaming'] = '#ffffff';
-    theme.ui['status-reconnecting'] = '#ffffff';
+    theme.ui['status-streaming-on-primary'] = '#ffffff';
+    theme.ui['status-reconnecting-on-primary'] = '#ffffff';
 
     const report = auditThemes([theme]);
 

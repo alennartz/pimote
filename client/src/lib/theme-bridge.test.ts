@@ -26,11 +26,29 @@ describe('ThemeBridge', () => {
     const config = options();
     const theme = resolvedTheme('pimote/dark');
     theme.ui.background = '#123456';
+    theme.ui['status-streaming-on-primary'] = '#654321';
     config.storage.setItem(themeCacheKey('alice'), JSON.stringify(theme));
     const bridge = new ThemeBridge(config);
 
     expect(bridge.start()).toMatchObject({ id: 'pimote/dark' });
     expect(config.target.root.style.getPropertyValue('--pimote-ui-background')).toBe('#123456');
+    expect(config.target.root.style.getPropertyValue('--pimote-ui-status-streaming-on-primary')).toBe('#654321');
+    bridge.stop();
+  });
+
+  it('fills selected-chip roles from the primary foreground in older cached themes', () => {
+    const config = options();
+    const theme = resolvedTheme('pimote/dark');
+    theme.ui['primary-foreground'] = '#123456';
+    const { ['status-streaming-on-primary']: _streaming, ['status-reconnecting-on-primary']: _attention, ...legacyUi } = theme.ui;
+    config.storage.setItem(themeCacheKey('alice'), JSON.stringify({ ...theme, ui: legacyUi }));
+    const bridge = new ThemeBridge(config);
+
+    const cached = bridge.start();
+
+    expect(cached?.ui['status-streaming-on-primary']).toBe('#123456');
+    expect(cached?.ui['status-reconnecting-on-primary']).toBe('#123456');
+    expect(config.target.root.style.getPropertyValue('--pimote-ui-status-streaming-on-primary')).toBe('#123456');
     bridge.stop();
   });
 

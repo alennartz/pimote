@@ -93,6 +93,13 @@ describe('built-in theme mappings', () => {
     });
   });
 
+  it('uses the primary foreground for selected-chip status icons', async () => {
+    for (const theme of await resolvedBuiltins()) {
+      expect(theme.ui['status-streaming-on-primary'], theme.id).toBe(theme.ui['primary-foreground']);
+      expect(theme.ui['status-reconnecting-on-primary'], theme.id).toBe(theme.ui['primary-foreground']);
+    }
+  });
+
   it('maps third-party accent surfaces consistently while keeping muted surfaces separate', async () => {
     const themes = await resolvedBuiltins();
     for (const id of [

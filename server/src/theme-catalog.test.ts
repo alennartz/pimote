@@ -44,6 +44,23 @@ describe('ThemeCatalog', () => {
     }
   });
 
+  it('fills selected-chip status roles for existing standalone theme files', async () => {
+    const legacyTheme = theme('alice/legacy-theme');
+    delete legacyTheme.ui['status-streaming-on-primary'];
+    delete legacyTheme.ui['status-reconnecting-on-primary'];
+    const reader = {
+      read: async (path: string) => (path === '/extensions/legacy.json' ? JSON.stringify({ version: 1, themes: [legacyTheme] }) : JSON.stringify({ version: 1, themes: [] })),
+    };
+    const service = catalog({ extensionFiles: ['/extensions/legacy.json'], reader });
+    const snapshot = await service.load();
+    const resolved = snapshot.themes.find((entry) => entry.id === legacyTheme.id);
+    await service.close();
+
+    expect(snapshot.diagnostics).toEqual([]);
+    expect(resolved?.ui['status-streaming-on-primary']).toBe(resolved?.ui['primary-foreground']);
+    expect(resolved?.ui['status-reconnecting-on-primary']).toBe(resolved?.ui['primary-foreground']);
+  });
+
   it.each([
     ['pimote/dracula', '#50fa7b', '#ffb86c', '#ff5555', '#50fa7b'],
     ['pimote/tokyo-night', '#9ece6a', '#e0af68', '#f7768e', '#73daca'],

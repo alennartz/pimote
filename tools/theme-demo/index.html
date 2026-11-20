@@ -26,9 +26,11 @@
         --pimote-ui-border: GrayText;
         --pimote-ui-status-active: LinkText;
         --pimote-ui-status-streaming: LinkText;
+        --pimote-ui-status-streaming-on-primary: HighlightText;
         --pimote-ui-status-connected: LinkText;
         --pimote-ui-status-error: LinkText;
         --pimote-ui-status-reconnecting: Mark;
+        --pimote-ui-status-reconnecting-on-primary: HighlightText;
         --pimote-ui-surface-sunken: Canvas;
         --pimote-ui-surface-raised: ButtonFace;
         --pimote-ui-surface-subtle: ButtonFace;
@@ -375,7 +377,7 @@
         width: 10px;
         height: 10px;
         border-radius: 50%;
-        background: color-mix(in oklch, var(--pimote-ui-status-streaming) 60%, transparent);
+        background: color-mix(in oklch, var(--ping-color) 60%, transparent);
         transform: translate(-50%, -50%);
         animation: status-ping 1.5s ease-out infinite;
       }
@@ -807,7 +809,7 @@
             </div>
             <div id="session-chips" class="session-chips" style="margin-bottom: 10px"></div>
             <pre class="status-code"><code>&lt;button class="bg-primary text-primary-foreground rounded-full py-1 pr-3 pl-1"&gt;
-  &lt;svg class="text-status-streaming size-4.5" /&gt;
+  &lt;svg class="text-status-streaming-on-primary size-4.5" /&gt;
   Project
 &lt;/button&gt;</code></pre>
             <div class="link-samples links">
@@ -992,15 +994,15 @@
       const sessionFolderIcon = `<svg class="folder-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 6-5 6 5 6" /><path d="m16 6 5 6-5 6" /><path d="m13.5 4-3 16" /></svg>`;
       function renderSessionChips() {
         const states = [
-          ['Streaming', 'working', () => 'var(--pimote-ui-status-streaming)', true],
+          ['Streaming', 'working', (selected) => (selected ? 'var(--pimote-ui-status-streaming-on-primary)' : 'var(--pimote-ui-status-streaming)'), true],
           ['Idle', 'idle', (selected) => (selected ? 'var(--pimote-ui-primary-foreground)' : 'var(--pimote-ui-secondary-foreground)'), false],
-          ['Needs attention', 'attention', () => 'var(--pimote-ui-status-reconnecting)', false],
+          ['Needs attention', 'attention', (selected) => (selected ? 'var(--pimote-ui-status-reconnecting-on-primary)' : 'var(--pimote-ui-status-reconnecting)'), false],
         ];
         sessionChips.innerHTML = states
           .flatMap(([label, detail, colorFor, pulse]) =>
             [false, true].map((selected) => {
               const color = colorFor(selected);
-              const pulseMarkup = pulse ? '<span class="ping"></span>' : '';
+              const pulseMarkup = pulse ? `<span class="ping" style="--ping-color: ${color}"></span>` : '';
               return `<div class="session-chip-example"><span class="session-chip${selected ? ' selected' : ''}"><span class="session-chip-icon" style="color: ${color}">${pulseMarkup}${sessionFolderIcon}</span><span>Project</span></span><span class="session-chip-caption">${selected ? 'selected' : 'unselected'} · ${detail}</span></div>`;
             }),
           )

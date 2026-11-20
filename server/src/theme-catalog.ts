@@ -1,4 +1,5 @@
 import Color from 'colorjs.io';
+import { OPTIONAL_UI_ROLE_FALLBACKS } from '../../shared/dist/index.js';
 import type {
   AnsiColorName,
   EditorSurfaceRole,
@@ -76,9 +77,11 @@ const UI_TOKENS: readonly UiColorToken[] = [
   'sidebar-ring',
   'status-active',
   'status-streaming',
+  'status-streaming-on-primary',
   'status-connected',
   'status-error',
   'status-reconnecting',
+  'status-reconnecting-on-primary',
   'surface-sunken',
   'surface-raised',
   'surface-subtle',
@@ -102,6 +105,7 @@ const UI_TOKENS: readonly UiColorToken[] = [
   'avatar-fg',
   'shadow-color',
 ];
+const OPTIONAL_UI_ROLES = Object.keys(OPTIONAL_UI_ROLE_FALLBACKS);
 const SURFACE_ROLES: readonly EditorSurfaceRole[] = [
   'background',
   'foreground',
@@ -229,7 +233,7 @@ function validateColorValue(value: unknown): value is ThemeColorValue {
   return isRecord(value) && typeof value.palette === 'string' && value.palette.trim().length > 0 && Object.keys(value).every((key) => key === 'palette');
 }
 
-function validateRoleMap(value: unknown, roles: readonly string[], allowPartial: boolean, label: string): string | null {
+function validateRoleMap(value: unknown, roles: readonly string[], allowPartial: boolean, label: string, optionalRoles: readonly string[] = []): string | null {
   if (!isRecord(value)) return `${label} must be an object`;
   const roleSet = new Set(roles);
   for (const key of Object.keys(value)) {
@@ -237,7 +241,7 @@ function validateRoleMap(value: unknown, roles: readonly string[], allowPartial:
     if (!validateColorValue(value[key])) return `${label}.${key} must be a CSS Color 4 literal or palette reference`;
   }
   if (!allowPartial) {
-    const missing = roles.find((role) => !(role in value));
+    const missing = roles.find((role) => !(role in value) && !optionalRoles.includes(role));
     if (missing) return `${label}.${missing} is required`;
   }
   return null;
@@ -255,7 +259,7 @@ function validateDefinition(value: unknown): { definition?: ThemeDefinition; mes
       if (!name.trim() || !validateLiteralOrColor(color)) return { message: `palette.${name} must be a CSS Color 4 literal` };
     }
   }
-  const uiError = validateRoleMap(value.ui, UI_TOKENS, value.extends !== undefined, 'ui');
+  const uiError = validateRoleMap(value.ui, UI_TOKENS, value.extends !== undefined, 'ui', OPTIONAL_UI_ROLES);
   if (uiError) return { message: uiError };
   if (!isRecord(value.editor)) return { message: 'editor must be an object' };
   const surfaceError = validateRoleMap(value.editor.surface, SURFACE_ROLES, value.extends !== undefined, 'editor.surface');
@@ -355,6 +359,9 @@ function resolveDefinitions(entries: readonly SourceEntry[], diagnostics: ThemeD
           const inheritedPalette = parent ? (resolvedPalettes.get(parent.id) ?? {}) : {};
           const palette = { ...inheritedPalette, ...ownPalette };
           const ui = mergeRecord(parent?.ui, definition.ui, palette, 'ui');
+          for (const [role, fallback] of Object.entries(OPTIONAL_UI_ROLE_FALLBACKS) as Array<[UiColorToken, UiColorToken]>) {
+            if (!(role in ui)) ui[role] = ui[fallback];
+          }
           const surface = mergeRecord(parent?.editor.surface, definition.editor.surface, palette, 'editor.surface');
           const syntax = mergeRecord(parent?.editor.syntax, definition.editor.syntax, palette, 'editor.syntax');
           const terminal = mergeRecord(parent?.editor.terminal, definition.editor.terminal, palette, 'editor.terminal');

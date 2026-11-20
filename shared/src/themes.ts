@@ -62,9 +62,11 @@ export type UiColorToken =
   | 'sidebar-ring'
   | 'status-active'
   | 'status-streaming'
+  | 'status-streaming-on-primary'
   | 'status-connected'
   | 'status-error'
   | 'status-reconnecting'
+  | 'status-reconnecting-on-primary'
   | 'surface-sunken'
   | 'surface-raised'
   | 'surface-subtle'
@@ -87,6 +89,12 @@ export type UiColorToken =
   | 'avatar-bg'
   | 'avatar-fg'
   | 'shadow-color';
+
+/** Optional selected-chip foreground roles default to the primary foreground. */
+export const OPTIONAL_UI_ROLE_FALLBACKS = {
+  'status-streaming-on-primary': 'primary-foreground',
+  'status-reconnecting-on-primary': 'primary-foreground',
+} satisfies Partial<Record<UiColorToken, UiColorToken>>;
 
 /** Theme-independent editor surface roles. */
 export type EditorSurfaceRole =

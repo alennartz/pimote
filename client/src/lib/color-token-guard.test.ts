@@ -21,9 +21,11 @@ const RAW_COLOR = /oklch\(|#[0-9a-fA-F]{3,8}\b/;
 const PIMOTE_THEME_TOKENS = [
   '--status-active',
   '--status-streaming',
+  '--status-streaming-on-primary',
   '--status-connected',
   '--status-error',
   '--status-reconnecting',
+  '--status-reconnecting-on-primary',
   '--surface-sunken',
   '--surface-raised',
   '--surface-subtle',

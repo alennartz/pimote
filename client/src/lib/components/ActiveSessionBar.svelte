@@ -624,11 +624,15 @@
          curve. -->
     <span class="relative -my-0.5 flex size-4.5 shrink-0">
       {#if session.status === 'working' && !hasPendingUi}
-        <span class="bg-status-streaming/60 absolute top-1/2 left-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 animate-ping rounded-full"></span>
+        <span
+          class="{isViewed
+            ? 'bg-status-streaming-on-primary/60'
+            : 'bg-status-streaming/60'} absolute top-1/2 left-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 animate-ping rounded-full"
+        ></span>
       {/if}
       <FolderNatureIcon
         kind={folderIconKind(session.folder ?? { nature: 'code', shortcutCount: 0 })}
-        class="relative size-4.5 {getSessionPillIconColor(session, hasPendingUi)}"
+        class="relative size-4.5 {getSessionPillIconColor(session, hasPendingUi, isViewed)}"
         strokeWidth={2.75}
       />
     </span>
