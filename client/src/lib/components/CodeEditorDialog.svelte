@@ -27,6 +27,8 @@
     ready = true,
     language = null,
     editorKey = null,
+    preserveMount = false,
+    sessionSurface = false,
     value = $bindable(''),
     editorView = $bindable(null),
     toolbar = null,
@@ -60,6 +62,10 @@
     language?: EditorLanguage | null;
     /** Stable identity for the edited file; changes reset CodeMirror history. */
     editorKey?: string | null;
+    /** Keep the dialog content and editor runtime mounted while hidden. */
+    preserveMount?: boolean;
+    /** Render as a session surface that leaves app navigation reachable. */
+    sessionSurface?: boolean;
     value?: string;
     /** Live CodeMirror view, for toolbars that act on the selection. */
     editorView?: EditorView | null;
@@ -112,6 +118,46 @@
     return () => el.removeEventListener('keydown', handler, { capture: true });
   });
 
+  // Session surfaces ignore Bits UI's global outside-dismiss path so a
+  // navigation chip can receive its pointer event. Preserve the normal
+  // outside policy with a small active-surface listener instead.
+  $effect(() => {
+    const el = contentEl;
+    if (!sessionSurface || !open || !el || typeof document === 'undefined') return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node) || el.contains(target)) return;
+      const targetElement = target instanceof Element ? target : target.parentElement;
+      if (!targetElement) return;
+      if (
+        targetElement.closest(
+          '[data-session-navigation], [role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-slot="dialog-overlay"], [data-slot="context-menu-content"], [data-slot="dropdown-menu-content"], [data-slot="popover-content"]',
+        )
+      )
+        return;
+      const foregroundModal = document.querySelector<HTMLElement>(
+        '[role="dialog"][aria-modal="true"][data-state="open"], [role="alertdialog"][aria-modal="true"][data-state="open"]',
+      );
+      if (foregroundModal && !foregroundModal.contains(target)) return;
+      onInteractOutside(event);
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  });
+
+  // A force-mounted editor can become visible after its host was hidden. Ask
+  // CodeMirror to measure against the restored viewport instead of retaining
+  // the hidden surface's zero-sized measurements.
+  $effect(() => {
+    if (!open || !editorView) return;
+    queueMicrotask(() => editorView?.requestMeasure());
+  });
+
+  $effect(() => {
+    if (!sessionSurface || !contentEl) return;
+    contentEl.setAttribute('aria-modal', 'false');
+  });
+
   /** Explicit Esc routes through `onclose` so the consumer can veto the close. */
   function onDismissAttempt(event: Event): void {
     event.preventDefault();
@@ -133,14 +179,22 @@
   <Dialog.Content
     showCloseButton={false}
     bind:ref={contentEl}
+    forceMount={preserveMount}
+    trapFocus={!sessionSurface}
+    preventScroll={!sessionSurface}
+    overlay={!sessionSurface}
+    interactOutsideBehavior={sessionSurface ? 'ignore' : undefined}
+    hidden={preserveMount && !open}
+    inert={preserveMount && !open ? true : undefined}
     onEscapeKeydown={onDismissAttempt}
     {onInteractOutside}
-    class="top-0 left-0 flex h-dvh w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 rounded-none p-0 sm:top-1/2 sm:left-1/2 sm:h-[min(92dvh,960px)] sm:w-[min(96vw,1280px)] sm:max-w-[min(96vw,1280px)] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl {viewport ===
-    'mobile'
+    class="top-0 left-0 flex h-dvh w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 rounded-none p-0 {viewport === 'mobile'
       ? 'settings-mobile'
       : viewport === 'desktop'
         ? 'settings-desktop'
-        : ''}"
+        : ''} {sessionSurface
+      ? 'z-20 max-md:top-[var(--pimote-mobile-surface-top)] max-md:h-[calc(100dvh-var(--pimote-mobile-surface-top))]'
+      : 'z-50 sm:top-1/2 sm:left-1/2 sm:h-[min(92dvh,960px)] sm:w-[min(96vw,1280px)] sm:max-w-[min(96vw,1280px)] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl'}"
   >
     {#if accessibleTitle}
       <Dialog.Title class="sr-only">{accessibleTitle}</Dialog.Title>

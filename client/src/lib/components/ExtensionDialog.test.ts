@@ -18,6 +18,7 @@ Element.prototype.scrollIntoView ??= () => {};
 const state = vi.hoisted(() => ({
   listeners: new Set<(event: PimoteEvent) => void>(),
   send: vi.fn(async () => ({ success: true })),
+  viewedSessionId: 's1' as string | null,
 }));
 
 vi.mock('$lib/stores/connection.svelte.js', () => ({
@@ -30,9 +31,17 @@ vi.mock('$lib/stores/connection.svelte.js', () => ({
   },
 }));
 
-vi.mock('$lib/stores/session-registry.svelte.js', () => ({ sessionRegistry: { viewedSessionId: 's1' } }));
+vi.mock('$lib/stores/session-registry.svelte.js', () => ({
+  sessionRegistry: {
+    get viewedSessionId() {
+      return state.viewedSessionId;
+    },
+  },
+}));
 
 const { default: ExtensionDialog } = await import('./ExtensionDialog.svelte');
+const { getExtensionEditorHost } = await import('$lib/stores/extension-editor-host.svelte.js');
+const editorHost = getExtensionEditorHost();
 await import('./ExtensionCodeEditor.svelte');
 
 let component: ReturnType<typeof mount> | undefined;
@@ -50,6 +59,13 @@ function request(prefill = '# Hello\n'): string {
 
 function replayRequest(requestId: string, prefill = '# Hello\n'): void {
   emit({ type: 'extension_ui_request', sessionId: 's1', requestId, method: 'editor', title: 'Edit text', prefill });
+}
+
+async function switchViewedSession(sessionId: string | null): Promise<void> {
+  state.viewedSessionId = sessionId;
+  editorHost.setViewedSession(sessionId);
+  await tick();
+  await tick();
 }
 
 async function openEditor(prefill = '# Hello\n'): Promise<EditorView> {
@@ -97,10 +113,74 @@ afterEach(async () => {
   }
   document.body.innerHTML = '';
   state.send.mockClear();
+  state.viewedSessionId = 's1';
   emit({ type: 'extension_ui_resolved', sessionId: 's1', requestId: `editor-${requestId}` });
 });
 
 describe('ExtensionDialog editor close policy', () => {
+  it('parks the live editor while switching sessions and restores its full state', async () => {
+    const view = await openEditor();
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: 'edited' } });
+    view.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(document.querySelector('.cm-panel')).not.toBeNull());
+    const editorElement = document.querySelector('.cm-editor');
+    const beforeDialog = editorDialog();
+
+    await switchViewedSession('s2');
+
+    expect(state.send).not.toHaveBeenCalled();
+    expect(beforeDialog?.hasAttribute('hidden')).toBe(true);
+    expect(EditorView.findFromDOM(editorElement as HTMLElement)).toBe(view);
+
+    await switchViewedSession('s1');
+
+    const restoredElement = document.querySelector('.cm-editor');
+    expect(EditorView.findFromDOM(restoredElement as HTMLElement)).toBe(view);
+    expect(view.state.doc.toString()).toBe('edited');
+    expect(document.querySelector('.cm-panel')).not.toBeNull();
+  });
+
+  it('closes discard confirmation when navigation hides its editor', async () => {
+    const view = await openEditor();
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: 'edited' } });
+    await tick();
+    button('Cancel').click();
+    await vi.waitFor(() => expect(confirmation()).not.toBeNull());
+
+    await switchViewedSession('s2');
+
+    expect(confirmation()).toBeNull();
+    expect(state.send).not.toHaveBeenCalled();
+  });
+
+  it('does not cancel when session navigation is clicked outside the surface', async () => {
+    await openEditor();
+    const navigation = document.createElement('button');
+    navigation.setAttribute('data-session-navigation', '');
+    document.body.appendChild(navigation);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    navigation.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
+    await tick();
+
+    expect(state.send).not.toHaveBeenCalled();
+    expect(editorDialog()?.getAttribute('data-state')).toBe('open');
+  });
+
+  it('does not cancel when a foreground menu receives a pointer event', async () => {
+    await openEditor();
+    const menu = document.createElement('div');
+    menu.setAttribute('role', 'menu');
+    document.body.appendChild(menu);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    menu.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
+    await tick();
+
+    expect(state.send).not.toHaveBeenCalled();
+    expect(editorDialog()?.getAttribute('data-state')).toBe('open');
+  });
+
   it('saves the current editor text', async () => {
     const view = await openEditor();
     view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: 'edited' } });

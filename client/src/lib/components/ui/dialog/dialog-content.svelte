@@ -15,17 +15,21 @@
     overlayClass,
     children,
     showCloseButton = true,
+    overlay = true,
     ...restProps
   }: WithoutChildrenOrChild<DialogPrimitive.ContentProps> & {
     portalProps?: WithoutChildrenOrChild<ComponentProps<typeof DialogPortal>>;
     overlayClass?: string;
     children: Snippet;
     showCloseButton?: boolean;
+    overlay?: boolean;
   } = $props();
 </script>
 
 <DialogPortal {...portalProps}>
-  <Dialog.Overlay class={overlayClass} />
+  {#if overlay}
+    <Dialog.Overlay class={overlayClass} />
+  {/if}
   <DialogPrimitive.Content
     bind:ref
     data-slot="dialog-content"

@@ -46,6 +46,7 @@
   let { children } = $props();
   let appShellEl: HTMLDivElement | undefined = $state();
   let appHeight = $state('100dvh');
+  let mobileSurfaceTop = $state(48);
   let activeSubagentRoot = $derived(sessionRegistry.viewedSessionId ? sessionRegistry.subagentRoots[sessionRegistry.viewedSessionId] : null);
   let pendingSubagentResurrection = $derived(sessionRegistry.viewedSessionId ? sessionRegistry.getPendingSubagentResurrection(sessionRegistry.viewedSessionId) : null);
   let hasHierarchy = $derived((activeSubagentRoot?.nodes.length ?? 0) > 0);
@@ -85,6 +86,15 @@
     if (typeof navigator !== 'undefined') sendFocusState();
   });
 
+  // Banners sit above the mobile header in normal flow. Keep the fixed
+  // session surface below their current combined height.
+  $effect(() => {
+    pushSubscription.status;
+    updateStore.showBanner;
+    appShellEl;
+    if (typeof window !== 'undefined') requestAnimationFrame(updateMobileSurfaceTop);
+  });
+
   // Register this device's push subscription with the server on every connect.
   // Also creates the subscription when permission is granted but none exists.
   $effect(() => {
@@ -122,6 +132,7 @@
     let delayedAppHeightUpdate: ReturnType<typeof setTimeout> | null = null;
     const updateAppHeight = () => {
       appHeight = resolveAppViewportHeight(window);
+      updateMobileSurfaceTop();
     };
     const scheduleAppHeightUpdate = () => {
       requestAnimationFrame(updateAppHeight);
@@ -130,6 +141,25 @@
     };
 
     scheduleAppHeightUpdate();
+
+    let mobileLayoutObserver: ResizeObserver | null = null;
+    let mobileLayoutMutationObserver: MutationObserver | null = null;
+    const observeMobileLayout = () => {
+      mobileLayoutObserver?.disconnect();
+      const layoutRoot = appShellEl?.firstElementChild;
+      if (!layoutRoot || typeof ResizeObserver === 'undefined') return;
+      mobileLayoutObserver = new ResizeObserver(() => requestAnimationFrame(updateMobileSurfaceTop));
+      for (const element of layoutRoot.querySelectorAll<HTMLElement>('[data-mobile-layout-banner], [data-mobile-session-navigation]')) {
+        mobileLayoutObserver.observe(element);
+      }
+      updateMobileSurfaceTop();
+    };
+    observeMobileLayout();
+    const layoutRoot = appShellEl?.firstElementChild;
+    if (layoutRoot && typeof MutationObserver !== 'undefined') {
+      mobileLayoutMutationObserver = new MutationObserver(observeMobileLayout);
+      mobileLayoutMutationObserver.observe(layoutRoot, { childList: true, subtree: true });
+    }
 
     const resizePanelHost = () => {
       const width = appShellEl?.getBoundingClientRect().width;
@@ -218,6 +248,9 @@
       window.removeEventListener('focusin', scheduleAppHeightUpdate);
       window.removeEventListener('focusout', scheduleAppHeightUpdate);
       if (delayedAppHeightUpdate) clearTimeout(delayedAppHeightUpdate);
+      mobileLayoutObserver?.disconnect();
+      mobileLayoutMutationObserver?.disconnect();
+      document.documentElement.style.removeProperty('--pimote-mobile-surface-top');
       panelResizeObserver?.disconnect();
       window.removeEventListener('focus', sendFocusState);
       window.removeEventListener('blur', sendFocusState);
@@ -250,6 +283,15 @@
   );
   let mobileContextTone = $derived(getContextTone(mobileContextPercent));
 
+  function updateMobileSurfaceTop(): void {
+    const header = appShellEl?.querySelector<HTMLElement>('[data-mobile-session-navigation]');
+    if (!header) return;
+    const bottom = header.getBoundingClientRect().bottom;
+    if (bottom <= 0) return;
+    mobileSurfaceTop = Math.ceil(bottom);
+    document.documentElement.style.setProperty('--pimote-mobile-surface-top', `${mobileSurfaceTop}px`);
+  }
+
   function openPanels(): void {
     const focused = document.activeElement;
     if (focused instanceof HTMLElement && focused.matches('input, textarea, [contenteditable="true"]')) focused.blur();
@@ -277,14 +319,18 @@
   });
 </script>
 
-<div bind:this={appShellEl} class="bg-background flex overflow-hidden" style={`height: ${appHeight};`}>
+<div bind:this={appShellEl} class="bg-background flex overflow-hidden" style={`height: ${appHeight}; --pimote-mobile-surface-top: ${mobileSurfaceTop}px;`}>
   <!-- Main content -->
   <div class="flex flex-1 flex-col overflow-hidden">
     <NotificationBanner />
     <UpdateBanner />
 
     <!-- Mobile header -->
-    <header class="border-border flex min-h-12 shrink-0 items-center gap-2 border-b px-3 pt-[max(env(safe-area-inset-top),0.25rem)] md:hidden">
+    <header
+      data-session-navigation
+      data-mobile-session-navigation
+      class="border-border relative z-30 flex min-h-12 shrink-0 items-center gap-2 border-b px-3 pt-[max(env(safe-area-inset-top),0.25rem)] md:hidden"
+    >
       {#if page.url.pathname === '/'}
         <button
           type="button"

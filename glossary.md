@@ -72,6 +72,10 @@ _Avoid_: Pi extension, folder-source module (when referring to the generic host)
 A module loaded by Pi for a session from Pi's extension locations. When running under Pimote, it reaches session-bound Pimote surfaces through the session bridge, such as the panels EventBus.
 _Avoid_: Pimote extension
 
+**Extension editor workspace**:
+A pending editor request owned by one session identity, together with its in-memory editor state. It is keyed by the pair of session identity and request ID, hidden during navigation, and retired only by an explicit answer or terminal session lifecycle event.
+_Avoid_: editor modal (which describes presentation, not ownership), editor draft (which contains text only)
+
 **Session cost**:
 Pi's authoritative whole-session dollar total. Pimote shows it separately from assistant-row costs, with an optional breakdown of input, output, cache-read, and cache-write costs from persisted usage.
 

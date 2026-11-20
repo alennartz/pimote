@@ -764,7 +764,7 @@ export class ConnectionStore {
             if (this.phase === 'syncing') {
               this.syncDetail = 'Session restore failed';
             }
-            this.removeSubscribedSession(sessionId);
+            this.removeSubscribedSession(sessionId, { notify: false });
             this.onSessionRestoreFailed?.(sessionId);
             this.emitEvent({
               type: 'extension_ui_request',
@@ -823,7 +823,29 @@ export class ConnectionStore {
     this.connect();
   }
 
+  // Per-session restore completion is distinct from the wire
+  // `session_restore: completed` event: pending extension UI replay follows
+  // that event and arrives before the open_session response.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- listener set, not UI state
+  private sessionRestoreCompleteListeners = new Set<(sessionId: string) => void>();
+  // Session removal can happen locally when a restore is rejected or the user
+  // profile drops a subscription, without a session_closed wire event.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- listener set, not UI state
+  private sessionUnavailableListeners = new Set<(sessionId: string) => void>();
   private lifecycleListenersInstalled = false;
+
+  /** Subscribe to the per-session open_session response barrier. */
+  onSessionRestoreComplete(cb: (sessionId: string) => void): () => void {
+    this.sessionRestoreCompleteListeners.add(cb);
+    return () => this.sessionRestoreCompleteListeners.delete(cb);
+  }
+
+  /** Subscribe to local removal of a session from this connection. */
+  onSessionUnavailable(cb: (sessionId: string) => void): () => void {
+    this.sessionUnavailableListeners.add(cb);
+    return () => this.sessionUnavailableListeners.delete(cb);
+  }
+
   private installLifecycleListeners(): void {
     if (this.lifecycleListenersInstalled) return;
     if (typeof window === 'undefined' || typeof document === 'undefined') return;
@@ -841,9 +863,12 @@ export class ConnectionStore {
     this.subscribedSessions.set(id, folderPath);
   }
 
-  removeSubscribedSession(id: string): void {
-    this.subscribedSessions.delete(id);
+  removeSubscribedSession(id: string, options?: { notify?: boolean }): void {
+    const wasSubscribed = this.subscribedSessions.delete(id);
     this.sessionCursors.delete(id);
+    if (wasSubscribed && options?.notify !== false) {
+      for (const listener of [...this.sessionUnavailableListeners]) listener(id);
+    }
   }
 
   /** Empty the seed the connect-burst reconcile consumes. A deliberate user
@@ -862,13 +887,21 @@ export class ConnectionStore {
     const id = command.id ?? `cmd-${nextId++}`;
     const withId = { ...command, id };
 
-    return new Promise((resolve, reject) => {
+    return new Promise<PimoteResponse>((resolve, reject) => {
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
         reject(new Error('WebSocket not connected'));
         return;
       }
       this.pending.set(id, { resolve, reject });
       this.ws.send(JSON.stringify(withId));
+    }).then((response) => {
+      // Every successful existing-session open has completed the server's
+      // replayRootUi phase. This is the client-side prune barrier, including
+      // explicit opens that bypass the reconnect restore helper.
+      if (command.type === 'open_session' && command.sessionId && response.success) {
+        for (const listener of [...this.sessionRestoreCompleteListeners]) listener(command.sessionId);
+      }
+      return response;
     });
   }
 

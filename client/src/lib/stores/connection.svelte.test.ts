@@ -417,6 +417,35 @@ describe('ConnectionStore — restore success', () => {
 
     c.disconnect();
   });
+
+  it('fires the restore barrier after replayed extension UI events', async () => {
+    const c = new ConnectionStore();
+    const order: string[] = [];
+    c.onEvent((event) => {
+      if (event.type === 'extension_ui_request') order.push('request');
+    });
+    c.onSessionRestoreComplete((sessionId) => {
+      expect(sessionId).toBe('s-1');
+      order.push('barrier');
+    });
+    c.addSubscribedSession('s-1', '/repos/agent');
+
+    c.connect();
+    const ws = instances.at(-1)!;
+    ws.readyState = FakeWebSocket.OPEN;
+    ws.onopen!();
+    burst(ws);
+    await flush();
+
+    ws.onmessage!({
+      data: JSON.stringify({ type: 'extension_ui_request', sessionId: 's-1', requestId: 'editor-1', method: 'editor', prefill: 'seed' }),
+    });
+    respondSuccessTo(ws, { sessionId: 's-1', folderPath: '/repos/agent', restoreMode: 'incremental_replay' });
+    await flush();
+
+    expect(order).toEqual(['request', 'barrier']);
+    c.disconnect();
+  });
 });
 
 describe('ConnectionStore — socket identity guards', () => {

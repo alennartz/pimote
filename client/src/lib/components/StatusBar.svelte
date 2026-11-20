@@ -69,7 +69,7 @@
   }
 </script>
 
-<div class="border-border bg-muted/30 text-muted-foreground shrink-0 border-b text-xs">
+<div data-session-navigation class="border-border bg-muted/30 text-muted-foreground relative z-30 shrink-0 border-b text-xs">
   <div class="flex h-9 items-center gap-1 px-2">
     <!-- Root navigation stays available on the root surface. Child views close
          explicitly and return to the root without changing the URL. -->

@@ -8,7 +8,7 @@
 </script>
 
 {#if show}
-  <div class="border-border bg-muted/50 flex flex-col border-b">
+  <div data-mobile-layout-banner class="border-border bg-muted/50 flex flex-col border-b">
     <div class="flex items-center gap-3 px-4 py-3">
       <Bell class="text-muted-foreground size-4 shrink-0" />
       {#if pushSubscription.status === 'blocked'}

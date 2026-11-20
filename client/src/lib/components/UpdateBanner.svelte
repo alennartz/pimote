@@ -7,7 +7,7 @@
 {#if updateStore.showBanner}
   {@const status = updateStore.status}
   {#if status}
-    <div class="border-border bg-muted/50 flex flex-col border-b">
+    <div data-mobile-layout-banner class="border-border bg-muted/50 flex flex-col border-b">
       <div class="flex items-center gap-3 px-4 py-3">
         <ArrowUpCircle class="text-muted-foreground size-4 shrink-0" />
         <span class="text-foreground flex-1 text-sm">Update available: {status.currentVersion} → {status.latestVersion}</span>

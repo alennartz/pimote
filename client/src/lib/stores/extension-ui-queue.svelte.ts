@@ -175,14 +175,14 @@ export function getExtensionUiQueue() {
         editorDrafts[key] = value;
       }
     },
-    sendResponse(requestId: string, sessionId: string, data: ResponseData): void {
+    sendResponse(requestId: string, sessionId: string, data: ResponseData): Promise<boolean> {
       const key = requestKey(sessionId, requestId);
       const entry = queue.find((r) => r.requestId === requestId && r.sessionId === sessionId);
       // Optimistically remove so the dialog closes immediately…
       queue = queue.filter((r) => !(r.requestId === requestId && r.sessionId === sessionId));
       const attempt: ResponseAttempt = { key, sessionId, requestId, entry };
       pendingResponses.set(key, attempt);
-      connection
+      return connection
         .send({
           type: 'extension_ui_response',
           sessionId,
@@ -193,9 +193,10 @@ export function getExtensionUiQueue() {
           () => {
             // Only the live attempt may settle its editor draft. A stale
             // response can arrive after a restore replay and newer edits.
-            if (!responseIsCurrent(attempt)) return;
+            if (!responseIsCurrent(attempt)) return true;
             pendingResponses.delete(key);
             removeEditorDraft(sessionId, requestId);
+            return true;
           },
           (err) => {
             // …but if the send fails (e.g. WS down), re-queue the entry so the
@@ -203,11 +204,12 @@ export function getExtensionUiQueue() {
             // leak an unhandled rejection. An intervening resolution, session
             // close, or restore lifecycle event invalidates this attempt.
             console.warn('[extension-ui] failed to send response; re-queuing', err);
-            if (!responseIsCurrent(attempt)) return;
+            if (!responseIsCurrent(attempt)) return false;
             pendingResponses.delete(key);
             if (entry && !queue.some((r) => r.sessionId === sessionId && r.requestId === requestId)) {
               queue = [...queue, entry];
             }
+            return false;
           },
         );
     },
