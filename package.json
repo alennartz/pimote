@@ -52,7 +52,7 @@
     "start": "node ./bin/pimote.js start",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "lint": "eslint .",
+    "lint": "eslint . --cache",
     "check": "npm run check --workspace=client && tsc --noEmit -p server/tsconfig.json && tsc --noEmit -p shared/tsconfig.json",
     "prepare": "husky",
     "prepack": "npm run build",
@@ -65,7 +65,7 @@
   },
   "lint-staged": {
     "*.{ts,js,svelte,css,html,json,md,yaml}": "prettier --write",
-    "*.{ts,js,svelte}": "eslint --no-fix"
+    "*.{ts,js,svelte}": "eslint --cache --no-fix"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
