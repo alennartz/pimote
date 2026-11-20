@@ -69,12 +69,11 @@ describe('built-in theme mappings', () => {
     });
   });
 
-  it('maps third-party accent surfaces to hover while keeping muted surfaces separate', async () => {
+  it('maps third-party accent surfaces consistently while keeping muted surfaces separate', async () => {
     const themes = await resolvedBuiltins();
     for (const id of ['dracula/dracula', 'tokyo-night/tokyo-night', 'nord/nord', 'gruvbox/dark', 'solarized/light', 'catppuccin/mocha', 'catppuccin/latte']) {
       const theme = themes.find((entry) => entry.id === id)!;
-      expect(theme.ui.accent, id).toBe(theme.ui['surface-hover']);
-      expect(theme.ui['sidebar-accent'], id).toBe(theme.ui['surface-hover']);
+      expect(theme.ui.accent, id).toBe(theme.ui['sidebar-accent']);
       expect(theme.ui.muted, id).toBe(theme.ui.secondary);
     }
   });

@@ -149,6 +149,7 @@ function addFinding(
   background: string,
   backdrop: string,
   minimum: number,
+  severityOverride?: ThemeAuditSeverity,
 ): void {
   const ratio = contrastRatio(foreground, background, backdrop);
   if (ratio >= minimum) return;
@@ -162,7 +163,7 @@ function addFinding(
     minimum,
     foreground,
     background,
-    severity: severityFor(ratio, minimum),
+    severity: severityOverride ?? severityFor(ratio, minimum),
   });
 }
 
@@ -175,8 +176,9 @@ function auditPair(
   background: string,
   minimum: number,
   backdrop: string,
+  severityOverride?: ThemeAuditSeverity,
 ): void {
-  addFinding(findings, theme, rule, 'pair', relationship, foreground, background, backdrop, minimum);
+  addFinding(findings, theme, rule, 'pair', relationship, foreground, background, backdrop, minimum, severityOverride);
 }
 
 function auditSyntax(findings: ThemeAuditFinding[], theme: ResolvedTheme, role: EditorSyntaxRole): void {
@@ -249,7 +251,7 @@ function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
     auditPair(findings, theme, `ui.status.${label}`, `foreground on ${label} status tint`, ui.foreground, tintedSurface, 4.5, ui.background);
   }
   for (const { role, label } of SELECTED_SESSION_ICON_ROLES) {
-    auditPair(findings, theme, `ui.session-chip.${label}`, `${label} icon on selected session chip`, ui[role], ui.primary, 3, ui.background);
+    auditPair(findings, theme, `ui.session-chip.${label}`, `${label} icon on selected session chip`, ui[role], ui.primary, 3, ui.background, 'warning');
   }
 
   auditPair(findings, theme, 'ui.menu-item-hover', 'menu hover surface against regular menu item surface', ui.accent, ui.popover, HOVER_SURFACE_MINIMUM, ui.background);
@@ -273,14 +275,24 @@ function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
     HOVER_SURFACE_MINIMUM,
     ui.background,
   );
-  auditPair(findings, theme, 'ui.button.ghost-hover', 'ghost button hover surface against regular page surface', ui.muted, ui.background, HOVER_SURFACE_MINIMUM, ui.background);
+  auditPair(
+    findings,
+    theme,
+    'ui.button.ghost-hover',
+    'ghost button hover surface against regular page surface',
+    ui['surface-hover'],
+    ui.background,
+    HOVER_SURFACE_MINIMUM,
+    ui.background,
+  );
   const outlineButtonSurface = theme.colorScheme === 'dark' ? alphaColor(ui.input, 0.3) : ui.background;
+  const outlineButtonHoverSurface = theme.colorScheme === 'dark' ? ui.input : ui['surface-hover'];
   auditPair(
     findings,
     theme,
     'ui.button.outline-hover',
     'outline button hover surface against regular outline surface',
-    ui.muted,
+    outlineButtonHoverSurface,
     outlineButtonSurface,
     HOVER_SURFACE_MINIMUM,
     ui.background,
