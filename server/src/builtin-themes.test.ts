@@ -97,7 +97,8 @@ describe('built-in theme mappings', () => {
     for (const theme of await resolvedBuiltins()) {
       const streaming = theme.ui['status-streaming-on-primary'];
       const attention = theme.ui['status-reconnecting-on-primary'];
-      expect(streaming, theme.id).toBe(theme.ui['primary-foreground']);
+      expect(streaming, theme.id).not.toBe(theme.ui['primary-foreground']);
+      expect(attention, theme.id).not.toBe(theme.ui['primary-foreground']);
       expect(attention, theme.id).not.toBe(streaming);
       expect(contrast(streaming, theme.ui.primary), `${theme.id} streaming`).toBeGreaterThanOrEqual(3);
       expect(contrast(attention, theme.ui.primary), `${theme.id} attention`).toBeGreaterThanOrEqual(3);
