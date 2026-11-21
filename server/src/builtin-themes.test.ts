@@ -117,6 +117,14 @@ describe('built-in theme mappings', () => {
     }
   });
 
+  it('paints prose structure apart from body markup', async () => {
+    for (const theme of await resolvedBuiltins()) {
+      for (const scope of ['markup.heading', 'markup.underline.link'] as const) {
+        expect(theme.editor.syntax[scope], `${theme.id} ${scope}`).not.toBe(theme.editor.syntax.markup);
+      }
+    }
+  });
+
   it('keeps every diff syntax role readable on editor and diff surfaces', async () => {
     for (const theme of await resolvedBuiltins()) {
       expect(theme.editor.surface['diff-addition-background'], `${theme.id} addition diff background`).not.toBe(theme.editor.surface['diff-deletion-background']);
