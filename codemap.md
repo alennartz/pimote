@@ -49,7 +49,7 @@ sequenceDiagram
 
 Defines the TypeScript wire contract for the server and web client, including the PWA theme catalog and selection protocol.
 
-**Responsibilities:** commands and typed responses, session and folder contracts, lifecycle and live events, replay and resync envelopes, transcript, usage and image data, subagent views, extension UI, panels and downloads, voice, login, push, settings and update vocabulary, theme definitions and resolved catalogs, catalog revision events and profile selection
+**Responsibilities:** commands and typed responses, session and folder contracts, lifecycle and live events, replay and resync envelopes, transcript, usage and image data, subagent views, extension UI, panels and downloads, voice, login, push, settings and update vocabulary, theme definitions, the design token fallback graph and resolved catalogs, catalog revision events and profile selection
 
 **Dependencies:** SDK for canonical subagent, panel and folder types. Android mirrors its consumed wire subset by hand and skips unknown event types.
 
@@ -61,7 +61,7 @@ Defines the TypeScript wire contract for the server and web client, including th
 
 Hosts pi `AgentSession` instances and exposes the HTTP and WebSocket API, including theme catalog and preference services.
 
-**Responsibilities:** CLI and startup, validated runtime configuration, Pimote extension host and Settings catalog, HTTP/PWA and WebSocket APIs, pi session lifecycle and wire projection, observer delivery and replay/resync, subagent views, folder discovery/indexing/listing/curation, guarded hub/worktree management, manager tools, session records and metadata, image/file delivery, provider login, web push and update checks, built-in/extension/user theme catalog validation and resolution, theme source watching and revision notifications, live default configuration and per-user theme persistence
+**Responsibilities:** CLI and startup, validated runtime configuration, Pimote extension host and Settings catalog, HTTP/PWA and WebSocket APIs, pi session lifecycle and wire projection, observer delivery and replay/resync, subagent views, folder discovery/indexing/listing/curation, guarded hub/worktree management, manager tools, session records and metadata, image/file delivery, provider login, web push and update checks, built-in/extension/user theme catalog validation and resolution, token graph resolution, theme source watching and revision notifications, theme normalization tooling, live default configuration and per-user theme persistence
 
 The server has no client-auth layer; deployment supplies access control.
 

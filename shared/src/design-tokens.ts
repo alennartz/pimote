@@ -203,7 +203,7 @@ export function createTokenGraph(spec: TokenGraphSpec): TokenGraph {
     if (!tokens.has(target)) throw new Error(`fallback target ${target} is not declared`);
     if (mandatory.has(token)) throw new Error(`mandatory token ${token} must not declare a fallback`);
   }
-  for (const token of spec.tokens) if (!mandatory.has(token) && !(token in spec.fallbacks)) throw new Error(`token ${token} is neither mandatory nor aliased`);
+  for (const token of spec.tokens) if (!mandatory.has(token) && !Object.hasOwn(spec.fallbacks, token)) throw new Error(`token ${token} is neither mandatory nor aliased`);
 
   const depths = new Map<string, number>();
   const depth = (token: string, visited: readonly string[] = []): number => {
@@ -228,28 +228,31 @@ export function createTokenGraph(spec: TokenGraphSpec): TokenGraph {
     },
     resolve: (statements) => {
       for (const token of Object.keys(statements)) if (!tokens.has(token)) throw new Error(`${token} is not a design token`);
-      const values: Record<string, string> = {};
-      const provenance: Record<string, TokenProvenance> = {};
+      const values = new Map<string, string>();
+      const provenance = new Map<string, TokenProvenance>();
       const resolveToken = (token: string, visited: readonly string[]): string => {
-        const known = values[token];
+        const known = values.get(token);
         if (known !== undefined) return known;
-        const stated = statements[token];
+        const stated = Object.hasOwn(statements, token) ? statements[token] : undefined;
         if (stated !== undefined) {
-          values[token] = stated;
-          provenance[token] = { kind: 'explicit' };
+          values.set(token, stated);
+          provenance.set(token, { kind: 'explicit' });
           return stated;
         }
-        const target = spec.fallbacks[token];
+        const target = Object.hasOwn(spec.fallbacks, token) ? spec.fallbacks[token] : undefined;
         if (target === undefined) throw new Error(`no value for mandatory token ${token}`);
         if (visited.includes(token)) throw new Error(`token fallback cycle: ${[...visited, token].join(' -> ')}`);
         const value = resolveToken(target, [...visited, token]);
-        const inherited = provenance[target];
-        values[token] = value;
-        provenance[token] = { kind: 'fallback', via: [target, ...(inherited?.kind === 'fallback' ? inherited.via : [])] as DesignToken[] };
+        const inherited = provenance.get(target);
+        values.set(token, value);
+        provenance.set(token, { kind: 'fallback', via: [target, ...(inherited?.kind === 'fallback' ? inherited.via : [])] as DesignToken[] });
         return value;
       };
       for (const token of spec.tokens) resolveToken(token, []);
-      return { values: values as Record<DesignToken, string>, provenance: provenance as Record<DesignToken, TokenProvenance> };
+      return {
+        values: Object.fromEntries(values) as Record<DesignToken, string>,
+        provenance: Object.fromEntries(provenance) as Record<DesignToken, TokenProvenance>,
+      };
     },
   };
 }
@@ -312,16 +315,19 @@ export interface ThemeProfile {
 /** Summarize the statements that survive normalization. */
 export function themeProfile(statements: TokenStatements): ThemeProfile {
   const depth = Object.fromEntries(NAMESPACES.map((namespace) => [namespace, 0])) as Record<TokenNamespace, number>;
-  const histogram = Object.fromEntries(NAMESPACES.map((namespace) => [namespace, [] as number[]])) as Record<TokenNamespace, number[]>;
+  const counts = Object.fromEntries(NAMESPACES.map((namespace) => [namespace, new Map<number, number>()])) as Record<TokenNamespace, Map<number, number>>;
   const reach: DesignToken[] = [];
   const mandatory = new Set(MANDATORY_TOKENS);
+  const stated = (token: string) => Object.hasOwn(statements, token) && statements[token as DesignToken] !== undefined;
   for (const token of DESIGN_TOKENS) {
-    if (statements[token] === undefined) continue;
+    if (!stated(token)) continue;
     const namespace = tokenNamespace(token);
     const edges = tokenDepth(token);
     depth[namespace] = Math.max(depth[namespace]!, edges);
-    histogram[namespace]![edges] = (histogram[namespace]![edges] ?? 0) + 1;
-    if (!mandatory.has(token) && statements[TOKEN_FALLBACKS[token]!] === undefined) reach.push(token);
+    counts[namespace]!.set(edges, (counts[namespace]!.get(edges) ?? 0) + 1);
+    if (!mandatory.has(token) && !stated(TOKEN_FALLBACKS[token]!)) reach.push(token);
   }
+  const histogram: Record<TokenNamespace, readonly number[]> = { ui: [], 'editor.surface': [], 'editor.syntax': [], 'editor.terminal': [] };
+  for (const namespace of NAMESPACES) histogram[namespace] = Array.from({ length: depth[namespace]! + 1 }, (_, edges) => counts[namespace]!.get(edges) ?? 0);
   return { depth, histogram, reach };
 }

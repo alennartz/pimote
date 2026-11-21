@@ -64,6 +64,22 @@ _Avoid_: settings document, configuration file (when referring to the tabbed set
 A named appearance preset for the Pimote PWA. It pairs Pimote UI color tokens with code-editor and terminal colors; selecting it applies both palettes. Agent-hosted static reports can opt into it through the theme helper.
 _Avoid_: UI theme, editor theme (when referring to the complete preset)
 
+**Design token**:
+One color value a web theme resolves, named by namespace: `ui.card`, `editor.surface.selection`, `editor.syntax.comment.documentation`, or `editor.terminal.bright-red`.
+_Avoid_: design variable, color slot
+
+**Fallback graph**:
+The declared edges that let an omitted design token take another token's value. Each token is either mandatory or an alias of exactly one token, no chain repeats a token, and every chain ends at a mandatory token.
+_Avoid_: inheritance tree, token cascade
+
+**Mandatory token**:
+A design token with no fallback edge. A standalone theme states every mandatory token; any other token it may omit.
+_Avoid_: required role, base token
+
+**Token depth**:
+The number of fallback edges between a design token and its nearest mandatory token. A theme's level is the deepest token it states, reported per namespace.
+_Avoid_: specificity, tier
+
 **Pimote extension**:
 A trusted module loaded by the global Pimote extension host from its XDG directory or a user-level Pi package's `pimote.extensions` entries. The host loads it at startup and server-wide reload; it does not receive Pi's `ExtensionAPI`.
 _Avoid_: Pi extension, folder-source module (when referring to the generic host)

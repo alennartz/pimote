@@ -73,6 +73,10 @@ function toDefinition(definition: ThemeDefinition, statements: Readonly<Record<s
     }
     return nested;
   };
+  const ui = group('ui');
+  const surface = group('editor.surface');
+  const syntax = group('editor.syntax');
+  const terminal = group('editor.terminal');
   const kept = Object.keys(palette)
     .sort()
     .reduce<Record<string, string>>((swatches, name) => (used.has(name) ? { ...swatches, [name]: palette[name]! } : swatches), {});
@@ -82,13 +86,27 @@ function toDefinition(definition: ThemeDefinition, statements: Readonly<Record<s
     colorScheme: definition.colorScheme,
     ...(definition.extends ? { extends: definition.extends } : {}),
     ...(Object.keys(kept).length > 0 ? { palette: kept } : {}),
-    ui: group('ui') as ThemeDefinition['ui'],
+    ui: ui as ThemeDefinition['ui'],
     editor: {
-      surface: group('editor.surface') as ThemeDefinition['editor']['surface'],
-      syntax: group('editor.syntax') as ThemeDefinition['editor']['syntax'],
-      terminal: group('editor.terminal') as ThemeDefinition['editor']['terminal'],
+      surface: surface as ThemeDefinition['editor']['surface'],
+      syntax: syntax as ThemeDefinition['editor']['syntax'],
+      terminal: terminal as ThemeDefinition['editor']['terminal'],
     },
   };
+}
+
+/** Re-resolve the rewritten file and report the first theme whose palette changed. */
+function repaints(before: ReturnType<typeof resolveThemeDefinitions>, themes: readonly ThemeDefinition[], builtinThemes: readonly ThemeDefinition[]): ThemeDiagnostic | undefined {
+  const after = resolveThemeDefinitions([
+    ...builtinThemes.map((definition) => ({ definition, source: 'builtin' as const, path: '<builtin>' })),
+    ...themes.map((definition) => ({ definition, source: 'user' as const, path: '<file>' })),
+  ]).themes;
+  for (const theme of before.themes) {
+    const rewritten = after.find((entry) => entry.id === theme.id);
+    if (JSON.stringify(rewritten) === JSON.stringify(theme)) continue;
+    return { path: '<file>', themeId: theme.id, message: 'normalized theme would repaint a resolved color' };
+  }
+  return undefined;
 }
 
 /** Rewrite a theme file into the smallest form that resolves to the same palette. */
@@ -106,6 +124,7 @@ export function normalizeThemeFile(raw: string, options: ThemeNormalizeOptions =
   const profiles: Record<string, ThemeProfile> = {};
   const diagnostics: ThemeDiagnostic[] = [...parsed.diagnostics, ...resolution.diagnostics];
   const seen = new Set<string>();
+  const inherited = new Set(parsed.definitions.map((definition) => definition.extends).filter((id): id is string => id !== undefined));
 
   for (const definition of parsed.definitions) {
     if (seen.has(definition.id)) continue;
@@ -114,13 +133,15 @@ export function normalizeThemeFile(raw: string, options: ThemeNormalizeOptions =
     if (!statements || !resolution.themes.some((theme) => theme.id === definition.id)) continue;
     const own = resolvedOwn(statements);
     const baseline = resolvedBaseline(definition.extends ? resolution.statements.get(definition.extends) : undefined);
-    const minimal = minimize(own, baseline);
+    const minimal = inherited.has(definition.id) ? own : minimize(own, baseline);
     const normalized = toDefinition(definition, minimal, definition.palette ?? {});
     themes.push(normalized);
     profiles[definition.id] = themeProfile(minimal);
   }
 
   if (diagnostics.length > 0) return { text: raw, changed: false, themes: [], profiles: {}, diagnostics };
+  const repainted = repaints(resolution, themes, options.builtinThemes ?? []);
+  if (repainted !== undefined) return { text: raw, changed: false, themes: [], profiles: {}, diagnostics: [repainted] };
   const text = `${JSON.stringify({ version: 1, themes }, null, 2)}\n`;
   return { text, changed: text !== raw, themes, profiles, diagnostics };
 }

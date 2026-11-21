@@ -100,6 +100,35 @@ describe('theme normalize', () => {
     expect(profile.reach).toEqual(['ui.accent']);
   });
 
+  it('keeps the palette entries the theme still references', async () => {
+    const theme = anchorThemeDefinition('alice/palette');
+    const palette = Object.fromEntries(Object.entries(theme.ui).map(([role, value]) => [`swatch-${role}`, value as string]));
+    const referenced = Object.fromEntries(Object.entries(theme.ui).map(([role]) => [role, { palette: `swatch-${role}` }]));
+    const result = normalizeThemeFile(file({ ...theme, palette, ui: referenced }));
+    const normalized = result.themes[0]!;
+
+    expect(Object.keys(normalized.palette ?? {}).length).toBeGreaterThan(0);
+    expect(await resolvedByCatalog(result.text)).toEqual(await resolvedByCatalog(file({ ...theme, palette, ui: referenced })));
+  });
+
+  it('leaves a base untouched when a theme in the same file overrides a chained token', async () => {
+    const base = anchorThemeDefinition('alice/base');
+    base.ui.card = '#111111';
+    const child: ThemeDefinition = {
+      id: 'alice/child',
+      name: 'Child',
+      colorScheme: 'dark',
+      extends: 'alice/base',
+      ui: { card: '#222222' },
+      editor: { surface: {}, syntax: {}, terminal: {} },
+    };
+    const raw = file(base, child);
+    const result = normalizeThemeFile(raw);
+
+    expect(result.diagnostics).toEqual([]);
+    expect(await resolvedByCatalog(result.text)).toEqual(await resolvedByCatalog(raw));
+  });
+
   it('reports the tokens it could not resolve instead of writing a file', () => {
     const broken = anchorThemeDefinition('alice/broken');
     delete broken.ui.background;

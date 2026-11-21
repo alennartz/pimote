@@ -359,6 +359,25 @@ describe('ThemeCatalog', () => {
     expect(snapshot.diagnostics.some((diagnostic) => diagnostic.path === '/extensions/bad.json')).toBe(true);
   });
 
+  it('reports one diagnostic per broken theme, not one per descendant', async () => {
+    const descendant = { ...theme('alice/descendant'), extends: 'alice/broken' };
+    const broken = theme('alice/broken');
+    delete broken.ui.background;
+    const reader = { read: async () => JSON.stringify({ version: 1, themes: [broken, descendant, { ...theme('alice/other'), extends: 'alice/descendant' }] }) };
+    const snapshot = await catalog({ reader }).load();
+
+    expect(snapshot.diagnostics.filter((diagnostic) => diagnostic.message.includes('ui.background'))).toHaveLength(1);
+    expect(snapshot.diagnostics).toHaveLength(3);
+  });
+
+  it('rejects an inheritance chain that runs too deep', async () => {
+    const chain = Array.from({ length: 100 }, (_, index) => ({ ...theme(`alice/level-${index}`), extends: index === 0 ? undefined : `alice/level-${index - 1}` })).reverse();
+    const reader = { read: async () => JSON.stringify({ version: 1, themes: chain }) };
+    const snapshot = await catalog({ reader }).load();
+
+    expect(snapshot.diagnostics.some((diagnostic) => diagnostic.message.includes('inheritance chain exceeds'))).toBe(true);
+  });
+
   it('accepts low-contrast colors without warnings', async () => {
     const lowContrast = theme('alice/low-contrast');
     lowContrast.ui.background = '#ffffff';

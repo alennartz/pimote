@@ -97,6 +97,10 @@ describe('design token graph', () => {
     expect(() => createTokenGraph({ tokens: ['a.a', 'a.b'], mandatory: ['a.a'], fallbacks: {} })).toThrow(/a\.b/);
   });
 
+  it('rejects a declared token that only the object prototype provides', () => {
+    expect(() => createTokenGraph({ tokens: ['toString', 'p.anchor'], mandatory: ['p.anchor'], fallbacks: {} })).toThrow(/toString/);
+  });
+
   it('accepts an injected graph that reaches its anchors', () => {
     const graph = createTokenGraph({ tokens: ['a.a', 'a.b', 'a.c'], mandatory: ['a.c'], fallbacks: { 'a.a': 'a.b', 'a.b': 'a.c' } });
 
@@ -124,6 +128,13 @@ describe('theme profile', () => {
     expect(profile.depth['editor.syntax']).toBe(0);
     expect(profile.histogram.ui[4]).toBe(1);
     expect(profile.histogram.ui[0]).toBe(uiAnchors);
+  });
+
+  it('reports a zero count for every depth a namespace does not reach', () => {
+    const profile = themeProfile(anchorValues({ 'ui.accent': '#303030' }));
+
+    expect(profile.histogram.ui).toHaveLength(5);
+    expect(profile.histogram.ui).toEqual([uiAnchors, 0, 0, 0, 1]);
   });
 
   it('lists the stated tokens whose fallback parent is unstated', () => {

@@ -53,6 +53,8 @@ const UI_TOKENS = UI_COLOR_TOKENS;
 const SURFACE_ROLES = EDITOR_SURFACE_ROLES;
 const TERMINAL_ROLES = ANSI_COLOR_NAMES;
 const BUILTIN_IDS: ReadonlySet<string> = new Set(BUILTIN_THEME_IDS);
+/** A theme cannot inherit through more levels than this. */
+const MAX_INHERITANCE_DEPTH = 64;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 /** The complete set of shipped theme definitions. */
@@ -240,17 +242,21 @@ export function resolveThemeDefinitions(entries: readonly SourceEntry[]): Resolv
   const resolvedPalettes = new Map<string, Record<string, string>>();
   const resolvedStatements = new Map<string, ResolvedThemeStatements>();
   const resolving: string[] = [];
-  const failed = new Set<number>();
+  const failedCandidates = new Set<number>();
+  const failedIds = new Set<string>();
 
   const resolveId = (id: string): ResolvedTheme | undefined => {
     const existing = resolved.get(id);
     if (existing) return existing;
+    if (failedIds.has(id)) return undefined;
     const options = candidates.get(id) ?? [];
     if (options.length === 0) return undefined;
     if (resolving.includes(id)) throw new Error(`inheritance cycle: ${[...resolving, id].join(' -> ')}`);
+    if (resolving.length >= MAX_INHERITANCE_DEPTH) throw new Error(`inheritance chain exceeds ${MAX_INHERITANCE_DEPTH} levels`);
     resolving.push(id);
     try {
       for (const candidate of options) {
+        if (failedCandidates.has(candidate.index)) continue;
         try {
           const definition = candidate.definition;
           const parent = definition.extends ? resolveId(definition.extends) : undefined;
@@ -293,10 +299,11 @@ export function resolveThemeDefinitions(entries: readonly SourceEntry[]): Resolv
           resolvedStatements.set(id, statements);
           return theme;
         } catch (error) {
-          failed.add(candidate.index);
+          failedCandidates.add(candidate.index);
           diagnostics.push({ path: candidate.path, message: error instanceof Error ? error.message : String(error), themeId: candidate.definition.id, source: candidate.source });
         }
       }
+      failedIds.add(id);
       return undefined;
     } finally {
       resolving.pop();
@@ -317,7 +324,6 @@ export function resolveThemeDefinitions(entries: readonly SourceEntry[]): Resolv
       }
     }
   }
-  void failed;
   const themes = entries
     .filter((entry) => resolved.has(entry.definition.id))
     .map((entry) => resolved.get(entry.definition.id)!)
