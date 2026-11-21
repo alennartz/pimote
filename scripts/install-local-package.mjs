@@ -60,6 +60,33 @@ async function assertPatchedPi(piPackageRoot) {
   if (preambleMarkers.some((marker) => !promptSource.includes(marker)) || promptSource.includes('|| name === "preamble"')) {
     throw new Error(`[pimote] Bundled Pi preamble override is not patched: ${promptPath}`);
   }
+
+  const bundleDirectory = join(piPackageRoot, 'dist', 'bundle', 'chunks');
+  const promptBundles = [];
+  for (const entry of await readdir(bundleDirectory, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.js')) continue;
+    const bundlePath = join(bundleDirectory, entry.name);
+    const bundleSource = await readFile(bundlePath, 'utf8');
+    const start = bundleSource.indexOf('function buildSystemPromptSections(');
+    if (start === -1) continue;
+    const end = bundleSource.indexOf('function buildSystemPromptState(', start);
+    if (end === -1) continue;
+    promptBundles.push({ path: bundlePath, source: bundleSource.slice(start, end) });
+  }
+
+  if (promptBundles.length !== 1) {
+    throw new Error(`[pimote] Could not find one bundled Pi prompt builder under ${bundleDirectory}`);
+  }
+
+  const [promptBundle] = promptBundles;
+  const bundleMarkers = [
+    'if(!SYSTEM_PROMPT_SECTION_NAME.test(name))throw new Error',
+    'promptSections.preamble=customSections.preamble??',
+    'content&&name!=="preamble"&&(promptSections[name]=content);',
+  ];
+  if (bundleMarkers.some((marker) => !promptBundle.source.includes(marker)) || promptBundle.source.includes('name==="preamble"')) {
+    throw new Error(`[pimote] Bundled Pi CLI preamble override is not patched: ${promptBundle.path}`);
+  }
 }
 
 function packPackage(cwd) {

@@ -95,17 +95,26 @@ describe('packed root package declares all server runtime dependencies', () => {
     expect(patchFiles).toContain(`@earendil-works+pi-coding-agent+${piVersion}.patch`);
   });
 
-  it('includes the preamble override in the bundled Pi patch', async () => {
+  it('includes the preamble override in both Pi runtime artifacts', async () => {
     const rootPackageJson = JSON.parse(await readFile(rootPackagePath, 'utf-8')) as {
       dependencies: Record<string, string>;
     };
     const piVersion = rootPackageJson.dependencies['@earendil-works/pi-coding-agent'];
     const patchPath = join(serverSrcDir, '..', '..', 'patches', `@earendil-works+pi-coding-agent+${piVersion}.patch`);
     const patch = await readFile(patchPath, 'utf-8');
+    const addedLines = patch
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('+') && !line.startsWith('+++'))
+      .join('\n');
 
     expect(patch).toContain('dist/core/system-prompt.js');
+    expect(patch).toContain('dist/bundle/chunks/');
     expect(patch).toContain('-        if (!SYSTEM_PROMPT_SECTION_NAME.test(name) || name === "preamble") {');
-    expect(patch).toContain('+            customSections.preamble ??');
-    expect(patch).toContain('+        if (content && name !== "preamble")');
+    expect(addedLines).toContain('+        if (!SYSTEM_PROMPT_SECTION_NAME.test(name)) {');
+    expect(addedLines).toContain('+            customSections.preamble ??');
+    expect(addedLines).toContain('+        if (content && name !== "preamble")');
+    expect(addedLines).toContain('if(!SYSTEM_PROMPT_SECTION_NAME.test(name))throw new Error');
+    expect(addedLines).toContain('promptSections.preamble=customSections.preamble??');
+    expect(addedLines).toContain('content&&name!=="preamble"&&(promptSections[name]=content);');
   });
 });

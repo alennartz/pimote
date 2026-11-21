@@ -46,7 +46,7 @@ jobs:
           npm install --ignore-scripts "./$PIMOTE_TARBALL"
           npx pimote help
           node --input-type=module - "$TMPDIR" <<'NODE'
-          import { readFile } from 'node:fs/promises';
+          import { readFile, readdir } from 'node:fs/promises';
           import { join } from 'node:path';
 
           const root = process.argv[2];
@@ -81,6 +81,33 @@ jobs:
           }
           if (promptSource.includes('|| name === "preamble"')) {
             throw new Error('Bundled Pi still rejects the preamble section');
+          }
+
+          const bundleDirectory = join(packageRoot, 'node_modules', '@earendil-works', 'pi-coding-agent', 'dist', 'bundle', 'chunks');
+          const promptBundles = [];
+          for (const entry of await readdir(bundleDirectory, { withFileTypes: true })) {
+            if (!entry.isFile() || !entry.name.endsWith('.js')) continue;
+            const bundlePath = join(bundleDirectory, entry.name);
+            const bundleSource = await readFile(bundlePath, 'utf8');
+            const start = bundleSource.indexOf('function buildSystemPromptSections(');
+            if (start === -1) continue;
+            const end = bundleSource.indexOf('function buildSystemPromptState(', start);
+            if (end === -1) continue;
+            promptBundles.push({ path: bundlePath, source: bundleSource.slice(start, end) });
+          }
+
+          if (promptBundles.length !== 1) {
+            throw new Error(`Could not find one bundled Pi prompt builder under ${bundleDirectory}`);
+          }
+
+          const [promptBundle] = promptBundles;
+          const bundleMarkers = [
+            'if(!SYSTEM_PROMPT_SECTION_NAME.test(name))throw new Error',
+            'promptSections.preamble=customSections.preamble??',
+            'content&&name!=="preamble"&&(promptSections[name]=content);',
+          ];
+          if (bundleMarkers.some((marker) => !promptBundle.source.includes(marker)) || promptBundle.source.includes('name==="preamble"')) {
+            throw new Error(`Bundled Pi CLI preamble override is not patched: ${promptBundle.path}`);
           }
           NODE
 
