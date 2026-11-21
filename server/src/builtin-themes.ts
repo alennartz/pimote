@@ -698,7 +698,7 @@ const draculaTheme = definePaletteTheme(
         'diff-deletion-background': 'diffDeletion',
       }),
       syntax: {
-        comment: 'foreground',
+        comment: 'comment',
         constant: 'purple',
         entity: 'purple',
         invalid: 'red',
@@ -886,7 +886,7 @@ const tokyoNightTheme = definePaletteTheme(
         'diff-deletion-background': 'diffDeletion',
       }),
       syntax: {
-        comment: 'foreground',
+        comment: 'comment',
         constant: 'orange',
         entity: 'blue',
         invalid: 'red',
@@ -1068,7 +1068,7 @@ const nordTheme = definePaletteTheme(
         'diff-deletion-background': 'diffDeletion',
       }),
       syntax: {
-        comment: 'foreground',
+        comment: 'comment',
         constant: 'purple',
         entity: 'frost',
         invalid: 'red',
@@ -1428,7 +1428,7 @@ const solarizedTheme = definePaletteTheme(
         'diff-deletion-background': 'diffDeletion',
       }),
       syntax: {
-        comment: 'foreground',
+        comment: 'comment',
         constant: 'magenta',
         entity: 'blue',
         invalid: 'red',
@@ -1787,7 +1787,7 @@ const catppuccinLatteTheme = definePaletteTheme(
         'diff-deletion-background': 'diffDeletion',
       }),
       syntax: {
-        comment: 'foreground',
+        comment: 'comment',
         constant: 'blue',
         entity: 'mauve',
         invalid: 'red',

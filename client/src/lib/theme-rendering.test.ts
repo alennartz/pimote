@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Compartment, EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { javascript } from '@codemirror/lang-javascript';
+import { markdown } from '@codemirror/lang-markdown';
 import { SYNTAX_SCOPES, editorPropertyName, type AnsiColorName, type ResolvedTheme } from '@pimote/shared';
 import { resolvedTheme } from '../../../shared/test/theme-fixtures.js';
 import { ansiToHtml } from './ansi-to-html.js';
@@ -104,6 +105,23 @@ describe('CodeMirror theme rendering', () => {
       expect(view.state.doc.toString()).toBe(code);
       expect(renderedColor(view.dom, 'background-color')).toBe(cssColor(dark.editor.surface.background));
       expectSyntaxColors(view.dom, dark);
+    } finally {
+      view.destroy();
+    }
+  });
+
+  it('renders markdown prose in the editor foreground and inline code in markup.raw', () => {
+    const theme = resolvedTheme('test/markdown');
+    theme.editor.surface.foreground = '#0a0b0c';
+    theme.editor.syntax['markup.raw'] = '#7b2d8e';
+    const parent = host();
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({ doc: 'plain words\n\nSmall `code span` here.\n', extensions: [markdown(), createCodeMirrorTheme(theme)] }),
+    });
+    try {
+      expect(renderedColor(tokenElement(view.contentDOM, 'plain words'))).toBe(cssColor(theme.editor.surface.foreground));
+      expect(renderedColor(tokenElement(view.contentDOM, 'code span'))).toBe(cssColor(theme.editor.syntax['markup.raw']));
     } finally {
       view.destroy();
     }

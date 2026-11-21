@@ -55,7 +55,6 @@ const syntaxTagRoles: Array<[unknown, SyntaxScope]> = [
   [tags.escape, 'constant.character.escape'],
   [tags.color, 'constant.other'],
   [tags.url, 'markup.underline.link'],
-  [tags.content, 'markup.raw'],
   [tags.monospace, 'markup.raw'],
   [tags.heading, 'markup.heading'],
   [tags.heading1, 'markup.heading'],
