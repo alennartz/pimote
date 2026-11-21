@@ -49,6 +49,8 @@ const MANAGER_TOOL_NAMES = [
   'pimote_update_folder',
   'pimote_update_hub_members',
   'pimote_disband_hub',
+  'pimote_set_theme',
+  'pimote_theme_demo',
 ];
 
 function spyPorts() {
@@ -70,6 +72,18 @@ function spyPorts() {
     },
     repos: { invalidateListing: vi.fn() },
     creators: { create: vi.fn(async () => ({ folderPath: '/w/created' })) },
+    themes: {
+      listKnownUsers: vi.fn(() => []),
+      setKnownUserTheme: vi.fn(async (user: string, themeId: string | null) => ({
+        user,
+        selectedThemeId: themeId,
+        activeThemeId: themeId ?? 'pimote/light',
+        themeName: 'Pimote Light',
+        colorScheme: 'light' as const,
+        source: 'builtin' as const,
+      })),
+      prepareDemo: vi.fn(async () => ({ folderPath: '/tmp/theme-demo', title: 'Theme demo', themeIds: [], diagnostics: [] })),
+    },
     notifyFoldersChanged: vi.fn(),
   };
 }
@@ -144,8 +158,8 @@ describe('createManagerExtension()', () => {
     expect(sessions.includeArchived).not.toHaveProperty('default');
   });
 
-  it('exposes every manager tool directly with a concise planner cue and named routing rules', () => {
-    for (const tool of register(spyPorts())) {
+  it('exposes every direct manager tool with a concise planner cue and named routing rules', () => {
+    for (const tool of register(spyPorts()).filter((candidate) => candidate.exposure === 'direct')) {
       expect(tool.exposure).toBe('direct');
       expect(tool.promptSnippet).not.toMatch(/[\r\n]/);
       expect(tool.promptSnippet).not.toContain(tool.name);

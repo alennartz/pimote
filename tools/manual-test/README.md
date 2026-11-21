@@ -622,8 +622,9 @@ stub pi `ExtensionAPI`, then executes the tools through a real
 `FolderRegistry` over a temp store with the production Git worktree adapter
 and activity guard, and hubs built by the real `createHub` (symlink hub:
 mkdir + absolute member symlinks + `git init` + root-anchored `.gitignore` +
-generated `AGENTS.md`). Asserts, without any LLM: the registered names are
-the nine-tool set including `pimote_disband_hub` (no `*_projects`, no retired
+generated `AGENTS.md`). Asserts, without any LLM: the registered names include
+the nine direct tools and two deferred theme tools, including `pimote_disband_hub`
+(no `*_projects`, no retired
 persona/search/repo/tree names), `pimote_find_folders` returns complete
 FolderInfo rows with schema defaults (hub rows carry their member repos and
 hub facts), `pimote_find_folders` nature-filtered rows serve the persona team

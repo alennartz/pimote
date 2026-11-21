@@ -352,6 +352,11 @@ export class UserProfiles {
     return true;
   }
 
+  /** Whether a persisted profile exists for one username. */
+  hasUser(user: string): boolean {
+    return Object.hasOwn(this.document.users, user);
+  }
+
   /** The user's saved theme override, or null when following the server default. */
   selectedTheme(user: string): string | null {
     return this.document.users[user]?.selectedThemeId ?? null;
@@ -364,6 +369,24 @@ export class UserProfiles {
     if ((profile.selectedThemeId ?? null) === normalized) return false;
     profile.selectedThemeId = normalized;
     await this.persistOrLog();
+    return true;
+  }
+
+  /** Persist one existing user's theme override and report write failures. */
+  async setSelectedThemeStrict(user: string, themeId: string | null): Promise<boolean> {
+    const profile = this.document.users[user];
+    if (!profile) throw new Error(`Unknown user: ${user}`);
+    const normalized = typeof themeId === 'string' && themeId.trim() ? themeId : null;
+    if ((profile.selectedThemeId ?? null) === normalized) return false;
+    const previous = profile.selectedThemeId;
+    profile.selectedThemeId = normalized;
+    try {
+      await this.persist();
+    } catch (error) {
+      if (previous === undefined) delete profile.selectedThemeId;
+      else profile.selectedThemeId = previous;
+      throw error;
+    }
     return true;
   }
 

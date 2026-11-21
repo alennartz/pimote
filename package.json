@@ -28,14 +28,17 @@
   "files": [
     "bin/pimote.js",
     "client/build/**",
+    "client/src/lib/highlight-theme.css",
     "server/dist/**/*.js",
+    "shared/src/**",
     "shared/dist/**/*.js",
     "shared/dist/**/*.d.ts",
     "README.md",
     "LICENSE",
     "docs/shipped/**",
     "packages/sdk/README.md",
-    "packages/sdk/docs/**"
+    "packages/sdk/docs/**",
+    "tools/theme-demo/index.html"
   ],
   "engines": {
     "node": ">=22.19.0"

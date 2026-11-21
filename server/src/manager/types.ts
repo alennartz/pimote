@@ -1,4 +1,4 @@
-import type { FolderInfo, HubMemberRepresentation } from '../../../shared/dist/index.js';
+import type { FolderInfo, HubMemberRepresentation, ThemeDiagnostic, ThemeSourceKind, UserSummary } from '../../../shared/dist/index.js';
 import type { PimoteConfig } from '../config.js';
 
 /** Live snapshot of one open session, as the manager tools see it. */
@@ -161,6 +161,34 @@ export interface CodeFolderCreationPort {
   create(input: CodeFolderCreateInput): Promise<{ folderPath: string }>;
 }
 
+/** The compact result returned after changing one known user's theme. */
+export interface ManagerThemeAssignment {
+  user: string;
+  selectedThemeId: string | null;
+  activeThemeId: string;
+  themeName: string;
+  colorScheme: 'light' | 'dark';
+  source: ThemeSourceKind;
+}
+
+/** A prepared theme-demo bundle before the static-host tool registers it. */
+export interface ManagerThemeDemoBundle {
+  folderPath: string;
+  title: string;
+  themeIds: string[];
+  diagnostics: ThemeDiagnostic[];
+}
+
+/** Theme administration and draft-preview seam for manager tools. */
+export interface ManagerThemePort {
+  /** Persisted profiles only. A call never creates a user. */
+  listKnownUsers(): UserSummary[];
+  /** Validate and persist a theme for an already-known user. */
+  setKnownUserTheme(user: string, themeId: string | null): Promise<ManagerThemeAssignment>;
+  /** Prepare a static bundle containing every valid theme in one file. */
+  prepareDemo(themeFile: string, signal?: AbortSignal): Promise<ManagerThemeDemoBundle>;
+}
+
 /**
  * Everything the manager extension's pimote toolset may act through. Tools
  * act only via these ports — never raw fs, never the real server internals.
@@ -175,6 +203,7 @@ export interface ManagerToolContext {
   folders: FolderRegistryPort;
   repos: RepoIndexPort;
   creators: CodeFolderCreationPort;
+  themes: ManagerThemePort;
   /** Broadcast a `folders_changed` delta to every connected client — the same
    *  channel the ws-handler `create_folder` flow uses. Paired with
    *  `repos.invalidateListing()` after a creation that bypasses the registry

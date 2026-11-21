@@ -14,6 +14,8 @@ export interface ThemeCatalogPort {
 export interface ThemePreferencePort {
   selectedTheme(user: string): string | null;
   setSelectedTheme(user: string, themeId: string | null): Promise<boolean>;
+  hasUser?(user: string): boolean;
+  setSelectedThemeStrict?(user: string, themeId: string | null): Promise<boolean>;
 }
 
 export interface ThemePreferencesOptions {
@@ -41,6 +43,16 @@ export class ThemePreferences {
       throw new Error(`Unknown theme: ${themeId}`);
     }
     await this.options.profiles.setSelectedTheme(user, themeId);
+    return this.resolve(user);
+  }
+
+  /** Validate and persist a selection for one existing profile. */
+  async setKnownUserTheme(user: string, themeId: string | null): Promise<ThemeSelection> {
+    if (this.options.profiles.hasUser?.(user) !== true || !this.options.profiles.setSelectedThemeStrict) throw new Error(`Unknown user: ${user}`);
+    if (themeId !== null && !this.getCatalog().themes.some((theme) => theme.id === themeId)) {
+      throw new Error(`Unknown theme: ${themeId}`);
+    }
+    await this.options.profiles.setSelectedThemeStrict(user, themeId);
     return this.resolve(user);
   }
 

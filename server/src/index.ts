@@ -1,4 +1,4 @@
-import { basename, dirname, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { mkdir, readFile, realpath } from 'node:fs/promises';
 import { watch } from 'node:fs';
 import { homedir } from 'node:os';
@@ -26,7 +26,7 @@ import { listExternalPiWorkingDirectories } from './takeover.js';
 import { createCodeFolder } from './folder-create.js';
 import { seedManagerRoot } from './manager/index.js';
 import type { ManagerToolContext, SessionArchiveOutcome, SessionResumeOutcome } from './manager/index.js';
-import { createManagerExtension } from './manager/index.js';
+import { createManagerExtension, createManagerThemePort } from './manager/index.js';
 import { createPimoteDocsExtension } from './pimote-docs/index.js';
 import { PushNotificationService } from './push-notification.js';
 import { FilePushSubscriptionStore, WebPushSender, migratePushSubscriptionStore } from './push-infrastructure.js';
@@ -41,6 +41,7 @@ import {
   PIMOTE_STATIC_HOST_DIR,
   PIMOTE_USER_PROFILES_PATH,
   PIMOTE_THEMES_PATH,
+  PIMOTE_STATE_DIR,
 } from './paths.js';
 import { FileSessionMetadataStore } from './session-metadata.js';
 import { buildVoiceOrchestrator } from './voice-orchestrator-boot.js';
@@ -49,6 +50,8 @@ import { bootstrapFileDownloads } from './file-download/bootstrap.js';
 import { getVersion } from './version.js';
 import { createUpdateChecker, fetchLatestVersionFromNpm, type UpdateChecker } from './update-check.js';
 import { ThemeCatalog } from './theme-catalog.js';
+import { ThemePreferences } from './theme-preferences.js';
+import { readThemeFile, ThemeDemoBuilder } from './theme-demo-builder.js';
 import { builtinThemeDefinitions } from './builtin-themes.js';
 
 export interface StartOptions {
@@ -129,6 +132,12 @@ export async function main(options: StartOptions = {}) {
     },
   });
   await themeCatalog.load();
+  const themeDemoBuilder = new ThemeDemoBuilder({
+    outputRoot: join(PIMOTE_STATE_DIR, 'theme-demos'),
+    builtinThemes: builtinThemeDefinitions(),
+    extensionFiles: () => pimoteExtensionHost.getRegistry().themeFiles ?? [],
+    reader: { read: readThemeFile },
+  });
   const folderTree: FolderModelPort = {
     tree: () => repoIndex.tree(),
   };
@@ -161,6 +170,7 @@ export async function main(options: StartOptions = {}) {
     await userProfiles.gc(validSessionIds);
   }
   await userProfiles.dropAllViews();
+  const managerThemePreferences = new ThemePreferences({ catalog: themeCatalog, profiles: userProfiles });
   const staticHostRegistry = new InMemoryStaticHostRegistry();
   const staticHostStore = new FileStaticHostStore(PIMOTE_STATIC_HOST_DIR);
   const staticHostFactory = createStaticHostExtension({ registry: staticHostRegistry, store: staticHostStore });
@@ -390,6 +400,12 @@ export async function main(options: StartOptions = {}) {
     creators: {
       create: (input) => createCodeFolder(input.root, input.name, input.body),
     },
+    themes: createManagerThemePort({
+      profiles: userProfiles,
+      preferences: managerThemePreferences,
+      broadcastUserThemeChanged: (user) => WsHandler.broadcastUserSessionsChanged(userProfiles, managerClientRegistryRef.current, user),
+      prepareDemo: (themeFile, signal) => themeDemoBuilder.prepare(themeFile, signal),
+    }),
     // Folder-change fan-out for manager folder creations (`pimote_create_persona`):
     // the same delta channel the ws-handler `create_folder` flow uses. The tool
     // pairs it with `repos.invalidateListing()` so the delta carries the new row.

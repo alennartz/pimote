@@ -37,6 +37,21 @@ describe('ThemePreferences', () => {
     await expect(service('pimote/dark').setTheme('alice', null)).resolves.toMatchObject({ selectedThemeId: null, activeThemeId: 'pimote/light' });
   });
 
+  it('uses strict persistence for an existing-user administration change', async () => {
+    let calledWith: [string, string | null] | undefined;
+    const setSelectedThemeStrict = async (user: string, themeId: string | null) => {
+      calledWith = [user, themeId];
+      return true;
+    };
+    const prefs = new ThemePreferences({
+      catalog: { snapshot: () => ({ revision: 1, defaultThemeId: 'pimote/light', themes: [resolvedTheme('pimote/light')], diagnostics: [] }) },
+      profiles: { selectedTheme: () => null, setSelectedTheme: async () => true, hasUser: () => true, setSelectedThemeStrict },
+    });
+
+    await expect(prefs.setKnownUserTheme('alice', 'pimote/light')).resolves.toMatchObject({ activeThemeId: 'pimote/light' });
+    expect(calledWith).toEqual(['alice', 'pimote/light']);
+  });
+
   it('rejects IDs that are not in the current catalog', async () => {
     const prefs = service('pimote/dark');
     await expect(prefs.setTheme('alice', 'missing/theme')).rejects.toThrow();

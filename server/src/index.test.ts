@@ -466,6 +466,8 @@ describe('main — manager toolset port wiring', () => {
         'pimote_find_sessions',
         'pimote_start_session',
         'pimote_resume_session',
+        'pimote_set_theme',
+        'pimote_theme_demo',
         'pimote_archive_sessions',
         'pimote_create_folder',
         'pimote_update_folder',
@@ -592,7 +594,7 @@ describe('main — manager toolset port wiring', () => {
     expect(firstClient).toHaveBeenCalledWith(expect.objectContaining({ type: 'session_opened', sessionId: 'sess-9', folder: alphaFolder }));
     expect(secondClient).toHaveBeenCalledWith(expect.objectContaining({ type: 'session_opened', sessionId: 'sess-9', folder: alphaFolder }));
     expect(withMessage.structuredContent).toEqual({ sessionId: 'sess-9', folderPath: '/workspace/alpha', firstMessageSent: true });
-    expect(tools).toHaveLength(9);
+    expect(tools).toHaveLength(11);
   });
 
   it('broadcasts an already-open manager resume to every client', async () => {

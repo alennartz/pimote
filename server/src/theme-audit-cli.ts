@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { builtinThemeDefinitions } from './builtin-themes.js';
 import { ThemeCatalog, type ThemeCatalogOptions } from './theme-catalog.js';
 import { auditClientMappings, auditThemes, declaredEditorProperties, formatThemeAudit } from './theme-audit.js';
@@ -58,8 +59,8 @@ function usage(): string {
   return [
     'Usage: npm run audit:themes -- [options] [theme-file ...]',
     '',
-    'Audits the eleven built-in themes by default. Theme files are loaded as extension sources',
-    'and are checked with the built-ins, including inheritance and palette resolution.',
+    'Audits the built-in themes by default. When a theme file is supplied, only its valid',
+    'themes are audited; built-ins remain available as inheritance and palette bases.',
     '',
     'Options:',
     '  --file PATH             Add a version 1 theme file to the audit.',
@@ -80,8 +81,9 @@ async function main(): Promise<void> {
   }
 
   const snapshot = await loadThemes(options.files);
-  const report = auditThemes(snapshot.themes);
-  const repositoryRoot = process.cwd().endsWith('/server') ? join(process.cwd(), '..') : process.cwd();
+  const themes = options.files.length > 0 ? snapshot.themes.filter((theme) => theme.source === 'extension') : snapshot.themes;
+  const report = auditThemes(themes);
+  const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url));
   const highlightThemeCss = await readFile(join(repositoryRoot, 'client/src/lib/highlight-theme.css'), 'utf8');
   const mappingFindings = auditClientMappings(highlightThemeCss, declaredEditorProperties());
   if (options.json) {

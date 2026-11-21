@@ -110,6 +110,10 @@ _Avoid_: account
 **User profile**:
 The server-side per-user open-session set persisted in `user-profiles.json`. A user's connections reconcile against it; a user with no profile yet is fresh.
 
+**Known user**:
+A Pimote username with a persisted user-profile entry. Theme administration accepts only known users; a connection identity alone does not create one.
+_Avoid_: account
+
 **Optimistic entry**:
 A user message the composer shows before the server echoes it, keyed by a `clientMessageId`. The echo stamped with that id replaces it; a prompt outcome other than `started` removes it.
 _Avoid_: pending message (that is a **queued message**)

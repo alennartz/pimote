@@ -9,7 +9,7 @@
 // symlinks + `git init` + `.gitignore` + generated AGENTS.md).
 //
 // Covers, hard and without an LLM: the manager toolset registers by name
-// (nine tools, including the restored `pimote_disband_hub`; no `*_projects`
+// (nine direct tools plus two deferred theme tools, including the restored `pimote_disband_hub`; no `*_projects`
 // or retired persona/search/repo/tree names survive),
 // pimote_find_folders returns complete FolderInfo rows with schema defaults
 // (and the nature filter serves the team view; hub rows carry their member
@@ -240,6 +240,9 @@ async function main() {
   const tools = new Map();
   const piStub = {
     registerTool: (spec) => tools.set(spec.name, spec),
+    on: () => {},
+    getActiveTools: () => [],
+    setActiveTools: () => {},
   };
   createManagerExtension(context)(piStub);
   const names = [...tools.keys()];
@@ -255,7 +258,10 @@ async function main() {
     'pimote_disband_hub',
   ];
   for (const name of expected) assert(tools.has(name), `tool registered: ${name}`);
-  assert(names.length === 9, `the toolset registers exactly nine tools (got: ${names.length})`);
+  assert(tools.get('pimote_set_theme')?.exposure === 'deferred', 'theme assignment is deferred');
+  assert(tools.get('pimote_theme_demo')?.exposure === 'deferred', 'theme demo is deferred');
+  assert(names.length === 11, `the toolset registers nine direct and two deferred tools (got: ${names.length})`);
+  assert([...tools.values()].filter((tool) => tool.exposure === 'direct').length === 9, 'the direct manager toolset remains nine tools');
   assert(!names.some((name) => name.includes('project')), `no registered tool name contains "project" (got: ${names.join(', ')})`);
   assert(
     ![

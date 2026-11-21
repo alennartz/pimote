@@ -321,7 +321,7 @@ session, folder archive/restore, the
 unscanned-cwd session fallback and legacy `multiRepo` registry read-compat
 probes);
 `tools/manual-test/manager-tools-smoke/` drives the manager toolset
-deterministically (registration of the nine-tool set + execution against real
+deterministically (registration of the nine direct tools plus two deferred theme tools + execution against real
 ports, no LLM; worktree creation, representation-aware membership edits, and
 the guarded disband rejections and success run in an isolated fixture, so the
 tree stays intact when `MTMS_ROOT` is set) to

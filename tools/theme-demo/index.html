@@ -908,7 +908,7 @@
         </aside>
       </div>
 
-      <footer>Loaded from the current server theme catalog and client mapping source files. Restart the demo server after source edits.</footer>
+      <footer>Loaded from the supplied theme file and the current Pimote theme contracts.</footer>
     </main>
     <script type="module">
       const data = await fetch('./themes.json').then((response) => response.json());
@@ -930,7 +930,7 @@
         })
         .join('\n');
       document.head.append(snippetStyles);
-      for (const [name, html] of Object.entries(data.snippets)) {
+      for (const [name, html] of Object.entries(data.snippets ?? {})) {
         document.querySelector(`#${name}-snippet`).innerHTML = html;
       }
       const themeById = new Map(data.themes.map((theme) => [theme.id, theme]));
@@ -998,21 +998,32 @@
         const luminance = (0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]) / 255;
         return luminance > 0.52 ? '#111' : '#fff';
       }
+      function renderSwatches(container, entries) {
+        container.replaceChildren();
+        for (const [name, value] of entries) {
+          const swatch = document.createElement('div');
+          swatch.className = 'swatch';
+          swatch.style.setProperty('--swatch', value);
+          swatch.style.setProperty('--swatch-fg', swatchForeground(value));
+          const label = document.createElement('small');
+          label.textContent = name.replace(/^(ansi|terminal)-/, '');
+          const code = document.createElement('code');
+          code.textContent = value;
+          swatch.append(label, code);
+          container.append(swatch);
+        }
+      }
       function renderPalette(theme) {
         const entries = Object.entries(data.palettes[theme.id] ?? {});
         const isAnsi = ([name]) => name.startsWith('ansi-') || name.startsWith('terminal-');
-        const swatch = ([name, value]) =>
-          `<div class="swatch" style="--swatch: ${value}; --swatch-fg: ${swatchForeground(value)}"><small>${name.replace(/^(ansi|terminal)-/, '')}</small><code>${value}</code></div>`;
-        palette.innerHTML = entries
-          .filter(([name]) => !isAnsi([name]))
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(swatch)
-          .join('');
-        ansiPalette.innerHTML = entries
-          .filter(isAnsi)
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(swatch)
-          .join('');
+        renderSwatches(
+          palette,
+          entries.filter(([name]) => !isAnsi([name])).sort(([left], [right]) => left.localeCompare(right)),
+        );
+        renderSwatches(
+          ansiPalette,
+          entries.filter(isAnsi).sort(([left], [right]) => left.localeCompare(right)),
+        );
       }
       const sessionFolderIcon = `<svg class="folder-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 6-5 6 5 6" /><path d="m16 6 5 6-5 6" /><path d="m13.5 4-3 16" /></svg>`;
       function renderSessionChips() {

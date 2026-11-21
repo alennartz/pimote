@@ -6,10 +6,11 @@ Run the built-in theme audit with:
 npm run audit:themes
 ```
 
-The command checks all built-in themes by default. Pass one or more version 1 theme files to include extension or user themes:
+The command checks all built-in themes by default. Pass one or more version 1 theme files to audit only those valid themes while using the built-ins as inheritance bases:
 
 ```sh
 npm run audit:themes -- --file /path/to/themes.json
+node <package-root>/server/dist/theme-audit-cli.js --file /path/to/themes.json --json
 ```
 
 Use `--json` for machine-readable findings. Use `--warnings-as-errors` when a check must reject warnings as well as errors.

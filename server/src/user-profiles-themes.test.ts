@@ -60,6 +60,14 @@ describe('UserProfiles — theme selection', () => {
     expect(profiles.isFresh('alice')).toBe(false);
   });
 
+  it('rejects strict theme changes for an unknown user without creating a profile', async () => {
+    const profiles = new UserProfiles(storePath());
+    await profiles.load();
+
+    await expect(profiles.setSelectedThemeStrict('alice', 'pimote/dark')).rejects.toThrow('Unknown user: alice');
+    expect(profiles.summaries()).toEqual([]);
+  });
+
   it('does not change another user when one profile changes theme', async () => {
     const profiles = new UserProfiles(storePath());
     await profiles.load();

@@ -165,8 +165,8 @@ export function parseThemeFile(raw: string, path: string): { definitions: ThemeD
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch (error) {
-    return { definitions: [], diagnostics: [{ path, message: `invalid JSON: ${error instanceof Error ? error.message : String(error)}` }], valid: false };
+  } catch {
+    return { definitions: [], diagnostics: [{ path, message: 'invalid JSON' }], valid: false };
   }
   if (!isRecord(parsed) || parsed.version !== 1 || !Array.isArray(parsed.themes)) {
     return { definitions: [], diagnostics: [{ path, message: 'theme file must contain version 1 and a themes array' }], valid: false };

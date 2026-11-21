@@ -1,8 +1,9 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import type { ThemeDefinition } from '../../shared/dist/index.js';
 import { builtinThemeDefinitions } from './builtin-themes.js';
 import { parseThemeFile, resolveThemeDefinitions } from './theme-catalog.js';
 import { normalizeThemeFile } from './theme-normalize.js';
+import { writeEditableFile } from './file-edit.js';
 
 interface CliOptions {
   files: string[];
@@ -92,7 +93,7 @@ async function main(): Promise<void> {
       for (const diagnostic of result.diagnostics) console.error(`${diagnostic.path}: ${diagnostic.message}`);
     }
     if (options.check && result.changed) failed = true;
-    if (options.write && result.changed) await writeFile(path, result.text);
+    if (options.write && result.changed) await writeEditableFile(path, result.text);
     report.push({ path, changed: result.changed, profiles: result.profiles, diagnostics: result.diagnostics, text: options.check || options.write ? undefined : text });
 
     if (options.json || options.check || options.write) continue;

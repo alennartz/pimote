@@ -1,5 +1,7 @@
 # Theme files for extensions
 
+The canonical token names live in `shared/src/themes.ts`. The mandatory tokens and fallback graph live in `shared/src/design-tokens.ts`. Installed packages also ship the runtime artifacts at `shared/dist/themes.js` and `shared/dist/design-tokens.js`. Extension theme files must use those definitions instead of copying token lists or fallback edges.
+
 A process-global Pimote extension can register a read-only theme file:
 
 ```ts

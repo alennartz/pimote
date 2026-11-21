@@ -10,10 +10,12 @@ import { spillRows } from './spill.js';
 import type { FolderInfo } from '../../../shared/dist/index.js';
 import { MEMORY_MAINTENANCE_INSTRUCTION, seedPersonaFolder } from './seed.js';
 import type { CreateFolderKind, ManagedSessionSummary, ManagerToolContext, SessionResumeOutcome } from './types.js';
+import { registerManagerThemeTools } from './theme-tools.js';
 
 /**
  * Build the pi `ExtensionFactory` for the manager extension (DR-062: one
- * small, powerful tool surface). Registers the manager's nine pimote tools,
+ * small, powerful tool surface). Registers the manager's nine direct tools and
+ * two deferred theme tools,
  * acting only through the injected `ManagerToolContext`. Folder recipes and
  * the folder model reach the manager through the `pimote-docs` section.
  *
@@ -734,5 +736,7 @@ export function createManagerExtension(context: ManagerToolContext): ExtensionFa
         }
       },
     });
+
+    registerManagerThemeTools(pi, context);
   };
 }

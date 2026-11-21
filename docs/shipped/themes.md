@@ -2,6 +2,10 @@
 
 Pimote themes pair the dashboard palette with editor and terminal colors. The selected theme is stored per Pimote username. A user can follow the server default or save an override.
 
+## Canonical implementation
+
+The canonical token names live in `shared/src/themes.ts`. The mandatory tokens and fallback graph live in `shared/src/design-tokens.ts`. Tools and theme files must use those definitions instead of copying token lists or fallback edges. Installed packages also ship the runtime artifacts at `shared/dist/themes.js` and `shared/dist/design-tokens.js`.
+
 ## Theme files
 
 User and extension files use one versioned JSON document:
@@ -98,6 +102,19 @@ npm run theme:normalize -- theme.json --report
 Pimote loads built-ins, extension files in deterministic discovery order, then `$XDG_CONFIG_HOME/pimote/themes.json` (normally `~/.config/pimote/themes.json`). The first valid definition for an ID wins. Extension and user definitions cannot replace a built-in ID. Invalid entries produce diagnostics and do not block other sources. An invalid user edit leaves its last valid contribution active. Cycles, missing inheritance bases, unknown palette swatches, missing mandatory tokens, and invalid CSS colors reject only the affected theme. The runtime catalog does not enforce contrast. Run `npm run audit:themes` to check the current consumer pairings.
 
 The ten built-ins are `pimote/light`, `pimote/dark`, `pimote/dracula`, `pimote/tokyo-night`, `pimote/nord`, `pimote/gruvbox-dark`, `pimote/solarized-light`, `pimote/catppuccin-mocha`, `pimote/catppuccin-latte`, and `pimote/everforest-medium-dark`. Their IDs use `pimote` as publisher, regardless of palette origin, in the stable `publisher/theme-name` form. Previous IDs remain accepted in native defaults, saved selections, and inheritance references.
+
+## Manager workflows
+
+A manager can discover `pimote_set_theme` to change a known user's saved selection. The tool rejects an unknown or ambiguous user and never creates a profile. A manager can discover `pimote_theme_demo` to host every valid theme in a draft file as a static visual preview.
+
+Audit and normalization remain package scripts. Run them from any working directory with the installed package root:
+
+```sh
+node <package-root>/server/dist/theme-audit-cli.js --file /absolute/path/themes.json --json
+node <package-root>/server/dist/theme-normalize-cli.js --write --json /absolute/path/themes.json
+```
+
+The audit reports only themes from the supplied file while using built-ins as inheritance bases. Normalization writes only when the file has no diagnostics and preserves the resolved palette.
 
 ## Defaults and profiles
 

@@ -92,7 +92,7 @@ Use **New session** to start in any discovered folder, or create a folder from t
 
 Worktree members must be clean before removal. The dashboard and manager can disband marked worktree hubs only. Pimote closes idle, observerless sessions first, then checks activity, generated hub content, checkout cleanliness, and detached-`HEAD` reachability. It never merges or deletes branches.
 
-The manager is a persona folder at `managerRoot`. Its persisted sessions use a nine-tool Pimote surface for folder and session management. The surface includes dashboard folder mutations, guarded worktree-hub disband, unified session search, and explicit resume by ID. Shipped folder docs describe the folder model, topology recipes, and tool behavior. Every session lists those docs in its system prompt.
+The manager is a persona folder at `managerRoot`. Its persisted sessions use nine direct Pimote tools for folder and session management plus two deferred theme tools. The surface includes dashboard folder mutations, guarded worktree-hub disband, unified session search, explicit resume by ID, known-user theme assignment, and static theme previews. Shipped folder and theme docs describe the model, recipes, and workflows. Every session lists those docs in its system prompt.
 
 ### Sessions
 
