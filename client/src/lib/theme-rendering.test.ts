@@ -127,6 +127,33 @@ describe('CodeMirror theme rendering', () => {
     }
   });
 
+  it('colours each heading level, the prose marks, and emphasis styles apart', () => {
+    const theme = resolvedTheme('test/markdown');
+    theme.editor.syntax['markup.punctuation'] = '#3a7f00';
+    theme.editor.syntax['markup.heading.1'] = '#aa0000';
+    theme.editor.syntax['markup.heading.2'] = '#0000aa';
+    const parent = host();
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: '# Title\n\n## Section\n\n- item with *emph* and **strong**\n',
+        extensions: [markdown(), createCodeMirrorTheme(theme)],
+      }),
+    });
+    try {
+      expect(renderedColor(tokenElement(view.contentDOM, 'Title'))).toBe(cssColor(theme.editor.syntax['markup.heading.1']));
+      expect(renderedColor(tokenElement(view.contentDOM, 'Section'))).toBe(cssColor(theme.editor.syntax['markup.heading.2']));
+      expect(renderedColor(tokenElement(view.contentDOM, 'item with'))).toBe(cssColor(theme.editor.syntax['markup.list']));
+      for (const mark of ['#', '##', '-'].flatMap((text) => [...view.contentDOM.querySelectorAll('span')].filter((span) => span.textContent === text))) {
+        expect(renderedColor(mark), mark.textContent ?? '').toBe(cssColor(theme.editor.syntax['markup.punctuation']));
+      }
+      expect(getComputedStyle(tokenElement(view.contentDOM, 'emph')).fontStyle).toBe('italic');
+      expect(['bold', '700']).toContain(getComputedStyle(tokenElement(view.contentDOM, 'strong')).fontWeight);
+    } finally {
+      view.destroy();
+    }
+  });
+
   it('fills search matches and marks the selected match with the selection', () => {
     const parent = host();
     const view = new EditorView({
