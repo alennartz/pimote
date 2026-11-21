@@ -723,7 +723,7 @@ const draculaTheme = definePaletteTheme(
         'markup.heading': 'purple',
         'markup.inserted': 'foreground',
         'markup.italic': 'yellow',
-        'markup.list': 'cyan',
+        'markup.list': 'foreground',
         'markup.quote': 'yellow',
         'markup.raw': 'green',
         'markup.strikethrough': 'comment',
