@@ -92,6 +92,8 @@ const MUTUALLY_EXCLUSIVE_STATE_COLOR_GROUPS: ReadonlyArray<{
   rule: string;
   context: string;
   surface: UiColorToken;
+  luminanceStateId?: string;
+  minimumLuminanceContrast?: number;
   states: ReadonlyArray<{ id: string; label: string; role: UiColorToken }>;
 }> = [
   {
@@ -108,6 +110,8 @@ const MUTUALLY_EXCLUSIVE_STATE_COLOR_GROUPS: ReadonlyArray<{
     rule: 'ui.session-chip.selected',
     context: 'selected session chip',
     surface: 'primary',
+    luminanceStateId: 'attention',
+    minimumLuminanceContrast: 1.5,
     states: [
       { id: 'idle', label: 'idle', role: 'primary-foreground' },
       { id: 'streaming', label: 'streaming', role: 'status-streaming-on-primary' },
@@ -148,7 +152,6 @@ const STATUS_TINT_AMOUNT = 0.1;
 const ANSI_TEXT_MINIMUM = 2;
 const SURFACE_SEPARATION_MINIMUM = 1.2;
 const STATE_COLOR_DIFFERENCE_MINIMUM = 10;
-const SELECTED_IDLE_ATTENTION_LUMINANCE_MINIMUM = 1.5;
 
 const DIFF_MAPPING_CONTRACTS = [
   { rule: 'mapping.editor.diff.addition-background', token: '--pimote-editor-diff-addition-background' },
@@ -259,20 +262,38 @@ function auditMutuallyExclusiveStateColors(findings: ThemeAuditFinding[], theme:
         const firstColor = opaqueColor(theme.ui[first.role], theme.ui[group.surface]);
         const secondColor = opaqueColor(theme.ui[second.role], theme.ui[group.surface]);
         const deltaE = firstColor.deltaE(secondColor, '2000');
-        if (deltaE >= STATE_COLOR_DIFFERENCE_MINIMUM) continue;
-        findings.push({
-          themeId: theme.id,
-          themeName: theme.name,
-          rule: `${group.rule}.${first.id}-vs-${second.id}`,
-          relation: 'pair',
-          relationship: `${first.label} vs ${second.label} on ${group.context}`,
-          metric: 'deltaE2000',
-          deltaE,
-          minimum: STATE_COLOR_DIFFERENCE_MINIMUM,
-          firstColor: theme.ui[first.role],
-          secondColor: theme.ui[second.role],
-          severity: 'error',
-        });
+        if (deltaE < STATE_COLOR_DIFFERENCE_MINIMUM) {
+          findings.push({
+            themeId: theme.id,
+            themeName: theme.name,
+            rule: `${group.rule}.${first.id}-vs-${second.id}`,
+            relation: 'pair',
+            relationship: `${first.label} vs ${second.label} on ${group.context}`,
+            metric: 'deltaE2000',
+            deltaE,
+            minimum: STATE_COLOR_DIFFERENCE_MINIMUM,
+            firstColor: theme.ui[first.role],
+            secondColor: theme.ui[second.role],
+            severity: 'error',
+          });
+        }
+        if (
+          group.minimumLuminanceContrast !== undefined &&
+          group.luminanceStateId &&
+          (first.id === group.luminanceStateId || second.id === group.luminanceStateId) &&
+          firstColor.contrast(secondColor, 'WCAG21') < group.minimumLuminanceContrast
+        ) {
+          auditPair(
+            findings,
+            theme,
+            `${group.rule}.${first.id}-vs-${second.id}.luminance`,
+            `${first.label} vs ${second.label} luminance separation on ${group.context}`,
+            firstColor.toString(),
+            secondColor.toString(),
+            group.minimumLuminanceContrast,
+            theme.ui[group.surface],
+          );
+        }
       }
     }
   }
@@ -321,19 +342,6 @@ function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
     auditPair(findings, theme, rule.rule, rule.relationship, ui[rule.foreground], ui[rule.background], rule.minimum, ui.background);
   }
   auditMutuallyExclusiveStateColors(findings, theme);
-  const selectedIdleColor = opaqueColor(ui['primary-foreground'], ui.primary).toString();
-  const selectedAttentionColor = opaqueColor(ui['status-reconnecting-on-primary'], ui.primary).toString();
-  auditPair(
-    findings,
-    theme,
-    'ui.session-chip.selected.idle-vs-attention-luminance',
-    'idle vs needs-attention luminance separation on selected session chip',
-    selectedIdleColor,
-    selectedAttentionColor,
-    SELECTED_IDLE_ATTENTION_LUMINANCE_MINIMUM,
-    ui.primary,
-  );
-
   auditPair(
     findings,
     theme,

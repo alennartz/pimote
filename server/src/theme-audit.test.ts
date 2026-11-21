@@ -117,14 +117,14 @@ describe('theme audit', () => {
     expect([...selectedFindings, ...unselectedFindings].every(({ severity }) => severity === 'error')).toBe(true);
   });
 
-  it('flags nearly identical brightness when selected idle and attention colors differ by hue', () => {
+  it('flags similarly bright selected streaming and attention colors', () => {
     const theme = resolvedTheme('test/light');
     theme.ui.primary = '#E95678';
     theme.ui['primary-foreground'] = '#16161C';
     theme.ui['status-streaming-on-primary'] = 'oklch(0.98 0.02 161.7)';
-    theme.ui['status-reconnecting-on-primary'] = 'oklch(0.34 0.0907 47.949)';
+    theme.ui['status-reconnecting-on-primary'] = 'oklch(0.981 0.0907 47.949)';
 
-    const findings = auditThemes([theme]).findings.filter(({ rule }) => rule === 'ui.session-chip.selected.idle-vs-attention-luminance');
+    const findings = auditThemes([theme]).findings.filter(({ rule }) => rule === 'ui.session-chip.selected.streaming-vs-attention.luminance');
 
     expect(findings).toEqual([expect.objectContaining({ metric: 'contrast', minimum: 1.5, severity: 'error' })]);
   });
