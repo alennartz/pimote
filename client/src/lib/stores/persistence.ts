@@ -1,10 +1,11 @@
 // Persistence — browser-storage helpers for client session state.
-// The client id lives in sessionStorage (per tab, survives reload); everything
-// else is shared localStorage state.
+// Per-tab state lives in sessionStorage and survives a page reload. Shared
+// preferences and the migration seed live in localStorage.
 // All setters silently swallow errors (quota exceeded, private browsing, etc.).
-// Getters return null / empty array on missing or corrupted data.
+// Getters return null / empty values on missing or corrupted data.
 
 const KEY_CLIENT_ID = 'pimote:clientId';
+const KEY_SESSION_DRAFTS = 'pimote:sessionDrafts';
 const KEY_ACTIVE_SESSIONS = 'pimote:activeSessions';
 const KEY_USER = 'pimote:user';
 const KEY_SHOW_ARCHIVED = 'pimote:showArchived';
@@ -15,6 +16,38 @@ const KEY_DISMISSED_UPDATE_VERSION = 'pimote:dismissedUpdateVersion';
 export interface PersistedSession {
   sessionId: string;
   folderPath: string;
+}
+
+/** Client-owned composer state for one session. It stays per tab so two tabs
+ *  can edit the same server session without sharing unsent text. */
+export interface SessionDraft {
+  text: string;
+}
+
+const emptySessionDraft = (): SessionDraft => ({ text: '' });
+
+function sessionDraftKey(sessionId: string): string {
+  const user = getUser();
+  return `${user?.trim() || 'default'}\u0000${sessionId}`;
+}
+
+function readSessionDrafts(): Record<string, SessionDraft> {
+  try {
+    const raw = sessionStorage.getItem(KEY_SESSION_DRAFTS);
+    if (raw === null) return Object.create(null) as Record<string, SessionDraft>;
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return Object.create(null) as Record<string, SessionDraft>;
+    const drafts = Object.create(null) as Record<string, SessionDraft>;
+    for (const [sessionId, value] of Object.entries(parsed)) {
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+      const candidate = value as { text?: unknown };
+      const text = typeof candidate.text === 'string' ? candidate.text : '';
+      if (text !== '') drafts[sessionId] = { text };
+    }
+    return drafts;
+  } catch {
+    return Object.create(null) as Record<string, SessionDraft>;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -40,6 +73,32 @@ export function setClientId(id: string): void {
   } catch {
     // best-effort
   }
+}
+
+// ---------------------------------------------------------------------------
+// Session drafts (per tab — sessionStorage)
+// ---------------------------------------------------------------------------
+
+export function getSessionDraft(sessionId: string): SessionDraft {
+  const draft = readSessionDrafts()[sessionDraftKey(sessionId)];
+  return draft ? { text: draft.text } : emptySessionDraft();
+}
+
+export function setSessionDraft(sessionId: string, draft: SessionDraft): void {
+  try {
+    const drafts = readSessionDrafts();
+    const key = sessionDraftKey(sessionId);
+    if (draft.text === '') delete drafts[key];
+    else drafts[key] = { text: draft.text };
+    if (Object.keys(drafts).length === 0) sessionStorage.removeItem(KEY_SESSION_DRAFTS);
+    else sessionStorage.setItem(KEY_SESSION_DRAFTS, JSON.stringify(drafts));
+  } catch {
+    // best-effort
+  }
+}
+
+export function clearSessionDraft(sessionId: string): void {
+  setSessionDraft(sessionId, emptySessionDraft());
 }
 
 // ---------------------------------------------------------------------------

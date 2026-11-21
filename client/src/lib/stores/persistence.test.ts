@@ -58,6 +58,9 @@ const {
   setShowArchived,
   getSessionPillSwipeHintShown,
   setSessionPillSwipeHintShown,
+  getSessionDraft,
+  setSessionDraft,
+  clearSessionDraft,
 } = await import('./persistence.js');
 
 describe('Persistence — Client ID', () => {
@@ -191,6 +194,33 @@ describe('Persistence — Active Sessions', () => {
 
     expect(getActiveSessions()).toEqual([]);
     expect(mockLocalStorage.getItem('pimote:activeSessions')).toBeNull();
+  });
+});
+
+describe('Persistence — Session drafts', () => {
+  it('round-trips text through per-tab sessionStorage', () => {
+    setSessionDraft('s1', { text: 'unsent prompt' });
+
+    expect(getSessionDraft('s1')).toEqual({ text: 'unsent prompt' });
+    expect(mockLocalStorage.getItem('pimote:sessionDrafts')).toBeNull();
+  });
+
+  it('keeps drafts isolated by session id and user profile', () => {
+    setSessionDraft('s1', { text: 'first' });
+    setUser('other');
+
+    expect(getSessionDraft('s2')).toEqual({ text: '' });
+    expect(getSessionDraft('s1')).toEqual({ text: '' });
+  });
+
+  it('clears one session draft without touching another', () => {
+    setSessionDraft('s1', { text: 'first' });
+    setSessionDraft('s2', { text: 'second' });
+
+    clearSessionDraft('s1');
+
+    expect(getSessionDraft('s1')).toEqual({ text: '' });
+    expect(getSessionDraft('s2')).toEqual({ text: 'second' });
   });
 });
 

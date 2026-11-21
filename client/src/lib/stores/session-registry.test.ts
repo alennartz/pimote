@@ -68,6 +68,27 @@ describe('SessionRegistry', () => {
       expect(registry.sessions['s1'].projectName).toBe('pimote');
     });
 
+    it('restores the composer draft when a profile session is re-adopted after reload', () => {
+      const values = new Map<string, string>();
+      const storage = {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => values.set(key, value),
+        removeItem: (key: string) => values.delete(key),
+      } as unknown as Storage;
+      vi.stubGlobal('sessionStorage', storage);
+      try {
+        registry.addSession('s1', '/path', 'proj');
+        registry.setDraftText('s1', 'unsent prompt');
+
+        const reloaded = new SessionRegistry();
+        reloaded.addSession('s1', '/path', 'proj', { restoreDraft: true });
+
+        expect(reloaded.sessions.s1.draftText).toBe('unsent prompt');
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
     it('removeSession() deletes the entry', () => {
       registry.addSession('s1', '/path', 'proj');
       registry.removeSession('s1');

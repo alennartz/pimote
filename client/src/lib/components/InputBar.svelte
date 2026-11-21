@@ -57,7 +57,7 @@
   const commandItems = $derived(commandStore.getCommands(activeSurfaceKey).filter((command) => command.name !== 'new'));
 
   function setSurfaceDraft(text: string): void {
-    if (conversation) conversation.draftText = text;
+    if (conversation) sessionRegistry.setDraftText(conversation.sessionId, text, { notify: false });
   }
 
   function getSurfaceDraft(): string {
@@ -348,8 +348,7 @@
     const isCurrent = () => sessionRegistry.viewedConversation?.sessionId === sessionId;
 
     function clearSubmittedComposer(preserveImages = false): void {
-      const session = sessionRegistry.getSessionState(sessionId);
-      if (session) session.draftText = '';
+      sessionRegistry.setDraftText(sessionId, '', { notify: false });
       if (!isCurrent()) return;
       inputText = '';
       autocompleteVisible = false;
@@ -417,7 +416,7 @@
           return;
         }
         const session = sessionRegistry.getSessionState(sessionId);
-        if (session?.draftText === submittedDraft) session.draftText = '';
+        if (session?.draftText === submittedDraft) sessionRegistry.setDraftText(sessionId, '', { notify: false });
         if (!session || !isCurrent() || inputText !== submittedDraft) return;
         inputText = '';
         autocompleteVisible = false;

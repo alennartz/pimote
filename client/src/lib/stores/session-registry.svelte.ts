@@ -74,7 +74,7 @@ import { downloadUi } from './download-ui.svelte.js';
 import { coordinateDownloadUpdate } from '../download-coordinator.js';
 import { followDecision, moveChipOrder, projectChipOrder, type UserSessionFacts } from './user-session-facts.js';
 import { handleDownloadNotificationIntent, type DownloadNotificationIntent } from '../download-notification-intent.js';
-import { getActiveSessions } from './persistence.js';
+import { clearSessionDraft, getActiveSessions, getSessionDraft, setSessionDraft } from './persistence.js';
 import { summarizeAssistantRowUsage, type ToolResultUsageIndex } from '../assistant-row-usage.js';
 import { isMobileViewport } from '../mobile-viewport.svelte.js';
 import { shouldNavigateStaticReportInCurrentTab } from '../static-report-navigation.js';
@@ -563,6 +563,7 @@ export interface PerSessionState {
   lifetimeCostUsd: number;
   /** Category rollup from persisted usage entries, when supplied by the server. */
   usageBreakdown?: PimoteUsageBreakdown;
+  /** Client-owned composer text, persisted per tab across reloads. */
   draftText: string;
   pendingSteeringMessages: string[];
   lastBotActivityTimestamp: string | null;
@@ -1127,11 +1128,27 @@ export class SessionRegistry {
     };
   }
 
-  /** Save draft text for a session and notify a mounted composer, if any. */
-  setDraftText(sessionId: string, text: string): void {
+  private persistDraft(session: PerSessionState): void {
+    setSessionDraft(session.sessionId, { text: session.draftText });
+  }
+
+  /** Restore client-owned composer state when a session is adopted after a
+   * page reload. Existing in-memory entries are never overwritten. */
+  hydrateSessionDraft(sessionId: string): void {
     const session = this.getSessionState(sessionId);
-    if (session) session.draftText = text;
-    setEditorText(sessionId, text);
+    if (!session) return;
+    const draft = getSessionDraft(sessionId);
+    session.draftText = draft.text;
+  }
+
+  /** Save draft text for a session and optionally notify a mounted composer. */
+  setDraftText(sessionId: string, text: string, options?: { notify?: boolean }): void {
+    const session = this.getSessionState(sessionId);
+    if (session) {
+      session.draftText = text;
+      this.persistDraft(session);
+    }
+    if (options?.notify !== false) setEditorText(sessionId, text);
   }
 
   private applySubagentHierarchySnapshot(event: SubagentSnapshotEvent): void {
@@ -1278,13 +1295,14 @@ export class SessionRegistry {
     const rebind = current !== undefined && (current.sessionId !== snapshot.childSessionId || current.incarnation !== snapshot.incarnation);
     if (current && !current.closed && !rebind && snapshot.viewCursor <= current.viewCursor) return current;
     const attachment = current && !rebind ? current : this.createSubagentAttachment(snapshot.sessionId, snapshot);
-    attachment.draftText = current?.draftText ?? '';
+    attachment.draftText = current?.draftText ?? attachment.draftText;
     attachment.incarnation = snapshot.incarnation;
     attachment.sessionId = snapshot.childSessionId;
     attachment.viewCursor = snapshot.viewCursor;
     attachment.closed = false;
     attachment.closeReason = undefined;
     root.attachments[key] = attachment;
+    if (!current) this.hydrateSessionDraft(snapshot.childSessionId);
     this.applySessionEvent(attachment, { ...snapshot, type: 'full_resync', sessionId: snapshot.childSessionId });
     return this.getSubagentAttachment(snapshot.sessionId, snapshot.path);
   }
@@ -1842,9 +1860,10 @@ export class SessionRegistry {
   }
 
   /** Add a session to the registry. If it already exists, resets it. Lifecycle pushes upsert separately. */
-  addSession(sessionId: string, folderPath: string, projectName: string): void {
+  addSession(sessionId: string, folderPath: string, projectName: string, options?: { restoreDraft?: boolean }): void {
     this.clearBashOutputBytes(sessionId);
     this.sessions[sessionId] = this.createSessionState(sessionId, folderPath, projectName);
+    if (options?.restoreDraft) this.hydrateSessionDraft(sessionId);
   }
 
   /** Mark a tracked session as restorable or keep its transcript out of reconnect restores. */
@@ -2569,7 +2588,7 @@ export async function openExistingSession(sessionId: string, folderPath: string 
   const projectName = folderPath ? folderPath.split('/').pop() || 'Unknown' : 'Unknown';
   const shouldSwitch = opts?.switchTo !== false;
   const alreadyTracked = !!sessionRegistry.sessions[sessionId];
-  if (!alreadyTracked) sessionRegistry.addSession(sessionId, folderPath ?? '', projectName);
+  if (!alreadyTracked) sessionRegistry.addSession(sessionId, folderPath ?? '', projectName, { restoreDraft: true });
   connection.addSubscribedSession(sessionId, folderPath ?? '');
   if (shouldSwitch) sessionRegistry.switchTo(sessionId);
 
@@ -2639,7 +2658,7 @@ function attachOpenedSession(event: SessionOpenedEvent): void {
   const folderPath = folder?.path ?? '';
   const existing = sessionRegistry.sessions[sessionId];
   if (!existing) {
-    sessionRegistry.addSession(sessionId, folderPath, folder?.name ?? 'Unknown');
+    sessionRegistry.addSession(sessionId, folderPath, folder?.name ?? 'Unknown', { restoreDraft: true });
   } else if (folderPath && existing.folderPath !== folderPath) {
     sessionRegistry.setSessionFolder(sessionId, folderPath);
   }
@@ -2697,7 +2716,7 @@ async function reconcileNewSessionResponse(tempId: string, response: PimoteRespo
   const folder = data?.folder;
   const projectName = folder?.name ?? folderPath.split('/').pop() ?? 'Unknown';
   const realState = sessionRegistry.sessions[realId];
-  if (!realState) sessionRegistry.addSession(realId, folderPath, projectName);
+  if (!realState) sessionRegistry.addSession(realId, folderPath, projectName, { restoreDraft: true });
   if (folderPath) sessionRegistry.setSessionFolder(realId, folderPath);
   if (folder) sessionRegistry.bindSessionFolder(realId, folder);
   connection.addSubscribedSession(realId, folderPath);
@@ -2792,6 +2811,7 @@ connection.onEvent((event) => {
       break;
     }
     case 'session_closed': {
+      clearSessionDraft(event.sessionId);
       removeSessionLocally(event.sessionId);
       // The ordered close push is authoritative. A later legitimate session
       // with this identity can now attach normally.
@@ -2837,7 +2857,7 @@ connection.onSessionRestored = (sessionId, data) => {
   if (!sessionRegistry.sessions[sessionId]) {
     if (!connection.subscribedSessions.has(sessionId)) return;
     const folderPath = data.folderPath ?? connection.subscribedSessions.get(sessionId) ?? '';
-    sessionRegistry.addSession(sessionId, folderPath, folderPath.split('/').pop() || 'Unknown');
+    sessionRegistry.addSession(sessionId, folderPath, folderPath.split('/').pop() || 'Unknown', { restoreDraft: true });
   }
   if (data.folderPath) sessionRegistry.setSessionFolder(sessionId, data.folderPath);
   if (data.folder) sessionRegistry.bindSessionFolder(sessionId, data.folder);
@@ -2875,7 +2895,7 @@ connection.onSessionDropped = (sessionId) => {
 // render the session empty forever.
 connection.onReconcileAdopt = (sessionId, folderPath) => {
   if (sessionRegistry.sessions[sessionId]) return;
-  sessionRegistry.addSession(sessionId, folderPath, folderPath.split('/').pop() || 'Unknown');
+  sessionRegistry.addSession(sessionId, folderPath, folderPath.split('/').pop() || 'Unknown', { restoreDraft: true });
 };
 
 connection.onSessionArchived = (sessionId) => {
@@ -2925,7 +2945,7 @@ connection.onReconnected = () => {
 const persistedSessions = getActiveSessions();
 for (const { sessionId, folderPath } of persistedSessions) {
   const projectName = folderPath.split('/').pop() || 'Unknown';
-  sessionRegistry.addSession(sessionId, folderPath, projectName);
+  sessionRegistry.addSession(sessionId, folderPath, projectName, { restoreDraft: true });
   connection.addSubscribedSession(sessionId, folderPath);
 }
 
@@ -2949,6 +2969,7 @@ export async function abortSession(sessionId: string): Promise<void> {
 /** Remove a session from the client before its server command settles. */
 export function removeSessionOptimistically(sessionId: string): boolean {
   if (!sessionRegistry.sessions[sessionId]) return false;
+  clearSessionDraft(sessionId);
   if (cancelNewSession(sessionId)) return true;
   removeSessionLocally(sessionId);
   return true;
