@@ -31,10 +31,9 @@ describe('ThemeCatalog', () => {
         'pimote/catppuccin-mocha',
         'pimote/catppuccin-latte',
         'pimote/everforest-medium-dark',
-        'pimote/horizon',
       ]),
     );
-    expect(snapshot.themes.filter((entry) => entry.source === 'builtin')).toHaveLength(11);
+    expect(snapshot.themes.filter((entry) => entry.source === 'builtin')).toHaveLength(10);
     const required = theme('fixture/theme');
     for (const entry of snapshot.themes) {
       expect(Object.keys(entry.ui)).toEqual(expect.arrayContaining(Object.keys(required.ui)));
@@ -70,7 +69,6 @@ describe('ThemeCatalog', () => {
     ['pimote/catppuccin-mocha', '#a6e3a1', '#fab387', '#fab387', '#f38ba8', '#a6e3a1'],
     ['pimote/catppuccin-latte', '#40a02b', '#fe640b', '#fe640b', '#d20f39', '#40a02b'],
     ['pimote/everforest-medium-dark', '#A7C080', '#DBBC7F', '#E69875', '#E67E80', '#A7C080'],
-    ['pimote/horizon', '#27D796', '#FAB795', '#FAB795', '#F43E5C', '#29D398'],
   ] as const)('uses palette-aligned semantic statuses and ANSI green for %s', async (id, success, warning, reconnecting, error, ansiGreen) => {
     const service = catalog({ builtinThemes: builtinThemeDefinitions() });
     const snapshot = await service.load();
