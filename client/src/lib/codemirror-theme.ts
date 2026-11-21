@@ -57,12 +57,12 @@ const syntaxTagRoles: Array<[unknown, SyntaxScope]> = [
   [tags.url, 'markup.underline.link'],
   [tags.monospace, 'markup.raw'],
   [tags.heading, 'markup.heading'],
-  [tags.heading1, 'markup.heading'],
-  [tags.heading2, 'markup.heading'],
-  [tags.heading3, 'markup.heading'],
-  [tags.heading4, 'markup.heading'],
-  [tags.heading5, 'markup.heading'],
-  [tags.heading6, 'markup.heading'],
+  [tags.heading1, 'markup.heading.1'],
+  [tags.heading2, 'markup.heading.2'],
+  [tags.heading3, 'markup.heading.3'],
+  [tags.heading4, 'markup.heading.4'],
+  [tags.heading5, 'markup.heading.5'],
+  [tags.heading6, 'markup.heading.6'],
   [tags.contentSeparator, 'markup'],
   [tags.list, 'markup.list'],
   [tags.quote, 'markup.quote'],
@@ -77,14 +77,27 @@ const syntaxTagRoles: Array<[unknown, SyntaxScope]> = [
   [tags.meta, 'meta'],
   [tags.documentMeta, 'meta'],
   [tags.annotation, 'meta'],
-  [tags.processingInstruction, 'meta'],
+  [tags.processingInstruction, 'markup.punctuation'],
 ];
+
+/** Markdown emphasis carries its own font style, as it does in every editor. */
+function emphasisStyle(scope: SyntaxScope): { fontStyle?: string; fontWeight?: string } {
+  if (scope === 'markup.italic') return { fontStyle: 'italic' };
+  if (scope === 'markup.bold') return { fontWeight: 'bold' };
+  return {};
+}
 
 /** Create a CodeMirror theme for one paired Pimote editor palette. */
 export function createCodeMirrorTheme(theme: ResolvedTheme): Extension {
   const surface = theme.editor.surface;
   const syntax = theme.editor.syntax;
-  const highlight = HighlightStyle.define(syntaxTagRoles.map(([tag, scope]) => ({ tag: tag as Parameters<typeof HighlightStyle.define>[0][number]['tag'], color: syntax[scope] })));
+  const highlight = HighlightStyle.define(
+    syntaxTagRoles.map(([tag, scope]) => ({
+      tag: tag as Parameters<typeof HighlightStyle.define>[0][number]['tag'],
+      color: syntax[scope],
+      ...emphasisStyle(scope),
+    })),
+  );
   return [
     EditorView.theme(
       {
@@ -102,9 +115,7 @@ export function createCodeMirrorTheme(theme: ResolvedTheme): Extension {
         '.cm-activeLineGutter': { backgroundColor: surface['active-line'], color: surface['active-line-number'] },
         '.cm-matchingBracket': { backgroundColor: surface['matching-bracket'] },
         '.cm-searchMatch': {
-          backgroundColor: 'transparent',
-          textDecoration: `underline 2px ${surface['search-match']}`,
-          textUnderlineOffset: '2px',
+          backgroundColor: surface['search-match'],
         },
         '.cm-searchMatch-selected': { backgroundColor: surface.selection, color: surface['selection-foreground'], textDecoration: 'none' },
       },

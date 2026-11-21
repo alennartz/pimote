@@ -145,6 +145,13 @@ export const SYNTAX_CHILDREN = [
   'keyword.control',
   'keyword.operator',
   'markup.heading',
+  'markup.heading.1',
+  'markup.heading.2',
+  'markup.heading.3',
+  'markup.heading.4',
+  'markup.heading.5',
+  'markup.heading.6',
+  'markup.punctuation',
   'markup.list',
   'markup.quote',
   'markup.italic',
@@ -211,6 +218,16 @@ export function editorPropertyName(token: SyntaxScope | EditorSurfaceRole): stri
 /** The root group a scope inherits its color from. */
 export function syntaxScopeRoot(scope: SyntaxScope): SyntaxRoot {
   return scope.split('.')[0] as SyntaxRoot;
+}
+
+/** The scope a child inherits from: its nearest parent scope, or its root group. */
+export function syntaxParentScope(scope: SyntaxScope): SyntaxScope {
+  const parts = scope.split('.');
+  for (let length = parts.length - 1; length > 0; length -= 1) {
+    const candidate = parts.slice(0, length).join('.');
+    if ((SYNTAX_SCOPES as readonly string[]).includes(candidate)) return candidate as SyntaxScope;
+  }
+  return scope;
 }
 
 /** Theme-file aliases for the flat role names that predate the root groups. */

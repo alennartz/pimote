@@ -1,6 +1,6 @@
 import Color from 'colorjs.io';
 import type { DesignToken, ResolvedTheme, SyntaxScope, UiColorToken } from '../../shared/dist/index.js';
-import { EDITOR_SURFACE_ROLES, editorPropertyName, REQUIRED_SYNTAX_ROOTS, SYNTAX_CHILDREN, SYNTAX_SCOPES, syntaxScopeRoot } from '../../shared/dist/index.js';
+import { EDITOR_SURFACE_ROLES, editorPropertyName, REQUIRED_SYNTAX_ROOTS, SYNTAX_CHILDREN, SYNTAX_SCOPES, syntaxParentScope } from '../../shared/dist/index.js';
 
 export type ThemeAuditSeverity = 'warning' | 'error';
 export type ThemeAuditRelation = 'pair' | 'triple';
@@ -354,12 +354,12 @@ function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
   auditPair(findings, theme, 'editor.code-surface', 'editor foreground on sunken code surface', surface.foreground, ui['surface-sunken'], 4.5, ui.background);
   auditPair(findings, theme, 'editor.selection', 'selection foreground on selection', surface['selection-foreground'], surface.selection, 4.5, surface.background);
   auditPair(findings, theme, 'editor.matching-bracket', 'editor foreground on matching bracket', surface.foreground, surface['matching-bracket'], 3, surface.background);
-  auditPair(findings, theme, 'editor.search-match-marker', 'search-match marker on editor background', surface['search-match'], surface.background, 3, surface.background);
+  auditPair(findings, theme, 'editor.search-match-marker', 'search highlight against editor background', surface['search-match'], surface.background, 1.2, surface.background);
 
   for (const root of REQUIRED_SYNTAX_ROOTS) auditSyntax(findings, theme, root);
   for (const child of SYNTAX_CHILDREN) {
     if (DIFF_ROLES.some(({ role }) => role === child)) continue;
-    if (syntax[child] === syntax[syntaxScopeRoot(child)]) continue;
+    if (syntax[child] === syntax[syntaxParentScope(child)]) continue;
     auditSyntax(findings, theme, child);
   }
 

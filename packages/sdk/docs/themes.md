@@ -37,13 +37,13 @@ The `editor.syntax` map uses the TextMate root groups. A standalone theme requir
 
 `comment`, `constant`, `entity`, `invalid`, `keyword`, `markup`, `storage`, `string`, `support`, `variable`.
 
-Child scopes are optional. An unset child takes its root color:
+Child scopes are optional. An unset child takes its nearest parent scope, or its root color when it has none. `markup.heading.1` to `.6` refine `markup.heading`, and `markup.punctuation` covers the prose marks (`#`, list bullets, quote marks, emphasis marks, backticks, and link brackets):
 
 - `comment`: `comment.documentation`
 - `constant`: `constant.numeric`, `constant.language`, `constant.character.escape`, `constant.other`
 - `entity`: `entity.name.function`, `entity.name.function.macro`, `entity.name.type`, `entity.name.tag`, `entity.name.namespace`, `entity.name.label`, `entity.other.attribute-name`
 - `keyword`: `keyword.control`, `keyword.operator`
-- `markup`: `markup.heading`, `markup.list`, `markup.quote`, `markup.italic`, `markup.bold`, `markup.underline.link`, `markup.raw`, `markup.strikethrough`, `markup.inserted`, `markup.deleted`, `markup.changed`
+- `markup`: `markup.heading`, `markup.heading.1` to `markup.heading.6`, `markup.punctuation`, `markup.list`, `markup.quote`, `markup.italic`, `markup.bold`, `markup.underline.link`, `markup.raw`, `markup.strikethrough`, `markup.inserted`, `markup.deleted`, `markup.changed`
 - `storage`: `storage.type`, `storage.modifier`
 - `string`: `string.quoted`, `string.regexp`, `string.other`
 - `support`: `support.function`, `support.type`, `support.constant`, `support.variable`

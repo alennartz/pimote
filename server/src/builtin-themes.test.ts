@@ -84,7 +84,7 @@ describe('built-in theme mappings', () => {
     });
     expect(themes.find((theme) => theme.id === 'pimote/everforest-medium-dark')).toMatchObject({
       ui: { background: '#2D353B', primary: '#A7C080', 'status-connected': '#A7C080' },
-      editor: { surface: { selection: '#543A48' }, syntax: { string: '#A7C080', keyword: '#E67E80' }, terminal: { green: '#A7C080' } },
+      editor: { surface: { selection: '#475258c0' }, syntax: { string: '#A7C080', keyword: '#E67E80' }, terminal: { green: '#A7C080' } },
     });
   });
 

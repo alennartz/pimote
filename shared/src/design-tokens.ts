@@ -5,7 +5,7 @@ import {
   SYNTAX_CHILDREN,
   SYNTAX_SCOPES,
   UI_COLOR_TOKENS,
-  syntaxScopeRoot,
+  syntaxParentScope,
   type AnsiColorName,
   type EditorSurfaceRole,
   type SyntaxScope,
@@ -151,7 +151,7 @@ export const TOKEN_FALLBACKS: Readonly<Partial<Record<DesignToken, DesignToken>>
 };
 
 function syntaxChildFallbacks(): Readonly<Record<string, SyntaxDesignToken>> {
-  return Object.fromEntries(SYNTAX_CHILDREN.map((scope) => [`editor.syntax.${scope}`, `editor.syntax.${syntaxScopeRoot(scope)}` as SyntaxDesignToken]));
+  return Object.fromEntries(SYNTAX_CHILDREN.map((scope) => [`editor.syntax.${scope}`, `editor.syntax.${syntaxParentScope(scope)}` as SyntaxDesignToken]));
 }
 
 function brightTerminalFallbacks(): Readonly<Record<string, TerminalDesignToken>> {

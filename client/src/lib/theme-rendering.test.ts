@@ -127,7 +127,7 @@ describe('CodeMirror theme rendering', () => {
     }
   });
 
-  it('uses an underline for search matches and selection for the selected match', () => {
+  it('fills search matches and marks the selected match with the selection', () => {
     const parent = host();
     const view = new EditorView({
       parent,
@@ -142,11 +142,11 @@ describe('CodeMirror theme rendering', () => {
     view.contentDOM.append(match, selected);
     try {
       const matchStyle = getComputedStyle(match);
-      expect(matchStyle.backgroundColor).toBe('rgba(0, 0, 0, 0)');
-      expect(matchStyle.textDecoration).toContain('underline');
+      expect(matchStyle.backgroundColor).toBe(cssColor(light.editor.surface['search-match']));
+      expect(getComputedStyle(match).textDecoration).not.toContain('underline');
       expect(renderedColor(selected, 'background-color')).toBe(cssColor(light.editor.surface.selection));
       expect(renderedColor(selected)).toBe(cssColor(light.editor.surface['selection-foreground']));
-      expect(getComputedStyle(selected).textDecoration).toBe('none');
+      expect(getComputedStyle(selected).textDecoration).not.toContain('underline');
     } finally {
       view.destroy();
     }
