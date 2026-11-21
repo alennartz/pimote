@@ -123,12 +123,12 @@
   }
 
   function isMessageAttachedToAwait(message: SubagentContentBlock, awaitBlock: SubagentContentBlock): boolean {
-    const messageEntryId = placementValue(message, 'entryId');
-    const awaitEntryId = placementValue(awaitBlock, 'entryId');
-    if (messageEntryId !== undefined && awaitEntryId !== undefined) return messageEntryId === awaitEntryId;
     const messageToolCallId = placementValue(message, 'toolCallId');
     const awaitToolCallId = placementValue(awaitBlock, 'toolCallId');
-    return messageToolCallId !== undefined && awaitToolCallId !== undefined && messageToolCallId === awaitToolCallId;
+    if (messageToolCallId !== undefined && awaitToolCallId !== undefined) return messageToolCallId === awaitToolCallId;
+    const messageEntryId = placementValue(message, 'entryId');
+    const awaitEntryId = placementValue(awaitBlock, 'entryId');
+    return messageEntryId !== undefined && awaitEntryId !== undefined && messageEntryId === awaitEntryId;
   }
 
   function relatedMessagesFor(awaitBlock: SubagentContentBlock, content: readonly PimoteMessageContent[]): SubagentContentBlock[] {

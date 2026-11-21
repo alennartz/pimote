@@ -80,21 +80,17 @@ describe('subagent transcript projector', () => {
       state: 'complete',
       data: { operation: 'await', parameters: {}, result: { statuses: [], interrupted: true } },
     });
-    current.acceptNativeEvent({
-      type: 'entry_appended',
-      entry: { type: 'message', id: 'await-result-entry', message: { role: 'toolResult', toolCallId: 'await-call', toolName: 'await_agents' } },
-    } as unknown as IncomingSdkEvent);
     current.acceptProviderEvent({
       type: 'subagent_snapshot_event',
       eventId: 'await-message',
       cursor: cursor(2),
-      target: { operationId: 'incoming-message', kind: 'message_received', path: [], placement: { entryId: 'await-result-entry' } },
+      target: { operationId: 'incoming-message', kind: 'message_received', path: [], placement: { toolCallId: 'await-call', contentIndex: 1 } },
       state: 'complete',
       data: { operation: 'send', result: { from: ['worker'], to: [], message: 'Please inspect the failure.' } },
     });
 
     const incoming = current.snapshot().messages[0]?.content.find((block) => block.type === 'subagent' && block.operationId === 'incoming-message');
-    expect(incoming).toMatchObject({ placement: { toolCallId: 'await-call', contentIndex: 1, entryId: 'await-result-entry' } });
+    expect(incoming).toMatchObject({ placement: { toolCallId: 'await-call', contentIndex: 1 } });
   });
 
   it('projects an interrupting message attached to a hidden await result into the assistant row', () => {

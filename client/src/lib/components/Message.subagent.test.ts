@@ -311,7 +311,7 @@ describe('subagent transcript cards', () => {
         'aborted',
       ),
       operationId: 'await-call',
-      placement: { toolCallId: 'await-call', contentIndex: 0 } as const,
+      placement: { toolCallId: 'await-call', contentIndex: 0, entryId: 'assistant-entry' } as const,
     };
     const incoming = {
       ...operation(
