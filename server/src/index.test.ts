@@ -111,6 +111,10 @@ vi.mock('./session-records.js', async (importOriginal) => ({
 }));
 vi.mock('./folder-model/index.js', () => ({ scanFolderModel: mocks.scanFolderModel }));
 vi.mock('node:fs/promises', async (importOriginal) => ({ ...(await importOriginal()), realpath: mocks.realpath, mkdir: mocks.mkdir }));
+vi.mock('node:fs', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:fs')>()),
+  watch: vi.fn(() => ({ close: vi.fn() })),
+}));
 vi.mock('./manager/index.js', async (importOriginal) => ({ ...(await importOriginal()), seedManagerRoot: mocks.seedManagerRoot }));
 vi.mock('./session-manager.js', () => ({
   PimoteSessionManager: {
