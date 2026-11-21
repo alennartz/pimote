@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { builtinThemeDefinitions } from '../../server/src/builtin-themes.js';
 import { ThemeCatalog } from '../../server/src/theme-catalog.js';
-import { auditClientMappings, auditThemes } from '../../server/src/theme-audit.js';
+import { auditClientMappings, auditThemes, declaredEditorProperties } from '../../server/src/theme-audit.js';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 const port = Number(process.env.PORT ?? process.argv[2] ?? 4173);
@@ -25,7 +25,7 @@ async function loadPayload(): Promise<object> {
     themes: snapshot.themes,
     palettes: Object.fromEntries(definitions.map((definition) => [definition.id, definition.palette ?? {}])),
     audit: auditThemes(snapshot.themes),
-    mappingFindings: auditClientMappings(css),
+    mappingFindings: auditClientMappings(css, declaredEditorProperties()),
   };
   await catalog.close();
   return payload;
