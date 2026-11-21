@@ -886,7 +886,7 @@ const tokyoNightTheme = definePaletteTheme(
         'diff-deletion-background': 'diffDeletion',
       }),
       syntax: {
-        comment: 'comment',
+        comment: 'ansi-bright-black',
         constant: 'orange',
         entity: 'blue',
         invalid: 'red',
@@ -1428,7 +1428,7 @@ const solarizedTheme = definePaletteTheme(
         'diff-deletion-background': 'diffDeletion',
       }),
       syntax: {
-        comment: 'comment',
+        comment: 'ansi-bright-green',
         constant: 'magenta',
         entity: 'blue',
         invalid: 'red',
@@ -1787,7 +1787,7 @@ const catppuccinLatteTheme = definePaletteTheme(
         'diff-deletion-background': 'diffDeletion',
       }),
       syntax: {
-        comment: 'comment',
+        comment: 'darkForeground',
         constant: 'blue',
         entity: 'mauve',
         invalid: 'red',
