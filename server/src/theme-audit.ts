@@ -148,6 +148,7 @@ const STATUS_TINT_AMOUNT = 0.1;
 const ANSI_TEXT_MINIMUM = 2;
 const SURFACE_SEPARATION_MINIMUM = 1.2;
 const STATE_COLOR_DIFFERENCE_MINIMUM = 10;
+const SELECTED_IDLE_ATTENTION_LUMINANCE_MINIMUM = 1.5;
 
 const DIFF_MAPPING_CONTRACTS = [
   { rule: 'mapping.editor.diff.addition-background', token: '--pimote-editor-diff-addition-background' },
@@ -320,6 +321,18 @@ function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
     auditPair(findings, theme, rule.rule, rule.relationship, ui[rule.foreground], ui[rule.background], rule.minimum, ui.background);
   }
   auditMutuallyExclusiveStateColors(findings, theme);
+  const selectedIdleColor = opaqueColor(ui['primary-foreground'], ui.primary).toString();
+  const selectedAttentionColor = opaqueColor(ui['status-reconnecting-on-primary'], ui.primary).toString();
+  auditPair(
+    findings,
+    theme,
+    'ui.session-chip.selected.idle-vs-attention-luminance',
+    'idle vs needs-attention luminance separation on selected session chip',
+    selectedIdleColor,
+    selectedAttentionColor,
+    SELECTED_IDLE_ATTENTION_LUMINANCE_MINIMUM,
+    ui.primary,
+  );
 
   auditPair(
     findings,
