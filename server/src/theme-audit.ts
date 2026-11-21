@@ -11,18 +11,33 @@ export interface ThemeMappingFinding {
   severity: ThemeAuditSeverity;
 }
 
-export interface ThemeAuditFinding {
+interface ThemeAuditFindingBase {
   themeId: string;
   themeName: string;
   rule: string;
   relation: ThemeAuditRelation;
   relationship: string;
+  severity: ThemeAuditSeverity;
+}
+
+export interface ThemeContrastFinding extends ThemeAuditFindingBase {
+  metric: 'contrast';
   ratio: number;
   minimum: number;
   foreground: string;
   background: string;
-  severity: ThemeAuditSeverity;
 }
+
+export interface ThemeStateDistinctionFinding extends ThemeAuditFindingBase {
+  metric: 'deltaE2000';
+  relation: 'pair';
+  deltaE: number;
+  minimum: number;
+  firstColor: string;
+  secondColor: string;
+}
+
+export type ThemeAuditFinding = ThemeContrastFinding | ThemeStateDistinctionFinding;
 
 export interface ThemeAuditReport {
   themeCount: number;
@@ -73,6 +88,55 @@ const SELECTED_SESSION_ICON_ROLES: ReadonlyArray<{ role: UiColorToken; label: st
   { role: 'status-reconnecting-on-primary', label: 'needs-attention' },
 ];
 
+const MUTUALLY_EXCLUSIVE_STATE_COLOR_GROUPS: ReadonlyArray<{
+  rule: string;
+  context: string;
+  surface: UiColorToken;
+  states: ReadonlyArray<{ id: string; label: string; role: UiColorToken }>;
+}> = [
+  {
+    rule: 'ui.session-chip.unselected',
+    context: 'unselected session chip',
+    surface: 'secondary',
+    states: [
+      { id: 'idle', label: 'idle', role: 'secondary-foreground' },
+      { id: 'streaming', label: 'streaming', role: 'status-streaming' },
+      { id: 'attention', label: 'needs-attention', role: 'status-reconnecting' },
+    ],
+  },
+  {
+    rule: 'ui.session-chip.selected',
+    context: 'selected session chip',
+    surface: 'primary',
+    states: [
+      { id: 'idle', label: 'idle', role: 'primary-foreground' },
+      { id: 'streaming', label: 'streaming', role: 'status-streaming-on-primary' },
+      { id: 'attention', label: 'needs-attention', role: 'status-reconnecting-on-primary' },
+    ],
+  },
+  {
+    rule: 'ui.connection-state',
+    context: 'connection status indicator',
+    surface: 'background',
+    states: [
+      { id: 'connected', label: 'connected', role: 'status-connected' },
+      { id: 'syncing', label: 'syncing', role: 'status-active' },
+      { id: 'reconnecting', label: 'reconnecting', role: 'status-reconnecting' },
+      { id: 'error', label: 'error', role: 'status-error' },
+    ],
+  },
+  {
+    rule: 'ui.call-state',
+    context: 'call state indicator',
+    surface: 'background',
+    states: [
+      { id: 'listening', label: 'listening', role: 'status-active' },
+      { id: 'thinking', label: 'thinking', role: 'status-reconnecting' },
+      { id: 'speaking', label: 'speaking', role: 'status-connected' },
+    ],
+  },
+];
+
 const DIFF_ROLES: ReadonlyArray<{ role: EditorSyntaxRole; label: string; background?: 'addition' | 'deletion' }> = [
   { role: 'inserted', label: 'inserted', background: 'addition' },
   { role: 'deleted', label: 'deleted', background: 'deletion' },
@@ -83,6 +147,7 @@ const COLOR_SPACE = 'oklch';
 const STATUS_TINT_AMOUNT = 0.1;
 const ANSI_TEXT_MINIMUM = 2;
 const SURFACE_SEPARATION_MINIMUM = 1.2;
+const STATE_COLOR_DIFFERENCE_MINIMUM = 10;
 
 const DIFF_MAPPING_CONTRACTS = [
   { rule: 'mapping.editor.diff.addition-background', token: '--pimote-editor-diff-addition-background' },
@@ -159,6 +224,7 @@ function addFinding(
     rule,
     relation,
     relationship,
+    metric: 'contrast',
     ratio,
     minimum,
     foreground,
@@ -179,6 +245,36 @@ function auditPair(
   severityOverride?: ThemeAuditSeverity,
 ): void {
   addFinding(findings, theme, rule, 'pair', relationship, foreground, background, backdrop, minimum, severityOverride);
+}
+
+function auditMutuallyExclusiveStateColors(findings: ThemeAuditFinding[], theme: ResolvedTheme): void {
+  for (const group of MUTUALLY_EXCLUSIVE_STATE_COLOR_GROUPS) {
+    for (let firstIndex = 0; firstIndex < group.states.length; firstIndex += 1) {
+      const first = group.states[firstIndex];
+      if (!first) continue;
+      for (let secondIndex = firstIndex + 1; secondIndex < group.states.length; secondIndex += 1) {
+        const second = group.states[secondIndex];
+        if (!second) continue;
+        const firstColor = opaqueColor(theme.ui[first.role], theme.ui[group.surface]);
+        const secondColor = opaqueColor(theme.ui[second.role], theme.ui[group.surface]);
+        const deltaE = firstColor.deltaE(secondColor, '2000');
+        if (deltaE >= STATE_COLOR_DIFFERENCE_MINIMUM) continue;
+        findings.push({
+          themeId: theme.id,
+          themeName: theme.name,
+          rule: `${group.rule}.${first.id}-vs-${second.id}`,
+          relation: 'pair',
+          relationship: `${first.label} vs ${second.label} on ${group.context}`,
+          metric: 'deltaE2000',
+          deltaE,
+          minimum: STATE_COLOR_DIFFERENCE_MINIMUM,
+          firstColor: theme.ui[first.role],
+          secondColor: theme.ui[second.role],
+          severity: 'error',
+        });
+      }
+    }
+  }
 }
 
 function auditSyntax(findings: ThemeAuditFinding[], theme: ResolvedTheme, role: EditorSyntaxRole): void {
@@ -223,6 +319,7 @@ function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
   for (const rule of UI_PAIR_RULES) {
     auditPair(findings, theme, rule.rule, rule.relationship, ui[rule.foreground], ui[rule.background], rule.minimum, ui.background);
   }
+  auditMutuallyExclusiveStateColors(findings, theme);
 
   auditPair(
     findings,
@@ -332,11 +429,8 @@ export function auditThemes(themes: readonly ResolvedTheme[]): ThemeAuditReport 
 }
 
 export function formatThemeAudit(report: ThemeAuditReport): string {
-  const lines = [
-    `Theme contrast audit: ${report.themeCount} theme${report.themeCount === 1 ? '' : 's'}`,
-    `Violations: ${report.errorCount} errors, ${report.warningCount} warnings`,
-  ];
-  if (report.findings.length === 0) return [...lines, 'No contrast violations.'].join('\n');
+  const lines = [`Theme audit: ${report.themeCount} theme${report.themeCount === 1 ? '' : 's'}`, `Violations: ${report.errorCount} errors, ${report.warningCount} warnings`];
+  if (report.findings.length === 0) return [...lines, 'No audit violations.'].join('\n');
 
   const byTheme = new Map<string, ThemeAuditFinding[]>();
   for (const finding of report.findings) {
@@ -347,7 +441,11 @@ export function formatThemeAudit(report: ThemeAuditReport): string {
   for (const findings of byTheme.values()) {
     lines.push('', `${findings[0].themeName} (${findings[0].themeId})`);
     for (const finding of findings) {
-      lines.push(`  ${finding.severity.toUpperCase()} ${finding.rule}: ${finding.relationship} is ${finding.ratio.toFixed(2)}:1 (minimum ${finding.minimum.toFixed(1)}:1)`);
+      const measurement =
+        finding.metric === 'contrast'
+          ? `${finding.ratio.toFixed(2)}:1 (minimum ${finding.minimum.toFixed(1)}:1)`
+          : `${finding.deltaE.toFixed(1)} ΔE2000 (minimum ${finding.minimum.toFixed(1)})`;
+      lines.push(`  ${finding.severity.toUpperCase()} ${finding.rule}: ${finding.relationship} is ${measurement}`);
     }
   }
   return lines.join('\n');

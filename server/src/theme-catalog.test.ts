@@ -62,16 +62,16 @@ describe('ThemeCatalog', () => {
   });
 
   it.each([
-    ['pimote/dracula', '#50fa7b', '#ffb86c', '#ff5555', '#50fa7b'],
-    ['pimote/tokyo-night', '#9ece6a', '#e0af68', '#f7768e', '#73daca'],
-    ['pimote/nord', '#a3be8c', '#ebcb8b', '#bf616a', '#a3be8c'],
-    ['pimote/gruvbox-dark', '#b8bb26', '#fe8019', '#fb4934', '#98971a'],
-    ['pimote/solarized-light', '#859900', '#cb4b16', '#dc322f', '#859900'],
-    ['pimote/catppuccin-mocha', '#a6e3a1', '#fab387', '#f38ba8', '#a6e3a1'],
-    ['pimote/catppuccin-latte', '#40a02b', '#fe640b', '#d20f39', '#40a02b'],
-    ['pimote/everforest-medium-dark', '#A7C080', '#DBBC7F', '#E67E80', '#A7C080'],
-    ['pimote/horizon', '#27D796', '#FAB795', '#F43E5C', '#29D398'],
-  ] as const)('uses palette-aligned semantic statuses and ANSI green for %s', async (id, success, warning, error, ansiGreen) => {
+    ['pimote/dracula', '#50fa7b', '#ffb86c', '#ffb86c', '#ff5555', '#50fa7b'],
+    ['pimote/tokyo-night', '#9ece6a', '#e0af68', '#e0af68', '#f7768e', '#73daca'],
+    ['pimote/nord', '#a3be8c', '#ebcb8b', '#ebcb8b', '#bf616a', '#a3be8c'],
+    ['pimote/gruvbox-dark', '#b8bb26', '#fe8019', '#fe8019', '#fb4934', '#98971a'],
+    ['pimote/solarized-light', '#859900', '#cb4b16', '#b58900', '#dc322f', '#859900'],
+    ['pimote/catppuccin-mocha', '#a6e3a1', '#fab387', '#fab387', '#f38ba8', '#a6e3a1'],
+    ['pimote/catppuccin-latte', '#40a02b', '#fe640b', '#fe640b', '#d20f39', '#40a02b'],
+    ['pimote/everforest-medium-dark', '#A7C080', '#DBBC7F', '#E69875', '#E67E80', '#A7C080'],
+    ['pimote/horizon', '#27D796', '#FAB795', '#FAB795', '#F43E5C', '#29D398'],
+  ] as const)('uses palette-aligned semantic statuses and ANSI green for %s', async (id, success, warning, reconnecting, error, ansiGreen) => {
     const service = catalog({ builtinThemes: builtinThemeDefinitions() });
     const snapshot = await service.load();
     const theme = snapshot.themes.find((entry) => entry.id === id);
@@ -79,7 +79,7 @@ describe('ThemeCatalog', () => {
       'status-connected': success,
       'status-streaming': success,
       warning,
-      'status-reconnecting': warning,
+      'status-reconnecting': reconnecting,
       destructive: error,
       'status-error': error,
     });

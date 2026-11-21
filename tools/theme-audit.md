@@ -26,8 +26,9 @@ The audit covers:
 - Selection foreground against the selection surface, with syntax colors audited against the normal editor background.
 - Status text against tinted status surfaces.
 - Streaming and needs-attention session icons against the selected session chip’s primary surface, using the `*-on-primary` status roles.
+- Every color pair in mutually exclusive selected/unselected session-chip, connection, and call state sets.
 - Hover-surface separation for menu items and button variants.
 - ANSI terminal colors against Bash output and extension status backgrounds.
 - Client mapping contracts, including dedicated diff background roles.
 
-A 4.5:1 ratio is the normal-text target. A 3:1 ratio is the lower screening threshold for small secondary labels and non-text indicators. ANSI foregrounds use a separate 2:1 minimum because terminal palettes intentionally include dim slots. Adjacent surface separation, including hover states and diff highlights, uses a 1.2:1 minimum. Alpha colors are flattened over their owning surface before the WCAG 2.1 ratio is calculated.
+A 4.5:1 ratio is the normal-text target. A 3:1 ratio is the lower screening threshold for small secondary labels and non-text indicators. ANSI foregrounds use a separate 2:1 minimum because terminal palettes intentionally include dim slots. Adjacent surface separation, including hover states and diff highlights, uses a 1.2:1 minimum. Mutually exclusive state colors use a 10-point CIEDE2000 minimum for pairwise distinction. This is a visual-separation heuristic, not an eye-comfort metric. Alpha colors are flattened over their owning surface before comparison.

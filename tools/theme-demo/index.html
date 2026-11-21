@@ -1028,10 +1028,13 @@
           list.length === 0
             ? '<p class="empty">No findings for this theme.</p>'
             : list
-                .map(
-                  (finding) =>
-                    `<div class="finding ${finding.severity === 'warning' ? 'warn' : ''}"><strong>${finding.severity.toUpperCase()}</strong> <code>${finding.rule}</code><br>${finding.relationship} · ${finding.ratio.toFixed(2)}:1 / ${finding.minimum.toFixed(1)}:1</div>`,
-                )
+                .map((finding) => {
+                  const measurement =
+                    finding.metric === 'contrast'
+                      ? `${finding.ratio.toFixed(2)}:1 / ${finding.minimum.toFixed(1)}:1`
+                      : `${finding.deltaE.toFixed(1)} ΔE2000 / ${finding.minimum.toFixed(1)}`;
+                  return `<div class="finding ${finding.severity === 'warning' ? 'warn' : ''}"><strong>${finding.severity.toUpperCase()}</strong> <code>${finding.rule}</code><br>${finding.relationship} · ${measurement}</div>`;
+                })
                 .join('');
       }
       select.addEventListener('change', () => applyTheme(themeById.get(select.value)));

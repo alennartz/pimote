@@ -99,6 +99,46 @@ describe('theme audit', () => {
     expect(report.findings.some((finding) => finding.rule === 'terminal.extension-status.red')).toBe(true);
   });
 
+  it('checks every pair of selected and unselected session-chip states', () => {
+    const theme = resolvedTheme('test/light');
+    theme.ui['primary-foreground'] = '#555555';
+    theme.ui['status-streaming-on-primary'] = '#555555';
+    theme.ui['status-reconnecting-on-primary'] = '#555555';
+
+    const stateFindings = auditThemes([theme]).findings.filter(({ metric, rule }) => metric === 'deltaE2000' && rule.startsWith('ui.session-chip.'));
+    const selectedFindings = stateFindings.filter(({ rule }) => rule.startsWith('ui.session-chip.selected.'));
+    const unselectedFindings = stateFindings.filter(({ rule }) => rule.startsWith('ui.session-chip.unselected.'));
+
+    expect(selectedFindings).toHaveLength(3);
+    expect(unselectedFindings).toHaveLength(3);
+    expect(selectedFindings.map(({ rule }) => rule)).toEqual(
+      expect.arrayContaining(['ui.session-chip.selected.idle-vs-streaming', 'ui.session-chip.selected.idle-vs-attention', 'ui.session-chip.selected.streaming-vs-attention']),
+    );
+    expect([...selectedFindings, ...unselectedFindings].every(({ severity }) => severity === 'error')).toBe(true);
+  });
+
+  it('checks every pair of mutually exclusive connection and call states', () => {
+    const theme = resolvedTheme('test/light');
+    const findings = auditThemes([theme]).findings.filter(({ metric }) => metric === 'deltaE2000');
+    const connectionFindings = findings.filter(({ rule }) => rule.startsWith('ui.connection-state.'));
+    const callFindings = findings.filter(({ rule }) => rule.startsWith('ui.call-state.'));
+
+    expect(connectionFindings).toHaveLength(6);
+    expect(callFindings).toHaveLength(3);
+    expect([...connectionFindings, ...callFindings].every(({ severity, minimum }) => severity === 'error' && minimum === 10)).toBe(true);
+  });
+
+  it('accepts selected-chip state colors with sufficient pairwise distance', () => {
+    const theme = resolvedTheme('test/light');
+    theme.ui['primary-foreground'] = '#000000';
+    theme.ui['status-streaming-on-primary'] = '#777777';
+    theme.ui['status-reconnecting-on-primary'] = '#ffffff';
+
+    const findings = auditThemes([theme]).findings.filter(({ metric, rule }) => metric === 'deltaE2000' && rule.startsWith('ui.session-chip.selected.'));
+
+    expect(findings).toEqual([]);
+  });
+
   it('checks streaming and needs-attention icons on selected session chips', () => {
     const theme = resolvedTheme('test/light');
     theme.ui.primary = '#ffffff';
