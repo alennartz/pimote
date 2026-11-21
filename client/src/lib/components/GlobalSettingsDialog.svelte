@@ -19,7 +19,7 @@
   import type { ThemeStore } from '../stores/theme-store.svelte.js';
   import { globalSettingsPresentation } from './global-settings-presentation.js';
 
-  const DIRECT_FILE_LIMITS = { desktop: 4, mobile: 2 } as const;
+  const DIRECT_TAB_LIMIT = 4;
 
   let {
     store,
@@ -55,11 +55,38 @@
   let userDirty = $derived(trimmedName !== '' && trimmedName !== persistedUser);
   let currentUser = $derived(persistedUser === '' ? 'default' : persistedUser);
   let adoptedProfileKnown = $derived(profiles.some((profile) => profile.name === trimmedName));
-  let directFileLimit = $derived(DIRECT_FILE_LIMITS[viewport]);
-  let directFiles = $derived(store.files.slice(0, directFileLimit));
-  let overflowFiles = $derived(store.files.slice(directFileLimit));
+  let directFiles = $derived(store.files.slice(0, DIRECT_TAB_LIMIT));
+  let overflowFiles = $derived(store.files.slice(DIRECT_TAB_LIMIT));
   let overflowFileActive = $derived(!userTabActive && !appearanceTabActive && overflowFiles.some((file) => file.path === store.activePath));
   let filesMenuOpen = $state(false);
+
+  interface PaneOption {
+    key: string;
+    label: string;
+    dirty: boolean;
+    selected: boolean;
+    select: () => void;
+  }
+
+  // Mobile replaces the tab strip with one picker, so every pane fits without
+  // horizontal scrolling.
+  let panes = $derived.by<PaneOption[]>(() => {
+    const options: PaneOption[] = [];
+    if (themeStore) options.push({ key: 'appearance', label: 'Appearance', dirty: false, selected: appearanceTabActive, select: selectAppearanceTab });
+    options.push({ key: 'user', label: 'User', dirty: userDirty, selected: userTabActive, select: selectUserTab });
+    for (const file of store.files) {
+      options.push({
+        key: file.path,
+        label: file.label,
+        dirty: file.dirty,
+        selected: !userTabActive && !appearanceTabActive && file.path === store.activePath,
+        select: () => selectFile(file.path),
+      });
+    }
+    return options;
+  });
+  let activePane = $derived(panes.find((pane) => pane.selected) ?? null);
+  let tagControlsVisible = $derived(!appearanceTabActive && !userTabActive && presentation.language === 'markdown');
 
   $effect(() => {
     if (!store.open || store.activePath) {
@@ -211,6 +238,29 @@
   </div>
 {/snippet}
 
+{#snippet tagControls()}
+  <Button variant="outline" size="sm" type="button" aria-expanded={tagInputVisible} onclick={() => void showTagInput()}>Tag</Button>
+  {#if tagInputVisible}
+    <Input
+      bind:value={tagName}
+      bind:ref={tagInputEl}
+      aria-label="Tag name"
+      placeholder="tag"
+      class="h-8 w-28"
+      onkeydown={(event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          applyWrap(tagName);
+        }
+      }}
+    />
+    <Button size="sm" type="button" disabled={!isValidTagName(tagName) || !editorView} onclick={() => applyWrap(tagName)}>Wrap</Button>
+  {/if}
+  {#each presentation.tagSnippets as snippet (snippet)}
+    <Button variant="outline" size="sm" type="button" aria-label="Wrap with {snippet}" onclick={() => applyWrap(snippet)}>{snippet}</Button>
+  {/each}
+{/snippet}
+
 {#snippet appearancePane()}
   {#if themeStore}
     <AppearanceSettings store={themeStore} {viewport} embedded />
@@ -239,7 +289,7 @@
   saveLabel={appearanceTabActive ? 'Save theme' : 'Save'}
   ready={appearanceTabActive ? true : (active?.loaded ?? false)}
   editorKey={appearanceTabActive ? 'appearance' : (active?.path ?? null)}
-  toolbarVisible={!appearanceTabActive && presentation.language === 'markdown' && !userTabActive}
+  toolbarVisible={tagControlsVisible && viewport !== 'mobile'}
   language={inferLanguageFromPath(active?.path ?? '')}
   badge={appearanceTabActive ? 'appearance' : userTabActive ? 'device setting' : null}
   body={appearanceTabActive && themeStore ? appearancePane : userTabActive ? userPane : null}
@@ -268,91 +318,112 @@
   }}
 >
   {#snippet tabs()}
-    <div aria-label="Settings files" class="flex min-w-0 shrink-0 items-center border-b px-3 py-2" role="tablist">
-      <div class="flex min-w-0 flex-1 gap-1 overflow-x-auto">
-        {#if themeStore}
-          <Button type="button" variant={appearanceTabActive ? 'secondary' : 'ghost'} role="tab" aria-selected={appearanceTabActive} class="shrink-0" onclick={selectAppearanceTab}
-            >Appearance</Button
-          >
-        {/if}
-        <Button type="button" variant={userTabActive ? 'secondary' : 'ghost'} role="tab" aria-selected={userTabActive} class="shrink-0" onclick={selectUserTab}>
-          User{#if userDirty}<span aria-label="Unsaved changes">*</span>{/if}
-        </Button>
-        {#each directFiles as file (file.path)}
-          <Button
-            type="button"
-            variant={!userTabActive && !appearanceTabActive && file.path === store.activePath ? 'secondary' : 'ghost'}
-            role="tab"
-            aria-selected={!userTabActive && !appearanceTabActive && file.path === store.activePath}
-            class="max-w-[min(14rem,45vw)] min-w-0 shrink-0"
-            onclick={() => selectFile(file.path)}
-          >
-            <span class="truncate">{file.label}</span>{#if file.dirty}<span aria-label="Unsaved changes">*</span>{/if}
-          </Button>
-        {/each}
-      </div>
-      {#if overflowFiles.length > 0}
-        <div class="border-border ml-1 shrink-0 border-l pl-1">
-          <DropdownMenu bind:open={filesMenuOpen}>
-            <DropdownMenuTrigger>
+    {#if viewport === 'mobile'}
+      <div class="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger>
+            {#snippet child({ props })}
               <Button
-                type="button"
-                variant={overflowFileActive ? 'secondary' : 'ghost'}
-                size="sm"
-                class="max-w-[min(14rem,40vw)] gap-1 max-md:min-h-11 max-md:px-3"
-                aria-label={overflowFileActive ? `More settings files, current ${active?.label ?? 'file'}` : 'More settings files'}
-                title={overflowFileActive ? `Current file: ${active?.label ?? 'file'}` : 'More settings files'}
+                {...props}
+                variant="outline"
+                class="h-11 min-w-0 flex-1 basis-[8rem] justify-between gap-2 px-3"
+                aria-label={`Settings pane: ${activePane?.label ?? 'Settings'}${activePane?.dirty ? ', unsaved changes' : ''}`}
               >
-                <span class="truncate">{overflowFileActive ? (active?.label ?? 'More files') : 'More files'}</span>
-                <span class="text-muted-foreground text-xs">+{overflowFiles.length}</span>
-                <ChevronDown class="size-3.5 shrink-0" />
+                <span class="min-w-0 truncate text-left">{activePane?.label ?? 'Settings'}</span>
+                <span class="flex shrink-0 items-center gap-1">
+                  {#if activePane?.dirty}<span aria-label="Unsaved changes">*</span>{/if}
+                  <ChevronDown class="text-muted-foreground size-4" />
+                </span>
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" class="max-h-[min(70dvh,24rem)] w-64 max-w-[calc(100vw-1rem)]">
-              <DropdownMenuLabel>Additional settings files</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              {#each overflowFiles as file (file.path)}
-                <DropdownMenuItem
-                  onclick={() => selectFile(file.path)}
-                  aria-current={!userTabActive && !appearanceTabActive && file.path === store.activePath ? 'page' : undefined}
-                  class="min-w-0 justify-between gap-3"
-                >
-                  <span class="min-w-0 truncate">{file.label}</span>
-                  <span class="flex shrink-0 items-center gap-1">
-                    {#if file.dirty}<span aria-label="Unsaved changes">*</span>{/if}
-                    {#if !userTabActive && !appearanceTabActive && file.path === store.activePath}<Check class="text-primary size-4" /><span class="sr-only">Current</span>{/if}
-                  </span>
-                </DropdownMenuItem>
-              {/each}
-            </DropdownMenuContent>
-          </DropdownMenu>
+            {/snippet}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" class="max-h-[min(70dvh,24rem)] overflow-y-auto">
+            {#each panes as pane (pane.key)}
+              <DropdownMenuItem onclick={() => pane.select()} aria-current={pane.selected ? 'page' : undefined} class="min-w-0 justify-between gap-3">
+                <span class="min-w-0 truncate">{pane.label}</span>
+                <span class="flex shrink-0 items-center gap-1">
+                  {#if pane.dirty}<span aria-label="Unsaved changes">*</span>{/if}
+                  {#if pane.selected}<Check class="text-primary size-4" /><span class="sr-only">Current</span>{/if}
+                </span>
+              </DropdownMenuItem>
+            {/each}
+          </DropdownMenuContent>
+        </DropdownMenu>
+        {#if tagControlsVisible}
+          <div class="flex min-w-0 flex-wrap items-center gap-1.5">{@render tagControls()}</div>
+        {/if}
+      </div>
+    {:else}
+      <div aria-label="Settings files" class="flex min-w-0 shrink-0 items-center border-b px-3 py-2" role="tablist">
+        <div class="flex min-w-0 flex-1 gap-1 overflow-x-auto">
+          {#if themeStore}
+            <Button
+              type="button"
+              variant={appearanceTabActive ? 'secondary' : 'ghost'}
+              role="tab"
+              aria-selected={appearanceTabActive}
+              class="shrink-0"
+              onclick={selectAppearanceTab}>Appearance</Button
+            >
+          {/if}
+          <Button type="button" variant={userTabActive ? 'secondary' : 'ghost'} role="tab" aria-selected={userTabActive} class="shrink-0" onclick={selectUserTab}>
+            User{#if userDirty}<span aria-label="Unsaved changes">*</span>{/if}
+          </Button>
+          {#each directFiles as file (file.path)}
+            <Button
+              type="button"
+              variant={!userTabActive && !appearanceTabActive && file.path === store.activePath ? 'secondary' : 'ghost'}
+              role="tab"
+              aria-selected={!userTabActive && !appearanceTabActive && file.path === store.activePath}
+              class="max-w-[min(14rem,45vw)] min-w-0 shrink-0"
+              onclick={() => selectFile(file.path)}
+            >
+              <span class="truncate">{file.label}</span>{#if file.dirty}<span aria-label="Unsaved changes">*</span>{/if}
+            </Button>
+          {/each}
         </div>
-      {/if}
-    </div>
+        {#if overflowFiles.length > 0}
+          <div class="border-border ml-1 shrink-0 border-l pl-1">
+            <DropdownMenu bind:open={filesMenuOpen}>
+              <DropdownMenuTrigger>
+                <Button
+                  type="button"
+                  variant={overflowFileActive ? 'secondary' : 'ghost'}
+                  size="sm"
+                  class="max-w-[min(14rem,40vw)] gap-1 max-md:min-h-11 max-md:px-3"
+                  aria-label={overflowFileActive ? `More settings files, current ${active?.label ?? 'file'}` : 'More settings files'}
+                  title={overflowFileActive ? `Current file: ${active?.label ?? 'file'}` : 'More settings files'}
+                >
+                  <span class="truncate">{overflowFileActive ? (active?.label ?? 'More files') : 'More files'}</span>
+                  <span class="text-muted-foreground text-xs">+{overflowFiles.length}</span>
+                  <ChevronDown class="size-3.5 shrink-0" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" class="max-h-[min(70dvh,24rem)] w-64 max-w-[calc(100vw-1rem)]">
+                <DropdownMenuLabel>Additional settings files</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {#each overflowFiles as file (file.path)}
+                  <DropdownMenuItem
+                    onclick={() => selectFile(file.path)}
+                    aria-current={!userTabActive && !appearanceTabActive && file.path === store.activePath ? 'page' : undefined}
+                    class="min-w-0 justify-between gap-3"
+                  >
+                    <span class="min-w-0 truncate">{file.label}</span>
+                    <span class="flex shrink-0 items-center gap-1">
+                      {#if file.dirty}<span aria-label="Unsaved changes">*</span>{/if}
+                      {#if !userTabActive && !appearanceTabActive && file.path === store.activePath}<Check class="text-primary size-4" /><span class="sr-only">Current</span>{/if}
+                    </span>
+                  </DropdownMenuItem>
+                {/each}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        {/if}
+      </div>
+    {/if}
   {/snippet}
   {#snippet toolbar()}
-    {#if presentation.language === 'markdown'}
-      <Button variant="outline" size="sm" type="button" aria-expanded={tagInputVisible} onclick={() => void showTagInput()}>Tag</Button>
-      {#if tagInputVisible}
-        <Input
-          bind:value={tagName}
-          bind:ref={tagInputEl}
-          aria-label="Tag name"
-          placeholder="tag"
-          class="h-8 w-28"
-          onkeydown={(event) => {
-            if (event.key === 'Enter') {
-              event.preventDefault();
-              applyWrap(tagName);
-            }
-          }}
-        />
-        <Button size="sm" type="button" disabled={!isValidTagName(tagName) || !editorView} onclick={() => applyWrap(tagName)}>Wrap</Button>
-      {/if}
-      {#each presentation.tagSnippets as snippet (snippet)}
-        <Button variant="outline" size="sm" type="button" aria-label="Wrap with {snippet}" onclick={() => applyWrap(snippet)}>{snippet}</Button>
-      {/each}
-    {/if}
+    {@render tagControls()}
   {/snippet}
 </CodeEditorDialog>
 

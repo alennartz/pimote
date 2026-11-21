@@ -43,6 +43,19 @@ function button(text: string): HTMLButtonElement {
   return found;
 }
 
+/** Open the mobile pane picker and choose one pane by its label. */
+async function choosePane(label: string): Promise<void> {
+  const trigger = document.querySelector<HTMLButtonElement>('button[aria-label^="Settings pane:"]');
+  if (!trigger) throw new Error('Missing settings pane picker');
+  trigger.click();
+  await tick();
+  await tick();
+  const item = [...document.querySelectorAll<HTMLElement>('[data-slot="dropdown-menu-item"]')].find((node) => node.textContent?.trim().startsWith(label));
+  if (!item) throw new Error(`Missing settings pane: ${label}`);
+  item.click();
+  await tick();
+}
+
 describe('Settings dialog rendering', () => {
   it('does not render a floating trigger', async () => {
     await render();
@@ -58,7 +71,7 @@ describe('Settings dialog rendering', () => {
     expect(document.querySelector('[role="dialog"][aria-modal="true"]')).not.toBeNull();
   });
 
-  it('renders tabs, dirty state, and a missing-file creation hint without a visible Settings title', async () => {
+  it('renders desktop tabs, dirty state, and a missing-file creation hint without a visible Settings title', async () => {
     const store = await render();
     await store.loadManifest();
     await store.select('/agent/AGENTS.md');
@@ -83,15 +96,14 @@ describe('Settings dialog rendering', () => {
     });
     const store = await render('mobile', themeStore);
     await store.loadManifest();
-    button('Appearance').click();
-    await tick();
+    await choosePane('Appearance');
     expect(document.querySelector('[role="tabpanel"][aria-label="Appearance"]')).not.toBeNull();
     const body = document.querySelector<HTMLElement>('[role="dialog"] form > div.min-h-0.flex-1.overflow-hidden');
     expect(body?.classList.contains('flex')).toBe(true);
     expect(body?.classList.contains('flex-col')).toBe(true);
   });
 
-  it.each(['desktop', 'mobile'] as const)('adapts the direct settings-file limit on %s', async (viewport) => {
+  it('keeps the desktop tab strip to four files plus an overflow menu', async () => {
     const files = [
       { path: '/one.json', label: 'one.json' },
       { path: '/two.json', label: 'two.json' },
@@ -100,8 +112,8 @@ describe('Settings dialog rendering', () => {
       { path: '/five.json', label: 'five.json' },
       { path: '/six.json', label: 'six.json' },
     ];
-    const directFileCount = viewport === 'mobile' ? 2 : 4;
-    const store = await render(viewport, null, files);
+    const directFileCount = 4;
+    const store = await render('desktop', null, files);
     await store.loadManifest();
     await tick();
 
@@ -127,12 +139,51 @@ describe('Settings dialog rendering', () => {
     expect(more?.getAttribute('aria-label')).toBe('More settings files');
   });
 
+  it('reaches every settings pane from the mobile picker', async () => {
+    const files = [
+      { path: '/one.json', label: 'one.json' },
+      { path: '/two.json', label: 'two.json' },
+      { path: '/three.json', label: 'three.json' },
+      { path: '/four.json', label: 'four.json' },
+      { path: '/five.json', label: 'five.json' },
+      { path: '/six.json', label: 'six.json' },
+    ];
+    const store = await render('mobile', null, files);
+    await store.loadManifest();
+    await tick();
+
+    expect(document.querySelector('button[aria-label^="More settings files"]')).toBeNull();
+    await choosePane('six.json');
+    expect(store.activePath).toBe('/six.json');
+    expect(document.querySelector('button[aria-label^="Settings pane: six.json"]')).not.toBeNull();
+
+    store.edit('/six.json', 'draft');
+    await tick();
+    const trigger = document.querySelector<HTMLButtonElement>('button[aria-label^="Settings pane:"]');
+    expect(trigger?.textContent).toContain('*');
+    expect(trigger?.getAttribute('aria-label')).toContain('unsaved changes');
+  });
+
   it('shows the Tag row only for Markdown tabs', async () => {
     const store = await render();
     await store.loadManifest();
     await store.select('/agent/AGENTS.md');
     await tick();
     expect(button('Tag')).toBeTruthy();
+    await store.select('/config.json');
+    await tick();
+    expect([...document.querySelectorAll('button')].some((node) => node.textContent?.trim() === 'Tag')).toBe(false);
+  });
+
+  it('keeps tag insertion reachable on mobile', async () => {
+    const store = await render('mobile');
+    await store.loadManifest();
+    await store.select('/agent/AGENTS.md');
+    await tick();
+    button('Tag').click();
+    await tick();
+    expect(document.querySelector('input[aria-label="Tag name"]')).not.toBeNull();
+    expect(button('Wrap')).toBeTruthy();
     await store.select('/config.json');
     await tick();
     expect([...document.querySelectorAll('button')].some((node) => node.textContent?.trim() === 'Tag')).toBe(false);
