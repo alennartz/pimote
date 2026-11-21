@@ -3,8 +3,6 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { mount, tick, unmount } from 'svelte';
 import type { PimoteResponse } from '@pimote/shared';
 import { commandStore } from '$lib/stores/command-store.svelte.js';
-import { connection } from '$lib/stores/connection.svelte.js';
-import { openNewSession, sessionRegistry } from '$lib/stores/session-registry.svelte.js';
 
 const requests = vi.hoisted(() => new Set<string>());
 vi.mock('$lib/stores/extension-ui-queue.svelte.js', () => ({
@@ -25,11 +23,16 @@ vi.stubGlobal(
   })),
 );
 
+let connection!: typeof import('$lib/stores/connection.svelte.js').connection;
+let openNewSession!: typeof import('$lib/stores/session-registry.svelte.js').openNewSession;
+let sessionRegistry!: typeof import('$lib/stores/session-registry.svelte.js').sessionRegistry;
 let InputBar: typeof import('./InputBar.svelte').default;
 const mounted: ReturnType<typeof mount>[] = [];
 
 beforeAll(async () => {
   Element.prototype.scrollIntoView ??= () => {};
+  ({ connection } = await import('$lib/stores/connection.svelte.js'));
+  ({ openNewSession, sessionRegistry } = await import('$lib/stores/session-registry.svelte.js'));
   ({ default: InputBar } = await import('./InputBar.svelte'));
 });
 

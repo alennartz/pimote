@@ -1,12 +1,10 @@
 // @vitest-environment jsdom
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { mount, tick, unmount } from 'svelte';
-import { sessionRegistry } from '$lib/stores/session-registry.svelte.js';
-import { connection } from '$lib/stores/connection.svelte.js';
 
 // mobile-viewport.svelte.ts seeds its state from matchMedia at module load,
-// and InputBar imports it statically — so the stub must be installed before
-// the component module (and its imports) are first evaluated below.
+// and the stores below import it — so the stub must be installed before those
+// modules and the component are first evaluated below.
 type ChangeListener = (event: { matches: boolean }) => void;
 const changeListeners = new Set<ChangeListener>();
 let mobileMatches = false;
@@ -26,9 +24,13 @@ vi.stubGlobal(
   })),
 );
 
+let sessionRegistry!: typeof import('$lib/stores/session-registry.svelte.js').sessionRegistry;
+let connection!: typeof import('$lib/stores/connection.svelte.js').connection;
 let InputBar: typeof import('./InputBar.svelte').default;
 
 beforeAll(async () => {
+  ({ sessionRegistry } = await import('$lib/stores/session-registry.svelte.js'));
+  ({ connection } = await import('$lib/stores/connection.svelte.js'));
   ({ default: InputBar } = await import('./InputBar.svelte'));
 });
 
