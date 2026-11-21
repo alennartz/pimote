@@ -204,7 +204,7 @@ function definePaletteTheme(id: string, name: string, colorScheme: 'light' | 'da
     ui: paletteRefs(UI_TOKENS, {
       ...mappings.ui,
       'status-streaming-on-primary': mappings.ui['primary-foreground'],
-      'status-reconnecting-on-primary': mappings.ui['primary-foreground'],
+      'status-reconnecting-on-primary': 'warningOnPrimary' in palette ? 'warningOnPrimary' : mappings.ui['status-reconnecting-on-primary'],
     }),
     editor: {
       surface: paletteRefs(SURFACE_ROLES, mappings.editor.surface),
@@ -221,7 +221,6 @@ function fill<K extends string>(keys: readonly K[], value: string): Record<K, st
 function ui(values: Partial<Record<UiColorToken, string>>, fallback: string): Record<UiColorToken, string> {
   const result = Object.fromEntries(UI_TOKENS.map((token) => [token, values[token] ?? fallback])) as Record<UiColorToken, string>;
   result['status-streaming-on-primary'] = result['primary-foreground'];
-  result['status-reconnecting-on-primary'] = result['primary-foreground'];
   return result;
 }
 
@@ -328,6 +327,7 @@ const lightUi: Partial<Record<UiColorToken, string>> = {
   'status-connected': 'oklch(0.52 0.155 149.2)',
   'status-error': 'oklch(0.54 0.18 25.7)',
   'status-reconnecting': 'oklch(0.48 0.15 70.6)',
+  'status-reconnecting-on-primary': 'oklch(0.75 0.183 55.934)',
   'surface-sunken': 'oklch(0.95 0.015 258)',
   'surface-raised': 'oklch(0.975 0.012 258)',
   'surface-subtle': 'oklch(0.965 0.01 258)',
@@ -391,6 +391,7 @@ const darkUi: Partial<Record<UiColorToken, string>> = {
   'status-connected': 'oklch(0.623 0.169 149.2)',
   'status-error': 'oklch(0.396 0.133 25.7)',
   'status-reconnecting': 'oklch(0.77 0.165 70.6)',
+  'status-reconnecting-on-primary': 'oklch(0.648 0.1 55.934)',
   'surface-sunken': 'oklch(0.155 0.025 258)',
   'surface-raised': 'oklch(0.18 0.028 258)',
   'surface-subtle': 'oklch(0.2 0.02 258)',
@@ -616,6 +617,7 @@ const pimoteDarkPalette: Record<string, string> = {
   mutedInk: darkUi['muted-foreground']!,
   red: darkUi.destructive!,
   orange: darkUi.warning!,
+  warningOnPrimary: darkUi['status-reconnecting-on-primary']!,
   orangeInk: darkUi['warning-foreground']!,
   line: darkUi.border!,
   ring: darkUi.ring!,
@@ -709,6 +711,7 @@ const draculaTheme = definePaletteTheme(
     pink: '#ff79c6',
     green: '#50fa7b',
     orange: '#ffb86c',
+    warningOnPrimary: 'oklch(0.447 0.1 66.558)',
     red: '#ff5555',
     cyan: '#8be9fd',
     surface: '#343746',
@@ -875,6 +878,7 @@ const tokyoNightTheme = definePaletteTheme(
     comment: '#565f89',
     green: '#9ece6a',
     orange: '#ff9e64',
+    warningOnPrimary: 'oklch(0.435 0.1 75.428)',
     purple: '#bb9af7',
     red: '#f7768e',
     yellow: '#e0af68',
@@ -1035,6 +1039,7 @@ const nordTheme = definePaletteTheme(
     comment: '#616e88',
     green: '#a3be8c',
     yellow: '#ebcb8b',
+    warningOnPrimary: 'oklch(0.486 0.08923 84.093)',
     red: '#bf616a',
     blue: '#81a1c1',
     purple: '#b48ead',
@@ -1196,6 +1201,7 @@ const gruvboxTheme = definePaletteTheme(
     comment: '#928374',
     green: '#b8bb26',
     orange: '#fe8019',
+    warningOnPrimary: 'oklch(0.443 0.1 51.693)',
     red: '#fb4934',
     purple: '#d3869b',
     blue: '#458588',
@@ -1355,6 +1361,7 @@ const solarizedTheme = definePaletteTheme(
     magenta: '#d33682',
     green: '#859900',
     orange: '#cb4b16',
+    warningOnPrimary: 'oklch(0.35 0.1 39.5)',
     red: '#dc322f',
     yellow: '#b58900',
     darkBlue: '#073642',
@@ -1510,6 +1517,7 @@ const catppuccinMochaTheme = definePaletteTheme(
     comment: '#6c7086',
     green: '#a6e3a1',
     peach: '#fab387',
+    warningOnPrimary: 'oklch(0.489 0.1 52.629)',
     red: '#f38ba8',
     blue: '#89b4fa',
     pink: '#f5c2e7',
@@ -1670,6 +1678,7 @@ const catppuccinLatteTheme = definePaletteTheme(
     comment: '#9ca0b0',
     green: '#40a02b',
     peach: '#fe640b',
+    warningOnPrimary: 'oklch(0.839 0.1 42.429)',
     red: '#d20f39',
     blue: '#1e66f5',
     pink: '#ea76cb',
@@ -1829,6 +1838,7 @@ const everforestMediumDarkTheme = definePaletteTheme(
     red: '#E67E80',
     orange: '#E69875',
     yellow: '#DBBC7F',
+    warningOnPrimary: 'oklch(0.486 0.08629 83.696)',
     green: '#A7C080',
     aqua: '#83C092',
     blue: '#7FBBB3',
@@ -2034,6 +2044,7 @@ const horizonTheme = definePaletteTheme(
     red: '#F43E5C',
     coral: '#F09483',
     peach: '#FAB795',
+    warningOnPrimary: 'oklch(0.981 0.0907 47.949)',
     peachLight: '#FAC29A',
     cyan: '#21BFC2',
     cyanBright: '#59E1E3',

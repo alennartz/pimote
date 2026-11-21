@@ -93,10 +93,14 @@ describe('built-in theme mappings', () => {
     });
   });
 
-  it('uses the primary foreground for selected-chip status icons', async () => {
+  it('distinguishes selected streaming and attention colors against the primary surface', async () => {
     for (const theme of await resolvedBuiltins()) {
-      expect(theme.ui['status-streaming-on-primary'], theme.id).toBe(theme.ui['primary-foreground']);
-      expect(theme.ui['status-reconnecting-on-primary'], theme.id).toBe(theme.ui['primary-foreground']);
+      const streaming = theme.ui['status-streaming-on-primary'];
+      const attention = theme.ui['status-reconnecting-on-primary'];
+      expect(streaming, theme.id).toBe(theme.ui['primary-foreground']);
+      expect(attention, theme.id).not.toBe(streaming);
+      expect(contrast(streaming, theme.ui.primary), `${theme.id} streaming`).toBeGreaterThanOrEqual(3);
+      expect(contrast(attention, theme.ui.primary), `${theme.id} attention`).toBeGreaterThanOrEqual(3);
     }
   });
 
