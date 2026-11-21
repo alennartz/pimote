@@ -13,9 +13,9 @@
     "theme:normalize": "tsx src/theme-normalize-cli.ts"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "1.5.2",
-    "@earendil-works/pi-coding-agent": "1.5.2",
-    "@earendil-works/pi-schema": "^1.5.2",
+    "@earendil-works/pi-agent-core": "1.6.0",
+    "@earendil-works/pi-coding-agent": "1.6.0",
+    "@earendil-works/pi-schema": "^1.6.0",
     "@pimote/sdk": "*",
     "@streamparser/json": "^0.0.22",
     "colorjs.io": "^0.7.1",
