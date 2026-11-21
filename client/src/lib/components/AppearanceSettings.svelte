@@ -48,7 +48,7 @@
 {#snippet miniPreview(theme: ResolvedTheme)}
   <span
     class="theme-preview"
-    style={`--preview-bg: ${theme.editor.surface.background}; --preview-fg: ${theme.editor.surface.foreground}; --preview-muted: ${theme.editor.surface['gutter-foreground']}; --preview-line: ${theme.ui.border}; --preview-surface: ${theme.ui.card}; --preview-raised: ${theme.ui.muted}; --preview-accent: ${theme.ui.primary}; --preview-keyword: ${theme.editor.syntax.keyword}; --preview-function: ${theme.editor.syntax.function}; --preview-string: ${theme.editor.syntax.string}; --preview-number: ${theme.editor.syntax.number}; --preview-comment: ${theme.editor.syntax.comment}`}
+    style={`--preview-bg: ${theme.editor.surface.background}; --preview-fg: ${theme.editor.surface.foreground}; --preview-muted: ${theme.editor.surface['gutter-foreground']}; --preview-line: ${theme.ui.border}; --preview-surface: ${theme.ui.card}; --preview-raised: ${theme.ui.muted}; --preview-accent: ${theme.ui.primary}; --preview-keyword: ${theme.editor.syntax.keyword}; --preview-function: ${theme.editor.syntax['entity.name.function']}; --preview-string: ${theme.editor.syntax.string}; --preview-number: ${theme.editor.syntax['constant.numeric']}; --preview-comment: ${theme.editor.syntax.comment}`}
     aria-hidden="true"
   >
     <span class="theme-preview-toolbar"><i></i><i></i><i></i><span>Pimote</span></span>

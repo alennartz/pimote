@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { builtinThemeDefinitions } from './builtin-themes.js';
 import { ThemeCatalog } from './theme-catalog.js';
 
-const DIFF_ROLES = ['inserted', 'deleted', 'changed'] as const;
+const DIFF_ROLES = ['markup.inserted', 'markup.deleted', 'markup.changed'] as const;
 const CALLOUT_FOREGROUNDS = [
   ['error-foreground', 'error-surface'],
   ['skill-foreground', 'skill-surface'],
@@ -124,9 +124,9 @@ describe('built-in theme mappings', () => {
         const foreground = theme.editor.syntax[role];
         expect(contrast(foreground, theme.editor.surface.background), `${theme.id} ${role} on editor background`).toBeGreaterThanOrEqual(4.5);
         const diffBackground =
-          role === 'inserted'
+          role === 'markup.inserted'
             ? theme.editor.surface['diff-addition-background']
-            : role === 'deleted'
+            : role === 'markup.deleted'
               ? theme.editor.surface['diff-deletion-background']
               : theme.editor.surface.background;
         expect(contrast(foreground, diffBackground, theme.editor.surface.background), `${theme.id} ${role} on diff surface`).toBeGreaterThanOrEqual(4.5);

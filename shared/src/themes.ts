@@ -14,7 +14,7 @@ export interface ThemeDefinition {
   ui: Partial<Record<UiColorToken, ThemeColorValue>>;
   editor: {
     surface: Partial<Record<EditorSurfaceRole, ThemeColorValue>>;
-    syntax: Partial<Record<EditorSyntaxRole, ThemeColorValue>>;
+    syntax: Partial<Record<SyntaxScope, ThemeColorValue>>;
     terminal: Partial<Record<AnsiColorName, ThemeColorValue>>;
   };
 }
@@ -113,62 +113,75 @@ export type EditorSurfaceRole =
   | 'diff-addition-background'
   | 'diff-deletion-background';
 
-/** Theme-independent syntax roles shared by CodeMirror and Highlight.js. */
-export type EditorSyntaxRole =
-  | 'comment'
-  | 'doc-comment'
-  | 'name'
-  | 'variable'
-  | 'parameter'
-  | 'type'
-  | 'tag'
-  | 'property'
-  | 'attribute'
-  | 'class'
-  | 'label'
-  | 'namespace'
-  | 'macro'
-  | 'constant'
-  | 'function'
-  | 'built-in'
-  | 'keyword'
-  | 'control-keyword'
-  | 'definition-keyword'
-  | 'modifier'
-  | 'operator-keyword'
-  | 'operator'
-  | 'punctuation'
-  | 'separator'
-  | 'bracket'
-  | 'string'
-  | 'doc-string'
-  | 'character'
-  | 'attribute-value'
-  | 'number'
-  | 'boolean'
-  | 'null'
-  | 'regexp'
-  | 'escape'
-  | 'color'
-  | 'url'
-  | 'content'
-  | 'heading'
-  | 'content-separator'
-  | 'list'
-  | 'quote'
-  | 'emphasis'
-  | 'strong'
-  | 'link'
-  | 'monospace'
-  | 'strikethrough'
-  | 'inserted'
-  | 'deleted'
-  | 'changed'
-  | 'invalid'
-  | 'meta'
-  | 'document-meta'
-  | 'annotation'
-  | 'processing-instruction';
+/** Every editor surface role in catalog order. */
+export const EDITOR_SURFACE_ROLES: readonly EditorSurfaceRole[] = [
+  'background',
+  'foreground',
+  'selection',
+  'selection-foreground',
+  'cursor',
+  'active-line',
+  'gutter-background',
+  'gutter-foreground',
+  'line-number',
+  'active-line-number',
+  'matching-bracket',
+  'search-match',
+  'diff-addition-background',
+  'diff-deletion-background',
+];
+
+/** The TextMate root groups. Every syntax token belongs to exactly one root. */
+export type SyntaxRoot = 'comment' | 'constant' | 'entity' | 'invalid' | 'keyword' | 'markup' | 'meta' | 'storage' | 'string' | 'support' | 'variable';
+
+/**
+ * TextMate child scopes. A theme sets a child only to depart from its root color.
+ * Every name is a path from the TextMate naming conventions, save the four marked
+ * VS Code conventions, which TextMate itself leaves unnamed.
+ */
+export type SyntaxChild =
+  | 'comment.documentation'
+  | 'constant.numeric'
+  | 'constant.language'
+  | 'constant.character.escape'
+  | 'constant.other'
+  | 'entity.name.function'
+  | 'entity.name.function.macro'
+  | 'entity.name.type'
+  | 'entity.name.tag'
+  | 'entity.name.namespace'
+  | 'entity.name.label'
+  | 'entity.other.attribute-name'
+  | 'keyword.control'
+  | 'keyword.operator'
+  | 'markup.heading'
+  | 'markup.list'
+  | 'markup.quote'
+  | 'markup.italic'
+  | 'markup.bold'
+  | 'markup.underline.link'
+  | 'markup.raw'
+  | 'markup.strikethrough'
+  | 'markup.inserted'
+  | 'markup.deleted'
+  | 'markup.changed'
+  | 'storage.type'
+  | 'storage.modifier'
+  | 'string.quoted'
+  | 'string.regexp'
+  | 'string.other'
+  | 'support.function'
+  | 'support.type'
+  | 'support.constant'
+  | 'support.variable'
+  | 'variable.parameter'
+  | 'variable.other'
+  | 'variable.other.property'
+  | 'variable.other.enum-member'
+  | 'variable.language';
+
+/** A root group or one of its child scopes. */
+export type SyntaxScope = SyntaxRoot | SyntaxChild;
 
 /** The standard sixteen ANSI color slots. */
 export type AnsiColorName =
@@ -189,6 +202,119 @@ export type AnsiColorName =
   | 'bright-cyan'
   | 'bright-white';
 
+/** Every root group in catalog order. */
+export const SYNTAX_ROOTS: readonly SyntaxRoot[] = ['comment', 'constant', 'entity', 'invalid', 'keyword', 'markup', 'meta', 'storage', 'string', 'support', 'variable'];
+
+/** Roots a theme must paint. `meta` groups structure and inherits the editor foreground. */
+export const REQUIRED_SYNTAX_ROOTS: readonly SyntaxRoot[] = SYNTAX_ROOTS.filter((root) => root !== 'meta');
+
+/** Every child scope in catalog order. */
+export const SYNTAX_CHILDREN: readonly SyntaxChild[] = [
+  'comment.documentation',
+  'constant.numeric',
+  'constant.language',
+  'constant.character.escape',
+  'constant.other',
+  'entity.name.function',
+  'entity.name.function.macro',
+  'entity.name.type',
+  'entity.name.tag',
+  'entity.name.namespace',
+  'entity.name.label',
+  'entity.other.attribute-name',
+  'keyword.control',
+  'keyword.operator',
+  'markup.heading',
+  'markup.list',
+  'markup.quote',
+  'markup.italic',
+  'markup.bold',
+  'markup.underline.link',
+  'markup.raw',
+  'markup.strikethrough',
+  'markup.inserted',
+  'markup.deleted',
+  'markup.changed',
+  'storage.type',
+  'storage.modifier',
+  'string.quoted',
+  'string.regexp',
+  'string.other',
+  'support.function',
+  'support.type',
+  'support.constant',
+  'support.variable',
+  'variable.parameter',
+  'variable.other',
+  'variable.other.property',
+  'variable.other.enum-member',
+  'variable.language',
+];
+
+/** Every scope in catalog order. */
+export const SYNTAX_SCOPES: readonly SyntaxScope[] = [...SYNTAX_ROOTS, ...SYNTAX_CHILDREN];
+
+/** The CSS custom property that publishes one editor token. */
+export function editorPropertyName(token: SyntaxScope | EditorSurfaceRole): string {
+  return `--pimote-editor-${token.replaceAll('.', '-')}`;
+}
+
+/** The root group a scope inherits its color from. */
+export function syntaxScopeRoot(scope: SyntaxScope): SyntaxRoot {
+  return scope.split('.')[0] as SyntaxRoot;
+}
+
+/** Theme-file aliases for the flat role names that predate the root groups. */
+export const LEGACY_SYNTAX_ROLE_SCOPES: Readonly<Record<string, SyntaxScope>> = {
+  'doc-comment': 'comment.documentation',
+  name: 'entity',
+  parameter: 'variable.parameter',
+  type: 'entity.name.type',
+  tag: 'entity.name.tag',
+  property: 'variable.other.property',
+  attribute: 'entity.other.attribute-name',
+  class: 'entity.name.type',
+  label: 'entity.name.label',
+  namespace: 'entity.name.namespace',
+  macro: 'entity.name.function.macro',
+  function: 'entity.name.function',
+  'built-in': 'support',
+  'control-keyword': 'keyword.control',
+  'definition-keyword': 'storage',
+  modifier: 'storage.modifier',
+  'operator-keyword': 'keyword.operator',
+  operator: 'keyword.operator',
+  punctuation: 'meta',
+  separator: 'meta',
+  bracket: 'meta',
+  'doc-string': 'string.quoted',
+  character: 'constant',
+  'attribute-value': 'string.quoted',
+  number: 'constant.numeric',
+  boolean: 'constant.language',
+  null: 'constant.language',
+  regexp: 'string.regexp',
+  escape: 'constant.character.escape',
+  color: 'constant.other',
+  url: 'markup.underline.link',
+  content: 'markup.raw',
+  heading: 'markup.heading',
+  'content-separator': 'markup',
+  list: 'markup.list',
+  quote: 'markup.quote',
+  emphasis: 'markup.italic',
+  strong: 'markup.bold',
+  link: 'markup.underline.link',
+  monospace: 'markup.raw',
+  strikethrough: 'markup.strikethrough',
+  inserted: 'markup.inserted',
+  deleted: 'markup.deleted',
+  changed: 'markup.changed',
+  'document-meta': 'meta',
+  annotation: 'meta',
+  'processing-instruction': 'meta',
+};
+
 /** A fully resolved theme sent to a PWA client. */
 export interface ResolvedTheme {
   id: string;
@@ -198,7 +324,7 @@ export interface ResolvedTheme {
   ui: Record<UiColorToken, string>;
   editor: {
     surface: Record<EditorSurfaceRole, string>;
-    syntax: Record<EditorSyntaxRole, string>;
+    syntax: Record<SyntaxScope, string>;
     terminal: Record<AnsiColorName, string>;
   };
 }

@@ -1,4 +1,5 @@
-import type { AnsiColorName, EditorSurfaceRole, EditorSyntaxRole, ThemeColorValue, ThemeDefinition, UiColorToken } from '../../shared/dist/index.js';
+import type { AnsiColorName, EditorSurfaceRole, SyntaxChild, SyntaxRoot, SyntaxScope, ThemeColorValue, ThemeDefinition, UiColorToken } from '../../shared/dist/index.js';
+import { REQUIRED_SYNTAX_ROOTS, SYNTAX_SCOPES } from '../../shared/dist/index.js';
 
 /*
  * Palette provenance:
@@ -100,63 +101,6 @@ const SURFACE_ROLES: readonly EditorSurfaceRole[] = [
   'diff-deletion-background',
 ];
 
-const SYNTAX_ROLES: readonly EditorSyntaxRole[] = [
-  'comment',
-  'doc-comment',
-  'name',
-  'variable',
-  'parameter',
-  'type',
-  'tag',
-  'property',
-  'attribute',
-  'class',
-  'label',
-  'namespace',
-  'macro',
-  'constant',
-  'function',
-  'built-in',
-  'keyword',
-  'control-keyword',
-  'definition-keyword',
-  'modifier',
-  'operator-keyword',
-  'operator',
-  'punctuation',
-  'separator',
-  'bracket',
-  'string',
-  'doc-string',
-  'character',
-  'attribute-value',
-  'number',
-  'boolean',
-  'null',
-  'regexp',
-  'escape',
-  'color',
-  'url',
-  'content',
-  'heading',
-  'content-separator',
-  'list',
-  'quote',
-  'emphasis',
-  'strong',
-  'link',
-  'monospace',
-  'strikethrough',
-  'inserted',
-  'deleted',
-  'changed',
-  'invalid',
-  'meta',
-  'document-meta',
-  'annotation',
-  'processing-instruction',
-];
-
 const TERMINAL_ROLES: readonly AnsiColorName[] = [
   'black',
   'red',
@@ -176,11 +120,14 @@ const TERMINAL_ROLES: readonly AnsiColorName[] = [
   'bright-white',
 ];
 
+/** Painted root groups are mandatory in a theme; children and `meta` are overrides. */
+type SyntaxPalette = Record<Exclude<SyntaxRoot, 'meta'>, string> & Partial<Record<SyntaxChild | 'meta', string>>;
+
 type PaletteRoleMappings = {
   ui: Record<UiColorToken, string>;
   editor: {
     surface: Record<EditorSurfaceRole, string>;
-    syntax: Record<EditorSyntaxRole, string>;
+    syntax: SyntaxPalette;
     terminal: Record<AnsiColorName, string>;
   };
 };
@@ -191,6 +138,16 @@ function roleMap<K extends string>(roles: readonly K[], fallback: string, overri
 
 function paletteRefs<K extends string>(roles: readonly K[], mappings: Readonly<Record<K, string>>): Record<K, ThemeColorValue> {
   return Object.fromEntries(roles.map((role) => [role, { palette: mappings[role] }])) as Record<K, ThemeColorValue>;
+}
+
+/** Reference only the scopes a theme chose to set. Unset children inherit their root. */
+function scopeRefs(mappings: Readonly<Partial<Record<SyntaxScope, string>>>): Partial<Record<SyntaxScope, ThemeColorValue>> {
+  const result: Partial<Record<SyntaxScope, ThemeColorValue>> = {};
+  for (const scope of SYNTAX_SCOPES) {
+    const swatch = mappings[scope];
+    if (swatch !== undefined) result[scope] = { palette: swatch };
+  }
+  return result;
 }
 
 /** Build a theme from source palette swatches and explicit role mappings. */
@@ -207,7 +164,7 @@ function definePaletteTheme(id: string, name: string, colorScheme: 'light' | 'da
     }),
     editor: {
       surface: paletteRefs(SURFACE_ROLES, mappings.editor.surface),
-      syntax: paletteRefs(SYNTAX_ROLES, mappings.editor.syntax),
+      syntax: scopeRefs(mappings.editor.syntax),
       terminal: paletteRefs(TERMINAL_ROLES, mappings.editor.terminal),
     },
   };
@@ -226,18 +183,18 @@ function ui(values: Partial<Record<UiColorToken, string>>, fallback: string): Re
 function editor(
   values: {
     surface?: Partial<Record<EditorSurfaceRole, string>>;
-    syntax?: Partial<Record<EditorSyntaxRole, string>>;
+    syntax?: Partial<Record<SyntaxScope, string>>;
     terminal?: Partial<Record<AnsiColorName, string>>;
   },
   fallback: { surface: string; syntax: string; terminal: string },
 ): {
   surface: Record<EditorSurfaceRole, string>;
-  syntax: Record<EditorSyntaxRole, string>;
+  syntax: Partial<Record<SyntaxScope, string>>;
   terminal: Record<AnsiColorName, string>;
 } {
   return {
     surface: { ...fill(SURFACE_ROLES, fallback.surface), ...values.surface },
-    syntax: { ...fill(SYNTAX_ROLES, fallback.syntax), ...values.syntax },
+    syntax: { ...fill(REQUIRED_SYNTAX_ROOTS, fallback.syntax), ...values.syntax },
     terminal: { ...fill(TERMINAL_ROLES, fallback.terminal), ...values.terminal },
   };
 }
@@ -269,20 +226,20 @@ function definition(
     editor: editor(editorValues, fallback),
   };
   const { palette, aliases } = canonicalPalette(sourcePalette);
-  const references = <K extends string>(entries: Readonly<Record<K, string>>): Record<K, string> =>
+  const references = <K extends string>(entries: Readonly<Partial<Record<K, string>>>): Partial<Record<K, string>> =>
     Object.fromEntries(
       (Object.entries(entries) as [string, string][]).map(([role, value]) => {
         const alias = aliases.get(value);
         if (!alias) throw new Error(`missing Pimote palette swatch for ${role}: ${value}`);
         return [role, alias];
       }),
-    ) as Record<K, string>;
+    ) as Partial<Record<K, string>>;
   return definePaletteTheme(id, name, colorScheme, palette, {
-    ui: references(values.ui),
+    ui: references(values.ui) as Record<UiColorToken, string>,
     editor: {
-      surface: references(values.editor.surface),
-      syntax: references(values.editor.syntax),
-      terminal: references(values.editor.terminal),
+      surface: references(values.editor.surface) as Record<EditorSurfaceRole, string>,
+      syntax: references(values.editor.syntax) as SyntaxPalette,
+      terminal: references(values.editor.terminal) as Record<AnsiColorName, string>,
     },
   });
 }
@@ -417,45 +374,38 @@ const darkUi: Partial<Record<UiColorToken, string>> = {
   'shadow-color': 'oklch(0 0 0 / 0.3)',
 };
 
-const lightSyntax: Partial<Record<EditorSyntaxRole, string>> = {
+const lightSyntax: Partial<Record<SyntaxScope, string>> = {
   comment: '#6a737d',
-  'doc-comment': '#6a737d',
+  constant: '#005cc5',
+  entity: '#6f42c1',
+  invalid: '#82071e',
   keyword: '#d73a49',
-  'control-keyword': '#d73a49',
-  'definition-keyword': '#d73a49',
+  markup: '#24292e',
+  storage: '#d73a49',
   string: '#032f62',
-  'doc-string': '#032f62',
-  number: '#005cc5',
-  boolean: '#005cc5',
-  function: '#6f42c1',
-  type: '#6f42c1',
+  support: '#005cc5',
   variable: '#24292e',
-  operator: '#d73a49',
-  punctuation: '#24292e',
-  bracket: '#24292e',
-  inserted: '#116329',
-  deleted: '#82071e',
-  changed: '#24292e',
+  'entity.name.tag': '#22863a',
+  'variable.other.property': '#005cc5',
+  'markup.inserted': '#116329',
+  'markup.deleted': '#82071e',
 };
-const darkSyntax: Partial<Record<EditorSyntaxRole, string>> = {
-  comment: '#c9d1d9',
-  'doc-comment': '#c9d1d9',
+const darkSyntax: Partial<Record<SyntaxScope, string>> = {
+  comment: '#8b949e',
+  constant: '#79c0ff',
+  entity: '#d2a8ff',
+  invalid: '#ffa198',
   keyword: '#ff7b72',
-  'control-keyword': '#ff7b72',
-  'definition-keyword': '#ff7b72',
+  markup: '#c9d1d9',
+  storage: '#ff7b72',
   string: '#a5d6ff',
-  'doc-string': '#a5d6ff',
-  number: '#79c0ff',
-  boolean: '#79c0ff',
-  function: '#d2a8ff',
-  type: '#ffa657',
+  support: '#79c0ff',
   variable: '#c9d1d9',
-  operator: '#ff7b72',
-  punctuation: '#c9d1d9',
-  bracket: '#c9d1d9',
-  inserted: '#b4f1b4',
-  deleted: '#ffd8d3',
-  changed: '#c9d1d9',
+  'entity.name.type': '#ffa657',
+  'entity.name.tag': '#7ee787',
+  'variable.other.property': '#79c0ff',
+  'markup.inserted': '#b4f1b4',
+  'markup.deleted': '#ffd8d3',
 };
 const lightTerminal: Partial<Record<AnsiColorName, string>> = {
   black: '#24292e',
@@ -589,12 +539,12 @@ const pimoteLightPalette: Record<string, string> = {
   editorSearch: lightEditor.surface['search-match'],
   diffAdd: lightEditor.surface['diff-addition-background'],
   diffDelete: lightEditor.surface['diff-deletion-background'],
-  syntaxInserted: lightSyntax.inserted!,
-  syntaxDeleted: lightSyntax.deleted!,
+  syntaxInserted: lightSyntax['markup.inserted']!,
+  syntaxDeleted: lightSyntax['markup.deleted']!,
   syntaxRed: lightSyntax.keyword!,
   syntaxDeepBlue: lightSyntax.string!,
-  syntaxBlue: lightSyntax.number!,
-  syntaxPurple: lightSyntax.function!,
+  syntaxBlue: lightSyntax.constant!,
+  syntaxPurple: lightSyntax.entity!,
   terminalGreen: lightTerminal.green!,
   terminalYellow: lightTerminal.yellow!,
   terminalCyan: lightTerminal.cyan!,
@@ -663,13 +613,13 @@ const pimoteDarkPalette: Record<string, string> = {
   editorSearch: darkEditor.surface['search-match'],
   diffAdd: darkEditor.surface['diff-addition-background'],
   diffDelete: darkEditor.surface['diff-deletion-background'],
-  syntaxInserted: darkSyntax.inserted!,
-  syntaxDeleted: darkSyntax.deleted!,
+  syntaxInserted: darkSyntax['markup.inserted']!,
+  syntaxDeleted: darkSyntax['markup.deleted']!,
   syntaxRed: darkSyntax.keyword!,
   syntaxString: darkSyntax.string!,
-  syntaxNumber: darkSyntax.number!,
-  syntaxFunction: darkSyntax.function!,
-  syntaxType: darkSyntax.type!,
+  syntaxNumber: darkSyntax.constant!,
+  syntaxFunction: darkSyntax.entity!,
+  syntaxType: darkSyntax['entity.name.type']!,
   terminalBlack: darkTerminal.black!,
   terminalRed: darkTerminal.red!,
   terminalGreen: darkTerminal.green!,
@@ -827,26 +777,22 @@ const draculaTheme = definePaletteTheme(
         'diff-addition-background': 'diffAddition',
         'diff-deletion-background': 'diffDeletion',
       }),
-      syntax: roleMap(SYNTAX_ROLES, 'foreground', {
+      syntax: {
         comment: 'foreground',
-        'doc-comment': 'foreground',
-        string: 'yellow',
-        'doc-string': 'yellow',
-        number: 'purple',
-        boolean: 'purple',
+        constant: 'purple',
+        entity: 'purple',
+        invalid: 'red',
         keyword: 'pink',
-        'control-keyword': 'pink',
-        'definition-keyword': 'pink',
-        operator: 'pink',
-        function: 'purple',
-        type: 'purple',
+        markup: 'foreground',
+        storage: 'pink',
+        string: 'yellow',
+        support: 'foreground',
         variable: 'foreground',
-        punctuation: 'foreground',
-        bracket: 'foreground',
-        inserted: 'foreground',
-        deleted: 'foreground',
-        changed: 'foreground',
-      }),
+        'constant.character.escape': 'pink',
+        'entity.name.tag': 'pink',
+        'variable.parameter': 'orange',
+        'variable.other.property': 'cyan',
+      },
       terminal: roleMap(TERMINAL_ROLES, 'ansi-black', {
         black: 'ansi-black',
         red: 'ansi-red',
@@ -997,18 +943,22 @@ const tokyoNightTheme = definePaletteTheme(
         'diff-addition-background': 'diffAddition',
         'diff-deletion-background': 'diffDeletion',
       }),
-      syntax: roleMap(SYNTAX_ROLES, 'foreground', {
-        string: 'green',
-        'doc-string': 'green',
-        number: 'orange',
-        boolean: 'orange',
+      syntax: {
+        comment: 'foreground',
+        constant: 'orange',
+        entity: 'blue',
+        invalid: 'red',
         keyword: 'purple',
-        'control-keyword': 'purple',
-        'definition-keyword': 'purple',
-        operator: 'purple',
-        function: 'blue',
-        type: 'blue',
-      }),
+        markup: 'foreground',
+        storage: 'purple',
+        string: 'green',
+        support: 'teal',
+        variable: 'foreground',
+        'constant.character.escape': 'purple',
+        'entity.name.tag': 'red',
+        'variable.other.property': 'teal',
+        'variable.parameter': 'yellow',
+      },
       terminal: roleMap(TERMINAL_ROLES, 'ansi-black', {
         black: 'ansi-black',
         red: 'ansi-red',
@@ -1160,18 +1110,21 @@ const nordTheme = definePaletteTheme(
         'diff-addition-background': 'diffAddition',
         'diff-deletion-background': 'diffDeletion',
       }),
-      syntax: roleMap(SYNTAX_ROLES, 'foreground', {
-        string: 'green',
-        'doc-string': 'green',
-        number: 'purple',
-        boolean: 'purple',
+      syntax: {
+        comment: 'foreground',
+        constant: 'purple',
+        entity: 'frost',
+        invalid: 'red',
         keyword: 'blue',
-        'control-keyword': 'blue',
-        'definition-keyword': 'blue',
-        operator: 'blue',
-        function: 'frost',
-        type: 'frost',
-      }),
+        markup: 'foreground',
+        storage: 'blue',
+        string: 'green',
+        support: 'cyan',
+        variable: 'foreground',
+        'entity.name.tag': 'blue',
+        'variable.other.property': 'cyan',
+        'variable.parameter': 'yellow',
+      },
       terminal: roleMap(TERMINAL_ROLES, 'ansi-black', {
         black: 'ansi-black',
         red: 'ansi-red',
@@ -1322,15 +1275,21 @@ const gruvboxTheme = definePaletteTheme(
         'diff-addition-background': 'diffAddition',
         'diff-deletion-background': 'diffDeletion',
       }),
-      syntax: roleMap(SYNTAX_ROLES, 'foreground', {
-        type: 'yellow',
-        function: 'yellow',
-        number: 'purple',
-        boolean: 'purple',
-        inserted: 'foreground',
-        deleted: 'foreground',
-        changed: 'foreground',
-      }),
+      syntax: {
+        comment: 'comment',
+        constant: 'purple',
+        entity: 'yellow',
+        invalid: 'red',
+        keyword: 'red',
+        markup: 'foreground',
+        storage: 'red',
+        string: 'green',
+        support: 'aqua',
+        variable: 'foreground',
+        'constant.character.escape': 'orange',
+        'entity.name.tag': 'blue',
+        'variable.other.property': 'aqua',
+      },
       terminal: roleMap(TERMINAL_ROLES, 'ansi-black', {
         black: 'ansi-black',
         red: 'ansi-red',
@@ -1481,15 +1440,24 @@ const solarizedTheme = definePaletteTheme(
         'diff-addition-background': 'diffAddition',
         'diff-deletion-background': 'diffDeletion',
       }),
-      syntax: roleMap(SYNTAX_ROLES, 'foreground', {
-        type: 'blue',
-        function: 'blue',
-        number: 'magenta',
-        boolean: 'magenta',
-        inserted: 'darkBlue',
-        deleted: 'darkBlue',
-        changed: 'darkBlue',
-      }),
+      syntax: {
+        comment: 'foreground',
+        constant: 'magenta',
+        entity: 'blue',
+        invalid: 'red',
+        keyword: 'orange',
+        markup: 'foreground',
+        storage: 'orange',
+        string: 'blue',
+        support: 'magenta',
+        variable: 'foreground',
+        'markup.inserted': 'darkBlue',
+        'markup.deleted': 'darkBlue',
+        'markup.changed': 'darkBlue',
+        'constant.character.escape': 'magenta',
+        'entity.name.tag': 'blue',
+        'variable.other.property': 'blue',
+      },
       terminal: roleMap(TERMINAL_ROLES, 'ansi-black', {
         black: 'ansi-black',
         red: 'ansi-red',
@@ -1640,18 +1608,20 @@ const catppuccinMochaTheme = definePaletteTheme(
         'diff-addition-background': 'diffAddition',
         'diff-deletion-background': 'diffDeletion',
       }),
-      syntax: roleMap(SYNTAX_ROLES, 'foreground', {
-        string: 'green',
-        'doc-string': 'green',
-        number: 'peach',
-        boolean: 'peach',
+      syntax: {
+        comment: 'foreground',
+        constant: 'blue',
+        entity: 'mauve',
+        invalid: 'red',
         keyword: 'red',
-        'control-keyword': 'red',
-        'definition-keyword': 'red',
-        operator: 'red',
-        function: 'mauve',
-        type: 'mauve',
-      }),
+        markup: 'foreground',
+        storage: 'red',
+        string: 'teal',
+        support: 'blue',
+        variable: 'foreground',
+        'entity.name.tag': 'blue',
+        'variable.other.property': 'blue',
+      },
       terminal: roleMap(TERMINAL_ROLES, 'ansi-black', {
         black: 'ansi-black',
         red: 'ansi-red',
@@ -1803,7 +1773,20 @@ const catppuccinLatteTheme = definePaletteTheme(
         'diff-addition-background': 'diffAddition',
         'diff-deletion-background': 'diffDeletion',
       }),
-      syntax: roleMap(SYNTAX_ROLES, 'foreground'),
+      syntax: {
+        comment: 'foreground',
+        constant: 'blue',
+        entity: 'mauve',
+        invalid: 'red',
+        keyword: 'red',
+        markup: 'foreground',
+        storage: 'red',
+        string: 'teal',
+        support: 'blue',
+        variable: 'foreground',
+        'entity.name.tag': 'blue',
+        'variable.other.property': 'blue',
+      },
       terminal: roleMap(TERMINAL_ROLES, 'ansi-black', {
         black: 'ansi-black',
         red: 'ansi-red',
@@ -1960,57 +1943,46 @@ const everforestMediumDarkTheme = definePaletteTheme(
         'diff-addition-background': 'diffAddition',
         'diff-deletion-background': 'diffDeletion',
       }),
-      syntax: roleMap(SYNTAX_ROLES, 'foreground', {
+      syntax: {
         comment: 'comment',
-        'doc-comment': 'comment',
-        type: 'yellow',
-        tag: 'orange',
-        property: 'blue',
-        attribute: 'orange',
-        class: 'yellow',
-        label: 'orange',
-        namespace: 'yellow',
-        macro: 'aqua',
-        constant: 'aqua',
-        function: 'green',
-        'built-in': 'green',
-        keyword: 'red',
-        'control-keyword': 'red',
-        'definition-keyword': 'red',
-        modifier: 'red',
-        'operator-keyword': 'orange',
-        operator: 'foreground',
-        punctuation: 'comment',
-        separator: 'comment',
-        string: 'green',
-        'doc-string': 'green',
-        character: 'green',
-        'attribute-value': 'orange',
-        number: 'purple',
-        boolean: 'purple',
-        null: 'red',
-        regexp: 'green',
-        escape: 'aqua',
-        color: 'aqua',
-        url: 'blue',
-        heading: 'orange',
-        'content-separator': 'comment',
-        list: 'red',
-        quote: 'yellow',
-        emphasis: 'orange',
-        strong: 'orange',
-        link: 'blue',
-        monospace: 'yellow',
-        strikethrough: 'comment',
-        inserted: 'foreground',
-        deleted: 'foreground',
-        changed: 'foreground',
+        constant: 'purple',
+        entity: 'green',
         invalid: 'red',
+        keyword: 'red',
+        markup: 'orange',
+        storage: 'red',
+        string: 'green',
+        support: 'green',
+        variable: 'foreground',
         meta: 'blue',
-        'document-meta': 'comment',
-        annotation: 'yellow',
-        'processing-instruction': 'purple',
-      }),
+        'constant.character.escape': 'aqua',
+        'constant.language': 'purple',
+        'constant.numeric': 'purple',
+        'constant.other': 'aqua',
+        'entity.name.function': 'green',
+        'entity.name.function.macro': 'aqua',
+        'entity.name.label': 'orange',
+        'entity.name.namespace': 'yellow',
+        'entity.name.tag': 'orange',
+        'entity.name.type': 'yellow',
+        'entity.other.attribute-name': 'orange',
+        'keyword.operator': 'foreground',
+        'markup.bold': 'orange',
+        'markup.changed': 'foreground',
+        'markup.deleted': 'foreground',
+        'markup.heading': 'orange',
+        'markup.inserted': 'foreground',
+        'markup.italic': 'orange',
+        'markup.list': 'red',
+        'markup.quote': 'yellow',
+        'markup.raw': 'yellow',
+        'markup.strikethrough': 'comment',
+        'markup.underline.link': 'blue',
+        'storage.modifier': 'red',
+        'storage.type': 'red',
+        'string.regexp': 'green',
+        'variable.other.property': 'blue',
+      },
       terminal: roleMap(TERMINAL_ROLES, 'ansi-black', {
         black: 'ansi-black',
         red: 'ansi-red',

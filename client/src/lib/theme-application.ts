@@ -1,4 +1,4 @@
-import type { ResolvedTheme } from '@pimote/shared';
+import { SYNTAX_SCOPES, editorPropertyName, type ResolvedTheme } from '@pimote/shared';
 import { setActiveTheme } from './theme-runtime.svelte.js';
 
 /** DOM boundary used when applying one resolved theme to a PWA document. */
@@ -15,7 +15,7 @@ function writeSlots(root: HTMLElement, prefix: string, values: Record<string, st
 export function applyResolvedTheme(theme: ResolvedTheme, target: ThemeApplicationTarget): void {
   writeSlots(target.root, '--pimote-ui', theme.ui);
   writeSlots(target.root, '--pimote-editor', theme.editor.surface);
-  writeSlots(target.root, '--pimote-editor', theme.editor.syntax);
+  for (const scope of SYNTAX_SCOPES) target.root.style.setProperty(editorPropertyName(scope), theme.editor.syntax[scope]);
   writeSlots(target.root, '--pimote-terminal', theme.editor.terminal);
   target.root.classList.toggle('dark', theme.colorScheme === 'dark');
   target.root.style.setProperty('color-scheme', theme.colorScheme);

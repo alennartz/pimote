@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Compartment, EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { javascript } from '@codemirror/lang-javascript';
-import type { AnsiColorName, ResolvedTheme } from '@pimote/shared';
+import { SYNTAX_SCOPES, editorPropertyName, type AnsiColorName, type ResolvedTheme } from '@pimote/shared';
 import { resolvedTheme } from '../../../shared/test/theme-fixtures.js';
 import { ansiToHtml } from './ansi-to-html.js';
 import { ensureHljs, highlightToHtml } from './code-highlight.js';
@@ -28,8 +28,8 @@ function installThemeVariables(theme: ResolvedTheme): void {
   for (const [role, value] of Object.entries(theme.editor.surface)) {
     document.documentElement.style.setProperty(`--pimote-editor-${role}`, value);
   }
-  for (const [role, value] of Object.entries(theme.editor.syntax)) {
-    document.documentElement.style.setProperty(`--pimote-editor-${role}`, value);
+  for (const scope of SYNTAX_SCOPES) {
+    document.documentElement.style.setProperty(editorPropertyName(scope), theme.editor.syntax[scope]);
   }
   for (const [role, value] of Object.entries(theme.editor.terminal)) {
     document.documentElement.style.setProperty(`--pimote-terminal-${role}`, value);
@@ -63,8 +63,8 @@ function codeTheme(id: string, background: string, comment: string, string: stri
   const theme = resolvedTheme(id);
   theme.editor.surface.background = background;
   theme.editor.syntax.comment = comment;
-  theme.editor.syntax.string = string;
-  theme.editor.syntax.number = number;
+  theme.editor.syntax['string.quoted'] = string;
+  theme.editor.syntax['constant.numeric'] = number;
   return theme;
 }
 
@@ -73,12 +73,12 @@ const dark = codeTheme('test/dark', '#101112', '#abcdef', '#bcdef0', '#cdef01');
 const code = '// note\nconst value = "hello";\nconst count = 42;';
 
 function expectSyntaxColors(root: HTMLElement, theme: ResolvedTheme): void {
-  for (const [text, role] of [
+  for (const [text, scope] of [
     ['// note', 'comment'],
-    ['"hello"', 'string'],
-    ['42', 'number'],
+    ['"hello"', 'string.quoted'],
+    ['42', 'constant.numeric'],
   ] as const) {
-    expect(renderedColor(tokenElement(root, text)), role).toBe(cssColor(theme.editor.syntax[role]));
+    expect(renderedColor(tokenElement(root, text)), scope).toBe(cssColor(theme.editor.syntax[scope]));
   }
 }
 

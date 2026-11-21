@@ -1,4 +1,5 @@
-import type { AnsiColorName, EditorSurfaceRole, EditorSyntaxRole, ResolvedTheme, ThemeDefinition, ThemeSourceKind, UiColorToken } from '../src/themes.js';
+import type { AnsiColorName, EditorSurfaceRole, ResolvedTheme, SyntaxScope, ThemeDefinition, ThemeSourceKind, UiColorToken } from '../src/themes.js';
+import { SYNTAX_SCOPES } from '../src/themes.js';
 
 const uiTokens: UiColorToken[] = [
   'background',
@@ -82,63 +83,6 @@ const surfaceRoles: EditorSurfaceRole[] = [
   'diff-deletion-background',
 ];
 
-const syntaxRoles: EditorSyntaxRole[] = [
-  'comment',
-  'doc-comment',
-  'name',
-  'variable',
-  'parameter',
-  'type',
-  'tag',
-  'property',
-  'attribute',
-  'class',
-  'label',
-  'namespace',
-  'macro',
-  'constant',
-  'function',
-  'built-in',
-  'keyword',
-  'control-keyword',
-  'definition-keyword',
-  'modifier',
-  'operator-keyword',
-  'operator',
-  'punctuation',
-  'separator',
-  'bracket',
-  'string',
-  'doc-string',
-  'character',
-  'attribute-value',
-  'number',
-  'boolean',
-  'null',
-  'regexp',
-  'escape',
-  'color',
-  'url',
-  'content',
-  'heading',
-  'content-separator',
-  'list',
-  'quote',
-  'emphasis',
-  'strong',
-  'link',
-  'monospace',
-  'strikethrough',
-  'inserted',
-  'deleted',
-  'changed',
-  'invalid',
-  'meta',
-  'document-meta',
-  'annotation',
-  'processing-instruction',
-];
-
 const terminalRoles: AnsiColorName[] = [
   'black',
   'red',
@@ -171,7 +115,7 @@ export function resolvedTheme(id: string, name = id, source: ThemeSourceKind = '
     ui: colors(uiTokens, '#111111'),
     editor: {
       surface: colors(surfaceRoles, '#222222'),
-      syntax: colors(syntaxRoles, '#333333'),
+      syntax: colors(SYNTAX_SCOPES as readonly SyntaxScope[], '#333333'),
       terminal: colors(terminalRoles, '#444444'),
     },
   };

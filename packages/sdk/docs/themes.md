@@ -24,7 +24,23 @@ The `ui` map requires `background`, `foreground`, `card`, `card-foreground`, `po
 
 The `editor.surface` map requires `background`, `foreground`, `selection`, `selection-foreground`, `cursor`, `active-line`, `gutter-background`, `gutter-foreground`, `line-number`, `active-line-number`, `matching-bracket`, `search-match`, `diff-addition-background`, and `diff-deletion-background`.
 
-The `editor.syntax` map requires `comment`, `doc-comment`, `name`, `variable`, `parameter`, `type`, `tag`, `property`, `attribute`, `class`, `label`, `namespace`, `macro`, `constant`, `function`, `built-in`, `keyword`, `control-keyword`, `definition-keyword`, `modifier`, `operator-keyword`, `operator`, `punctuation`, `separator`, `bracket`, `string`, `doc-string`, `character`, `attribute-value`, `number`, `boolean`, `null`, `regexp`, `escape`, `color`, `url`, `content`, `heading`, `content-separator`, `list`, `quote`, `emphasis`, `strong`, `link`, `monospace`, `strikethrough`, `inserted`, `deleted`, `changed`, `invalid`, `meta`, `document-meta`, `annotation`, and `processing-instruction`.
+The `editor.syntax` map uses the TextMate root groups. A standalone theme requires every root except `meta`, which carries structure rather than paint and defaults to the editor foreground:
+
+`comment`, `constant`, `entity`, `invalid`, `keyword`, `markup`, `storage`, `string`, `support`, `variable`.
+
+Child scopes are optional. An unset child takes its root color:
+
+- `comment`: `comment.documentation`
+- `constant`: `constant.numeric`, `constant.language`, `constant.character.escape`, `constant.other`
+- `entity`: `entity.name.function`, `entity.name.function.macro`, `entity.name.type`, `entity.name.tag`, `entity.name.namespace`, `entity.name.label`, `entity.other.attribute-name`
+- `keyword`: `keyword.control`, `keyword.operator`
+- `markup`: `markup.heading`, `markup.list`, `markup.quote`, `markup.italic`, `markup.bold`, `markup.underline.link`, `markup.raw`, `markup.strikethrough`, `markup.inserted`, `markup.deleted`, `markup.changed`
+- `storage`: `storage.type`, `storage.modifier`
+- `string`: `string.quoted`, `string.regexp`, `string.other`
+- `support`: `support.function`, `support.type`, `support.constant`, `support.variable`
+- `variable`: `variable.parameter`, `variable.other`, `variable.other.property`, `variable.other.enum-member`, `variable.language`
+
+The editor renders each scope through CodeMirror tags or a Highlight.js class, so a theme that sets only roots colors every language alike. Theme files that use the retired flat role names still load; each name maps to its nearest scope, such as `function` to `entity.name.function` and `inserted` to `markup.inserted`.
 
 The `editor.terminal` map requires `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, `bright-black`, `bright-red`, `bright-green`, `bright-yellow`, `bright-blue`, `bright-magenta`, `bright-cyan`, and `bright-white`. Extended 256-color ANSI indices retain their standard mapping.
 

@@ -1,4 +1,4 @@
-import { OPTIONAL_UI_ROLE_FALLBACKS, type ResolvedTheme } from '@pimote/shared';
+import { OPTIONAL_UI_ROLE_FALLBACKS, SYNTAX_SCOPES, editorPropertyName, type ResolvedTheme } from '@pimote/shared';
 import type { ThemeApplicationTarget } from './theme-application.js';
 import { applyResolvedTheme } from './theme-application.js';
 
@@ -96,62 +96,7 @@ const SURFACE_KEYS = [
   'diff-addition-background',
   'diff-deletion-background',
 ];
-const SYNTAX_KEYS = [
-  'comment',
-  'doc-comment',
-  'name',
-  'variable',
-  'parameter',
-  'type',
-  'tag',
-  'property',
-  'attribute',
-  'class',
-  'label',
-  'namespace',
-  'macro',
-  'constant',
-  'function',
-  'built-in',
-  'keyword',
-  'control-keyword',
-  'definition-keyword',
-  'modifier',
-  'operator-keyword',
-  'operator',
-  'punctuation',
-  'separator',
-  'bracket',
-  'string',
-  'doc-string',
-  'character',
-  'attribute-value',
-  'number',
-  'boolean',
-  'null',
-  'regexp',
-  'escape',
-  'color',
-  'url',
-  'content',
-  'heading',
-  'content-separator',
-  'list',
-  'quote',
-  'emphasis',
-  'strong',
-  'link',
-  'monospace',
-  'strikethrough',
-  'inserted',
-  'deleted',
-  'changed',
-  'invalid',
-  'meta',
-  'document-meta',
-  'annotation',
-  'processing-instruction',
-];
+const SYNTAX_KEYS = SYNTAX_SCOPES;
 const TERMINAL_KEYS = [
   'black',
   'red',
@@ -201,7 +146,7 @@ function normalizeCachedTheme(value: unknown): ResolvedTheme | null {
 const cacheProperties = [
   ...UI_KEYS.map((key) => `--pimote-ui-${key}`),
   ...SURFACE_KEYS.map((key) => `--pimote-editor-${key}`),
-  ...SYNTAX_KEYS.map((key) => `--pimote-editor-${key}`),
+  ...SYNTAX_KEYS.map((scope) => editorPropertyName(scope)),
   ...TERMINAL_KEYS.map((key) => `--pimote-terminal-${key}`),
 ];
 

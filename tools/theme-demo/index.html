@@ -60,11 +60,11 @@
         --pimote-editor-comment: CanvasText;
         --pimote-editor-keyword: LinkText;
         --pimote-editor-string: CanvasText;
-        --pimote-editor-number: LinkText;
-        --pimote-editor-function: LinkText;
-        --pimote-editor-type: CanvasText;
-        --pimote-editor-inserted: CanvasText;
-        --pimote-editor-deleted: CanvasText;
+        --pimote-editor-constant-numeric: LinkText;
+        --pimote-editor-entity-name-function: LinkText;
+        --pimote-editor-entity-name-type: CanvasText;
+        --pimote-editor-markup-inserted: CanvasText;
+        --pimote-editor-markup-deleted: CanvasText;
         --pimote-terminal-red: red;
         --pimote-terminal-green: green;
         --pimote-terminal-yellow: orange;
@@ -522,13 +522,13 @@
         color: var(--pimote-editor-string);
       }
       .editor .number {
-        color: var(--pimote-editor-number);
+        color: var(--pimote-editor-constant-numeric);
       }
       .editor .function {
-        color: var(--pimote-editor-function);
+        color: var(--pimote-editor-entity-name-function);
       }
       .editor .type {
-        color: var(--pimote-editor-type);
+        color: var(--pimote-editor-entity-name-type);
       }
       .editor .selection {
         background: var(--pimote-editor-selection);
@@ -564,11 +564,11 @@
       }
       .diff-line.add {
         background: var(--pimote-editor-diff-addition-background);
-        color: var(--pimote-editor-inserted);
+        color: var(--pimote-editor-markup-inserted);
       }
       .diff-line.remove {
         background: var(--pimote-editor-diff-deletion-background);
-        color: var(--pimote-editor-deleted);
+        color: var(--pimote-editor-markup-deleted);
       }
       .diff-line.context {
         color: var(--pimote-editor-foreground);
@@ -949,7 +949,7 @@
         document.documentElement.style.setProperty('color-scheme', theme.colorScheme);
         for (const [role, value] of Object.entries(theme.ui)) setToken('pimote-ui', role, value);
         for (const [role, value] of Object.entries(theme.editor.surface)) setToken('pimote-editor', role, value);
-        for (const [role, value] of Object.entries(theme.editor.syntax)) setToken('pimote-editor', role, value);
+        for (const [scope, value] of Object.entries(theme.editor.syntax)) setToken('pimote-editor', scope.replaceAll('.', '-'), value);
         for (const [role, value] of Object.entries(theme.editor.terminal)) setToken('pimote-terminal', role, value);
         scheme.textContent = `${theme.colorScheme} · ${theme.source}`;
         localStorage.setItem('pimote-theme-demo', theme.id);

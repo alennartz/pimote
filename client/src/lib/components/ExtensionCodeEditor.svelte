@@ -4,7 +4,7 @@
   import { EditorView, keymap } from '@codemirror/view';
   import { indentWithTab } from '@codemirror/commands';
   import { basicSetup } from 'codemirror';
-  import type { ResolvedTheme } from '@pimote/shared';
+  import { EDITOR_SURFACE_ROLES, SYNTAX_SCOPES, editorPropertyName, type EditorSurfaceRole, type ResolvedTheme, type SyntaxScope } from '@pimote/shared';
   import { createCodeMirrorTheme } from '$lib/codemirror-theme.js';
   import { themeRuntime } from '$lib/theme-runtime.svelte.js';
   import { getCodeMirrorLanguageExtension } from '$lib/codemirror-language.js';
@@ -28,78 +28,6 @@
 
   const languageCompartment = new Compartment();
   const themeCompartment = new Compartment();
-  const surfaceRoles = [
-    'background',
-    'foreground',
-    'selection',
-    'selection-foreground',
-    'cursor',
-    'active-line',
-    'gutter-background',
-    'gutter-foreground',
-    'line-number',
-    'active-line-number',
-    'matching-bracket',
-    'search-match',
-    'diff-addition-background',
-    'diff-deletion-background',
-  ] as const;
-  const syntaxRoles = [
-    'comment',
-    'doc-comment',
-    'name',
-    'variable',
-    'parameter',
-    'type',
-    'tag',
-    'property',
-    'attribute',
-    'class',
-    'label',
-    'namespace',
-    'macro',
-    'constant',
-    'function',
-    'built-in',
-    'keyword',
-    'control-keyword',
-    'definition-keyword',
-    'modifier',
-    'operator-keyword',
-    'operator',
-    'punctuation',
-    'separator',
-    'bracket',
-    'string',
-    'doc-string',
-    'character',
-    'attribute-value',
-    'number',
-    'boolean',
-    'null',
-    'regexp',
-    'escape',
-    'color',
-    'url',
-    'content',
-    'heading',
-    'content-separator',
-    'list',
-    'quote',
-    'emphasis',
-    'strong',
-    'link',
-    'monospace',
-    'strikethrough',
-    'inserted',
-    'deleted',
-    'changed',
-    'invalid',
-    'meta',
-    'document-meta',
-    'annotation',
-    'processing-instruction',
-  ] as const;
   const terminalRoles = [
     'black',
     'red',
@@ -120,7 +48,8 @@
   ] as const;
 
   function cssTheme(): ResolvedTheme {
-    const map = (prefix: string, roles: readonly string[]): Record<string, string> => Object.fromEntries([...roles].map((role) => [role, `var(--pimote-${prefix}-${role})`]));
+    const declared = <K extends SyntaxScope | EditorSurfaceRole>(tokens: readonly K[]): Record<K, string> =>
+      Object.fromEntries(tokens.map((token) => [token, `var(${editorPropertyName(token)})`])) as Record<K, string>;
     const dark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
     return {
       id: 'runtime/css',
@@ -129,9 +58,9 @@
       colorScheme: dark ? 'dark' : 'light',
       ui: {} as ResolvedTheme['ui'],
       editor: {
-        surface: map('editor', surfaceRoles) as ResolvedTheme['editor']['surface'],
-        syntax: map('editor', syntaxRoles) as ResolvedTheme['editor']['syntax'],
-        terminal: map('terminal', terminalRoles) as ResolvedTheme['editor']['terminal'],
+        surface: declared(EDITOR_SURFACE_ROLES),
+        syntax: declared(SYNTAX_SCOPES),
+        terminal: Object.fromEntries(terminalRoles.map((role) => [role, `var(--pimote-terminal-${role})`])) as ResolvedTheme['editor']['terminal'],
       },
     };
   }

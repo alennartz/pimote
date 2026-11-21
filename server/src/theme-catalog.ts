@@ -3,8 +3,8 @@ import { OPTIONAL_UI_ROLE_FALLBACKS } from '../../shared/dist/index.js';
 import type {
   AnsiColorName,
   EditorSurfaceRole,
-  EditorSyntaxRole,
   ResolvedTheme,
+  SyntaxScope,
   ThemeCatalogSnapshot,
   ThemeColorValue,
   ThemeDefinition,
@@ -12,6 +12,7 @@ import type {
   ThemeSourceKind,
   UiColorToken,
 } from '../../shared/dist/index.js';
+import { LEGACY_SYNTAX_ROLE_SCOPES, REQUIRED_SYNTAX_ROOTS, SYNTAX_CHILDREN, SYNTAX_SCOPES, syntaxScopeRoot } from '../../shared/dist/index.js';
 import { builtinThemeDefinitions } from './builtin-themes.js';
 import { BUILTIN_THEME_IDS, normalizeBuiltinThemeId } from './theme-ids.js';
 
@@ -106,6 +107,7 @@ const UI_TOKENS: readonly UiColorToken[] = [
   'shadow-color',
 ];
 const OPTIONAL_UI_ROLES = Object.keys(OPTIONAL_UI_ROLE_FALLBACKS);
+const OPTIONAL_SYNTAX_SCOPES = ['meta', ...SYNTAX_CHILDREN] as const;
 const SURFACE_ROLES: readonly EditorSurfaceRole[] = [
   'background',
   'foreground',
@@ -121,62 +123,6 @@ const SURFACE_ROLES: readonly EditorSurfaceRole[] = [
   'search-match',
   'diff-addition-background',
   'diff-deletion-background',
-];
-const SYNTAX_ROLES: readonly EditorSyntaxRole[] = [
-  'comment',
-  'doc-comment',
-  'name',
-  'variable',
-  'parameter',
-  'type',
-  'tag',
-  'property',
-  'attribute',
-  'class',
-  'label',
-  'namespace',
-  'macro',
-  'constant',
-  'function',
-  'built-in',
-  'keyword',
-  'control-keyword',
-  'definition-keyword',
-  'modifier',
-  'operator-keyword',
-  'operator',
-  'punctuation',
-  'separator',
-  'bracket',
-  'string',
-  'doc-string',
-  'character',
-  'attribute-value',
-  'number',
-  'boolean',
-  'null',
-  'regexp',
-  'escape',
-  'color',
-  'url',
-  'content',
-  'heading',
-  'content-separator',
-  'list',
-  'quote',
-  'emphasis',
-  'strong',
-  'link',
-  'monospace',
-  'strikethrough',
-  'inserted',
-  'deleted',
-  'changed',
-  'invalid',
-  'meta',
-  'document-meta',
-  'annotation',
-  'processing-instruction',
 ];
 const TERMINAL_ROLES: readonly AnsiColorName[] = [
   'black',
@@ -216,7 +162,11 @@ function cloneDefinition(definition: ThemeDefinition): ThemeDefinition {
     ...(definition.extends ? { extends: definition.extends } : {}),
     ...(definition.palette ? { palette: { ...definition.palette } } : {}),
     ui: { ...definition.ui },
-    editor: { surface: { ...definition.editor.surface }, syntax: { ...definition.editor.syntax }, terminal: { ...definition.editor.terminal } },
+    editor: {
+      surface: { ...definition.editor.surface },
+      syntax: { ...definition.editor.syntax },
+      terminal: { ...definition.editor.terminal },
+    },
   };
 }
 
@@ -231,6 +181,17 @@ function validLiteral(value: string): boolean {
 function validateColorValue(value: unknown): value is ThemeColorValue {
   if (typeof value === 'string') return validLiteral(value);
   return isRecord(value) && typeof value.palette === 'string' && value.palette.trim().length > 0 && Object.keys(value).every((key) => key === 'palette');
+}
+
+/** Accept the flat role names that predate the TextMate roots. */
+function normalizeSyntaxScopes(value: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, color] of Object.entries(value)) {
+    const scope = LEGACY_SYNTAX_ROLE_SCOPES[key] ?? key;
+    if (scope !== key && scope in result) continue;
+    result[scope] = color;
+  }
+  return result;
 }
 
 function validateRoleMap(value: unknown, roles: readonly string[], allowPartial: boolean, label: string, optionalRoles: readonly string[] = []): string | null {
@@ -264,7 +225,9 @@ function validateDefinition(value: unknown): { definition?: ThemeDefinition; mes
   if (!isRecord(value.editor)) return { message: 'editor must be an object' };
   const surfaceError = validateRoleMap(value.editor.surface, SURFACE_ROLES, value.extends !== undefined, 'editor.surface');
   if (surfaceError) return { message: surfaceError };
-  const syntaxError = validateRoleMap(value.editor.syntax, SYNTAX_ROLES, value.extends !== undefined, 'editor.syntax');
+  if (!isRecord(value.editor.syntax)) return { message: 'editor.syntax must be an object' };
+  const syntaxValues = normalizeSyntaxScopes(value.editor.syntax);
+  const syntaxError = validateRoleMap(syntaxValues, SYNTAX_SCOPES, value.extends !== undefined, 'editor.syntax', OPTIONAL_SYNTAX_SCOPES);
   if (syntaxError) return { message: syntaxError };
   const terminalError = validateRoleMap(value.editor.terminal, TERMINAL_ROLES, value.extends !== undefined, 'editor.terminal');
   if (terminalError) return { message: terminalError };
@@ -278,7 +241,7 @@ function validateDefinition(value: unknown): { definition?: ThemeDefinition; mes
       ui: { ...(value.ui as Record<UiColorToken, ThemeColorValue>) },
       editor: {
         surface: { ...(value.editor.surface as Record<EditorSurfaceRole, ThemeColorValue>) },
-        syntax: { ...(value.editor.syntax as Record<EditorSyntaxRole, ThemeColorValue>) },
+        syntax: { ...(syntaxValues as Record<SyntaxScope, ThemeColorValue>) },
         terminal: { ...(value.editor.terminal as Record<AnsiColorName, ThemeColorValue>) },
       },
     },
@@ -318,6 +281,14 @@ function resolveValue(value: ThemeColorValue | undefined, palette: Readonly<Reco
   return palette[value.palette];
 }
 
+/** Every child scope takes its root color unless the theme set the child itself. */
+function fillSyntaxScopes(values: Readonly<Partial<Record<SyntaxScope, string>>>, foreground: string): Record<SyntaxScope, string> {
+  const result = { meta: values.meta ?? foreground } as Record<SyntaxScope, string>;
+  for (const root of REQUIRED_SYNTAX_ROOTS) result[root] = values[root] ?? foreground;
+  for (const child of SYNTAX_CHILDREN) result[child] = values[child] ?? result[syntaxScopeRoot(child)];
+  return result;
+}
+
 function mergeRecord<K extends string>(
   parent: Readonly<Record<K, string>> | undefined,
   own: Readonly<Partial<Record<K, ThemeColorValue>>>,
@@ -339,6 +310,7 @@ function resolveDefinitions(entries: readonly SourceEntry[], diagnostics: ThemeD
   const resolved = new Map<string, ResolvedTheme>();
   const resolvedCandidateIndexes = new Map<string, number>();
   const resolvedPalettes = new Map<string, Record<string, string>>();
+  const explicitSyntax = new Map<string, Record<string, string>>();
   const resolving: string[] = [];
   const failed = new Set<number>();
 
@@ -363,11 +335,12 @@ function resolveDefinitions(entries: readonly SourceEntry[], diagnostics: ThemeD
             if (!(role in ui)) ui[role] = ui[fallback];
           }
           const surface = mergeRecord(parent?.editor.surface, definition.editor.surface, palette, 'editor.surface');
-          const syntax = mergeRecord(parent?.editor.syntax, definition.editor.syntax, palette, 'editor.syntax');
+          const syntaxValues = mergeRecord(parent ? explicitSyntax.get(parent.id) : undefined, definition.editor.syntax, palette, 'editor.syntax');
           const terminal = mergeRecord(parent?.editor.terminal, definition.editor.terminal, palette, 'editor.terminal');
           for (const role of UI_TOKENS) if (!(role in ui)) throw new Error(`ui.${role} is required`);
           for (const role of SURFACE_ROLES) if (!(role in surface)) throw new Error(`editor.surface.${role} is required`);
-          for (const role of SYNTAX_ROLES) if (!(role in syntax)) throw new Error(`editor.syntax.${role} is required`);
+          for (const root of REQUIRED_SYNTAX_ROOTS) if (!(root in syntaxValues)) throw new Error(`editor.syntax.${root} is required`);
+          const syntax = fillSyntaxScopes(syntaxValues, surface.foreground);
           for (const role of TERMINAL_ROLES) if (!(role in terminal)) throw new Error(`editor.terminal.${role} is required`);
           const theme: ResolvedTheme = {
             id: definition.id,
@@ -380,6 +353,7 @@ function resolveDefinitions(entries: readonly SourceEntry[], diagnostics: ThemeD
           resolved.set(id, theme);
           resolvedCandidateIndexes.set(id, candidate.index);
           resolvedPalettes.set(id, palette);
+          explicitSyntax.set(id, syntaxValues);
           return theme;
         } catch (error) {
           failed.add(candidate.index);

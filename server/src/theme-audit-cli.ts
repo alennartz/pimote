@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { builtinThemeDefinitions } from './builtin-themes.js';
 import { ThemeCatalog, type ThemeCatalogOptions } from './theme-catalog.js';
-import { auditClientMappings, auditThemes, formatThemeAudit } from './theme-audit.js';
+import { auditClientMappings, auditThemes, declaredEditorProperties, formatThemeAudit } from './theme-audit.js';
 
 interface CliOptions {
   files: string[];
@@ -83,7 +83,7 @@ async function main(): Promise<void> {
   const report = auditThemes(snapshot.themes);
   const repositoryRoot = process.cwd().endsWith('/server') ? join(process.cwd(), '..') : process.cwd();
   const highlightThemeCss = await readFile(join(repositoryRoot, 'client/src/lib/highlight-theme.css'), 'utf8');
-  const mappingFindings = auditClientMappings(highlightThemeCss);
+  const mappingFindings = auditClientMappings(highlightThemeCss, declaredEditorProperties());
   if (options.json) {
     console.log(JSON.stringify({ report, mappingFindings, diagnostics: snapshot.diagnostics }, null, 2));
   } else {

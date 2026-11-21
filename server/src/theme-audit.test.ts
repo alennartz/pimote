@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolvedTheme } from '../../shared/test/theme-fixtures.js';
-import { auditClientMappings, auditThemes, formatThemeAudit } from './theme-audit.js';
+import { auditClientMappings, auditThemes, declaredEditorProperties, formatThemeAudit } from './theme-audit.js';
 
 describe('theme audit', () => {
   it('reports pair violations with their relationships', () => {
@@ -9,8 +9,8 @@ describe('theme audit', () => {
     theme.editor.surface.foreground = '#000000';
     theme.editor.surface.selection = '#ffffff';
     theme.editor.surface['selection-foreground'] = '#ffffff';
-    theme.editor.syntax.variable = '#ffffff';
-    theme.editor.syntax.inserted = '#ffffff';
+    theme.editor.syntax['variable.other'] = '#ffffff';
+    theme.editor.syntax['markup.inserted'] = '#ffffff';
     theme.ui.muted = '#ffffff';
     theme.ui['muted-foreground'] = '#ffffff';
 
@@ -29,11 +29,11 @@ describe('theme audit', () => {
     theme.editor.surface.background = '#ffffff';
     theme.editor.surface.foreground = '#000000';
     theme.editor.surface.selection = '#dddddd';
-    theme.editor.syntax.variable = '#000000';
+    theme.editor.syntax['variable.other'] = '#000000';
 
     const report = auditThemes([theme]);
 
-    expect(report.findings.some((finding) => finding.rule === 'editor.syntax.variable')).toBe(false);
+    expect(report.findings.some((finding) => finding.rule === 'editor.syntax.variable.other')).toBe(false);
   });
 
   it('checks editor text on the sunken code and diff surface', () => {
@@ -194,10 +194,22 @@ describe('theme audit', () => {
   });
 
   it('flags diff CSS without dedicated diff background roles', () => {
-    expect(auditClientMappings('.hljs-addition { background: var(--pimote-editor-active-line); }')).toEqual([
+    expect(auditClientMappings('.hljs-addition { background: var(--pimote-editor-active-line); }', declaredEditorProperties())).toEqual([
       expect.objectContaining({ rule: 'mapping.editor.diff.addition-background' }),
       expect.objectContaining({ rule: 'mapping.editor.diff.deletion-background' }),
     ]);
-    expect(auditClientMappings('--pimote-editor-diff-addition-background: #dafbe1; --pimote-editor-diff-deletion-background: #ffebe9;')).toEqual([]);
+    expect(auditClientMappings('--pimote-editor-diff-addition-background: #dafbe1; --pimote-editor-diff-deletion-background: #ffebe9;', declaredEditorProperties())).toEqual([]);
+  });
+
+  it('flags editor CSS properties that no theme token declares', () => {
+    const css = [
+      '.hljs-title { color: var(--pimote-editor-entity-name-function); }',
+      '.hljs-x { color: var(--pimote-editor-doc-comment); }',
+      '.hljs-addition { background: var(--pimote-editor-diff-addition-background); }',
+      '.hljs-deletion { background: var(--pimote-editor-diff-deletion-background); }',
+    ].join('\n');
+    const findings = auditClientMappings(css, declaredEditorProperties());
+
+    expect(findings.map(({ rule }) => rule)).toEqual(['mapping.editor.doc-comment']);
   });
 });

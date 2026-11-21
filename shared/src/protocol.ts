@@ -30,7 +30,6 @@ import type { ThemeCatalogSnapshot } from './themes.js';
 export type {
   AnsiColorName,
   EditorSurfaceRole,
-  EditorSyntaxRole,
   ResolvedTheme,
   ThemeCatalogSnapshot,
   ThemeColorValue,
@@ -38,6 +37,9 @@ export type {
   ThemeDiagnostic,
   ThemeFile,
   ThemeSourceKind,
+  SyntaxChild,
+  SyntaxRoot,
+  SyntaxScope,
   UiColorToken,
 } from './themes.js';
 

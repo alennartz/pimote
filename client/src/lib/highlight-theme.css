@@ -5,49 +5,74 @@
   background: var(--pimote-editor-background, #f6f8fa);
 }
 
-.hljs-doctag,
+.hljs-doctag {
+  color: var(--pimote-editor-comment-documentation, #6e7781);
+}
+
 .hljs-keyword,
 .hljs-meta .hljs-keyword,
 .hljs-template-tag,
-.hljs-template-variable,
 .hljs-type,
 .hljs-variable.language_ {
   color: var(--pimote-editor-keyword, #cf222e);
 }
 
+.hljs-operator {
+  color: var(--pimote-editor-keyword-operator, var(--pimote-editor-keyword, #cf222e));
+}
+
 .hljs-title,
 .hljs-title.function_,
 .hljs-function .hljs-title {
-  color: var(--pimote-editor-function, #8250df);
+  color: var(--pimote-editor-entity-name-function, #8250df);
 }
 
 .hljs-title.class_,
-.hljs-title.class_.inherited__,
+.hljs-title.class_.inherited__ {
+  color: var(--pimote-editor-entity-name-type, #8250df);
+}
+
 .hljs-attr,
 .hljs-attribute,
-.hljs-literal,
-.hljs-meta,
-.hljs-operator,
 .hljs-selector-attr,
 .hljs-selector-class,
-.hljs-selector-id,
-.hljs-variable {
-  color: var(--pimote-editor-property, #0550ae);
+.hljs-selector-id {
+  color: var(--pimote-editor-entity-other-attribute-name, #0550ae);
+}
+
+.hljs-variable,
+.hljs-template-variable,
+.hljs-selector-pseudo {
+  color: var(--pimote-editor-variable-other, #0550ae);
+}
+
+.hljs-property {
+  color: var(--pimote-editor-variable-other-property, #0550ae);
 }
 
 .hljs-number {
-  color: var(--pimote-editor-number, #0550ae);
+  color: var(--pimote-editor-constant-numeric, #0550ae);
+}
+
+.hljs-literal {
+  color: var(--pimote-editor-constant-language, #0550ae);
 }
 
 .hljs-meta .hljs-string,
-.hljs-regexp,
 .hljs-string {
-  color: var(--pimote-editor-string, #0a3069);
+  color: var(--pimote-editor-string-quoted, #0a3069);
 }
 
-.hljs-built_in,
+.hljs-regexp {
+  color: var(--pimote-editor-string-regexp, #0a3069);
+}
+
+.hljs-built_in {
+  color: var(--pimote-editor-support-function, #953800);
+}
+
 .hljs-symbol {
-  color: var(--pimote-editor-built-in, #953800);
+  color: var(--pimote-editor-constant-other, #953800);
 }
 
 .hljs-code,
@@ -57,10 +82,16 @@
 }
 
 .hljs-name,
-.hljs-quote,
-.hljs-selector-pseudo,
 .hljs-selector-tag {
-  color: var(--pimote-editor-tag, #116329);
+  color: var(--pimote-editor-entity-name-tag, #116329);
+}
+
+.hljs-quote {
+  color: var(--pimote-editor-markup-quote, #116329);
+}
+
+.hljs-meta {
+  color: var(--pimote-editor-meta, #0550ae);
 }
 
 .hljs-subst {
@@ -68,30 +99,30 @@
 }
 
 .hljs-section {
-  color: var(--pimote-editor-heading, #0550ae);
+  color: var(--pimote-editor-markup-heading, #0550ae);
   font-weight: bold;
 }
 
 .hljs-bullet {
-  color: var(--pimote-editor-list, #953800);
+  color: var(--pimote-editor-markup-list, #953800);
 }
 
 .hljs-emphasis {
-  color: var(--pimote-editor-emphasis, var(--pimote-editor-foreground, #24292f));
+  color: var(--pimote-editor-markup-italic, var(--pimote-editor-foreground, #24292f));
   font-style: italic;
 }
 
 .hljs-strong {
-  color: var(--pimote-editor-strong, var(--pimote-editor-foreground, #24292f));
+  color: var(--pimote-editor-markup-bold, var(--pimote-editor-foreground, #24292f));
   font-weight: bold;
 }
 
 .hljs-addition {
-  color: var(--pimote-editor-inserted, var(--pimote-editor-foreground, #24292f));
+  color: var(--pimote-editor-markup-inserted, var(--pimote-editor-foreground, #24292f));
   background-color: var(--pimote-editor-diff-addition-background, #dafbe1);
 }
 
 .hljs-deletion {
-  color: var(--pimote-editor-deleted, var(--pimote-editor-foreground, #24292f));
+  color: var(--pimote-editor-markup-deleted, var(--pimote-editor-foreground, #24292f));
   background-color: var(--pimote-editor-diff-deletion-background, #ffebe9);
 }

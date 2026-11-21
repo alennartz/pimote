@@ -102,6 +102,146 @@ describe('ThemeCatalog', () => {
     });
   });
 
+  it('fills every child scope from its root group', async () => {
+    const flat = theme('alice/flat');
+    flat.editor.syntax = {
+      comment: '#111111',
+      keyword: '#222222',
+      string: '#333333',
+      constant: '#444444',
+      entity: '#555555',
+      markup: '#666666',
+      invalid: '#777777',
+      storage: '#888888',
+      support: '#999999',
+      variable: '#aaaaaa',
+    };
+    const reader = {
+      read: async (path: string) => (path === '/extensions/flat.json' ? JSON.stringify({ version: 1, themes: [flat] }) : JSON.stringify({ version: 1, themes: [] })),
+    };
+    const snapshot = await catalog({ extensionFiles: ['/extensions/flat.json'], reader }).load();
+    const resolved = snapshot.themes.find((entry) => entry.id === flat.id);
+
+    expect(snapshot.diagnostics).toEqual([]);
+    expect(resolved?.editor.syntax).toMatchObject({
+      comment: '#111111',
+      'comment.documentation': '#111111',
+      keyword: '#222222',
+      'keyword.control': '#222222',
+      'string.quoted': '#333333',
+      'constant.numeric': '#444444',
+      'entity.name.function': '#555555',
+      'variable.other.property': '#aaaaaa',
+    });
+    expect(resolved?.editor.syntax.meta).toBe(resolved?.editor.surface.foreground);
+  });
+
+  it('keeps a child override when a derived theme repaints its root', async () => {
+    const roots = {
+      comment: '#111111',
+      keyword: '#222222',
+      string: '#333333',
+      constant: '#444444',
+      entity: '#555555',
+      markup: '#666666',
+      invalid: '#777777',
+      storage: '#888888',
+      support: '#999999',
+      variable: '#aaaaaa',
+    };
+    const base = theme('alice/parent');
+    const parent = { ...base, editor: { surface: base.editor.surface, syntax: { ...roots, 'entity.name.function': '#abcdef' }, terminal: base.editor.terminal } };
+    const child = { ...theme('alice/child'), extends: 'alice/parent', ui: {}, editor: { surface: {}, syntax: { entity: '#123456' }, terminal: {} } };
+    const reader = {
+      read: async (path: string) => (path === '/extensions/chain.json' ? JSON.stringify({ version: 1, themes: [parent, child] }) : JSON.stringify({ version: 1, themes: [] })),
+    };
+    const snapshot = await catalog({ extensionFiles: ['/extensions/chain.json'], reader }).load();
+    const resolved = snapshot.themes.find((entry) => entry.id === child.id);
+
+    expect(resolved?.editor.syntax['entity.name.function']).toBe('#abcdef');
+    expect(resolved?.editor.syntax['entity.name.type']).toBe('#123456');
+  });
+
+  it('loads a theme file that uses the retired flat role names', async () => {
+    const legacy = theme('alice/legacy-roles');
+    legacy.editor.syntax = {
+      comment: '#111111',
+      'doc-comment': '#121212',
+      name: '#131313',
+      variable: '#141414',
+      parameter: '#151515',
+      type: '#161616',
+      tag: '#171717',
+      property: '#181818',
+      attribute: '#191919',
+      class: '#1a1a1a',
+      label: '#1b1b1b',
+      namespace: '#1c1c1c',
+      macro: '#1d1d1d',
+      constant: '#1e1e1e',
+      function: '#1f1f1f',
+      'built-in': '#202020',
+      keyword: '#212121',
+      'control-keyword': '#222222',
+      'definition-keyword': '#232323',
+      modifier: '#242424',
+      'operator-keyword': '#252525',
+      operator: '#262626',
+      punctuation: '#272727',
+      separator: '#282828',
+      bracket: '#292929',
+      string: '#2a2a2a',
+      'doc-string': '#2b2b2b',
+      character: '#2c2c2c',
+      'attribute-value': '#2d2d2d',
+      number: '#2e2e2e',
+      boolean: '#2f2f2f',
+      null: '#303030',
+      regexp: '#313131',
+      escape: '#323232',
+      color: '#333333',
+      url: '#343434',
+      content: '#353535',
+      heading: '#363636',
+      'content-separator': '#373737',
+      list: '#383838',
+      quote: '#393939',
+      emphasis: '#3a3a3a',
+      strong: '#3b3b3b',
+      link: '#3c3c3c',
+      monospace: '#3d3d3d',
+      strikethrough: '#3e3e3e',
+      inserted: '#3f3f3f',
+      deleted: '#404040',
+      changed: '#414141',
+      invalid: '#424242',
+      meta: '#434343',
+      'document-meta': '#444444',
+      annotation: '#454545',
+      'processing-instruction': '#464646',
+    };
+    const reader = {
+      read: async (path: string) => (path === '/extensions/legacy-roles.json' ? JSON.stringify({ version: 1, themes: [legacy] }) : JSON.stringify({ version: 1, themes: [] })),
+    };
+    const snapshot = await catalog({ extensionFiles: ['/extensions/legacy-roles.json'], reader }).load();
+    const resolved = snapshot.themes.find((entry) => entry.id === legacy.id);
+
+    expect(snapshot.diagnostics).toEqual([]);
+    expect(resolved?.editor.syntax).toMatchObject({
+      comment: '#111111',
+      'comment.documentation': '#121212',
+      'entity.name.function': '#1f1f1f',
+      'support.function': '#202020',
+      'keyword.control': '#222222',
+      'storage.type': '#232323',
+      'constant.numeric': '#2e2e2e',
+      'markup.inserted': '#3f3f3f',
+      'markup.deleted': '#404040',
+      invalid: '#424242',
+      meta: '#434343',
+    });
+  });
+
   it('publishes built-ins, extensions, and user themes in source order', async () => {
     const extension = theme('publisher/night', 'Publisher Night');
     const user = theme('alice/custom', 'Alice Custom');

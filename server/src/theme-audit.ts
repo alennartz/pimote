@@ -1,5 +1,6 @@
 import Color from 'colorjs.io';
-import type { EditorSyntaxRole, ResolvedTheme, UiColorToken } from '../../shared/dist/index.js';
+import type { ResolvedTheme, SyntaxScope, UiColorToken } from '../../shared/dist/index.js';
+import { EDITOR_SURFACE_ROLES, editorPropertyName, REQUIRED_SYNTAX_ROOTS, SYNTAX_CHILDREN, SYNTAX_SCOPES, syntaxScopeRoot } from '../../shared/dist/index.js';
 
 export type ThemeAuditSeverity = 'warning' | 'error';
 export type ThemeAuditRelation = 'pair' | 'triple';
@@ -141,10 +142,10 @@ const MUTUALLY_EXCLUSIVE_STATE_COLOR_GROUPS: ReadonlyArray<{
   },
 ];
 
-const DIFF_ROLES: ReadonlyArray<{ role: EditorSyntaxRole; label: string; background?: 'addition' | 'deletion' }> = [
-  { role: 'inserted', label: 'inserted', background: 'addition' },
-  { role: 'deleted', label: 'deleted', background: 'deletion' },
-  { role: 'changed', label: 'changed' },
+const DIFF_ROLES: ReadonlyArray<{ role: SyntaxScope; label: string; background?: 'addition' | 'deletion' }> = [
+  { role: 'markup.inserted', label: 'inserted', background: 'addition' },
+  { role: 'markup.deleted', label: 'deleted', background: 'deletion' },
+  { role: 'markup.changed', label: 'changed' },
 ];
 
 const COLOR_SPACE = 'oklch';
@@ -158,13 +159,37 @@ const DIFF_MAPPING_CONTRACTS = [
   { rule: 'mapping.editor.diff.deletion-background', token: '--pimote-editor-diff-deletion-background' },
 ] as const;
 
-export function auditClientMappings(highlightThemeCss: string): ThemeMappingFinding[] {
-  return DIFF_MAPPING_CONTRACTS.filter(({ token }) => !highlightThemeCss.includes(token)).map(({ rule, token }) => ({
+/** Every editor theme property the client can read from a resolved theme. */
+export function declaredEditorProperties(): ReadonlySet<string> {
+  return new Set([...SYNTAX_SCOPES, ...EDITOR_SURFACE_ROLES].map((token) => editorPropertyName(token)));
+}
+
+const CLIENT_CSS_PATH = 'client/src/lib/highlight-theme.css';
+const CLIENT_THEME_PROPERTY = /--pimote-editor-([a-z0-9-]+)/g;
+
+/**
+ * Check that the chat code-block stylesheet reaches the theme through declared
+ * editor properties. A property that no scope or surface role produces would
+ * silently fall back to its CSS default.
+ */
+export function auditClientMappings(highlightThemeCss: string, declaredProperties: ReadonlySet<string>): ThemeMappingFinding[] {
+  const findings: ThemeMappingFinding[] = DIFF_MAPPING_CONTRACTS.filter(({ token }) => !highlightThemeCss.includes(token)).map(({ rule, token }) => ({
     rule,
-    path: 'client/src/lib/highlight-theme.css',
+    path: CLIENT_CSS_PATH,
     message: `diff background must use the dedicated ${token} role`,
     severity: 'error' as const,
   }));
+  const referenced = new Set([...highlightThemeCss.matchAll(CLIENT_THEME_PROPERTY)].map((match) => match[0]));
+  for (const property of referenced) {
+    if (declaredProperties.has(property)) continue;
+    findings.push({
+      rule: `mapping.editor.${property.slice('--pimote-editor-'.length)}`,
+      path: CLIENT_CSS_PATH,
+      message: `${property} is not an editor theme property`,
+      severity: 'error',
+    });
+  }
+  return findings;
 }
 
 type ThreeCoordinates = [number, number, number];
@@ -299,7 +324,7 @@ function auditMutuallyExclusiveStateColors(findings: ThemeAuditFinding[], theme:
   }
 }
 
-function auditSyntax(findings: ThemeAuditFinding[], theme: ResolvedTheme, role: EditorSyntaxRole): void {
+function auditSyntax(findings: ThemeAuditFinding[], theme: ResolvedTheme, role: SyntaxScope): void {
   const foreground = theme.editor.syntax[role];
   const editorBackground = theme.editor.surface.background;
   auditPair(findings, theme, `editor.syntax.${role}`, `${role} on editor background`, foreground, editorBackground, 3, editorBackground);
@@ -314,10 +339,15 @@ function auditTheme(theme: ResolvedTheme): ThemeAuditFinding[] {
   auditPair(findings, theme, 'editor.body', 'editor foreground on background', surface.foreground, surface.background, 4.5, surface.background);
   auditPair(findings, theme, 'editor.code-surface', 'editor foreground on sunken code surface', surface.foreground, ui['surface-sunken'], 4.5, ui.background);
   auditPair(findings, theme, 'editor.selection', 'selection foreground on selection', surface['selection-foreground'], surface.selection, 4.5, surface.background);
-  auditPair(findings, theme, 'editor.matching-bracket', 'bracket syntax on matching bracket', syntax.bracket, surface['matching-bracket'], 3, surface.background);
+  auditPair(findings, theme, 'editor.matching-bracket', 'editor foreground on matching bracket', surface.foreground, surface['matching-bracket'], 3, surface.background);
   auditPair(findings, theme, 'editor.search-match-marker', 'search-match marker on editor background', surface['search-match'], surface.background, 3, surface.background);
 
-  for (const role of Object.keys(syntax) as EditorSyntaxRole[]) auditSyntax(findings, theme, role);
+  for (const root of REQUIRED_SYNTAX_ROOTS) auditSyntax(findings, theme, root);
+  for (const child of SYNTAX_CHILDREN) {
+    if (DIFF_ROLES.some(({ role }) => role === child)) continue;
+    if (syntax[child] === syntax[syntaxScopeRoot(child)]) continue;
+    auditSyntax(findings, theme, child);
+  }
 
   for (const { role, label, background } of DIFF_ROLES) {
     const foreground = syntax[role];
