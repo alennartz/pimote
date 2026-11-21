@@ -1,4 +1,4 @@
-import { OPTIONAL_UI_ROLE_FALLBACKS, SYNTAX_SCOPES, editorPropertyName, type ResolvedTheme } from '@pimote/shared';
+import { ANSI_COLOR_NAMES, EDITOR_SURFACE_ROLES, SYNTAX_SCOPES, UI_COLOR_TOKENS, editorPropertyName, type ResolvedTheme } from '@pimote/shared';
 import type { ThemeApplicationTarget } from './theme-application.js';
 import { applyResolvedTheme } from './theme-application.js';
 
@@ -16,113 +16,16 @@ export interface ThemeBridgeOptions {
   eventSource?: Window;
 }
 
-const UI_KEYS = [
-  'background',
-  'foreground',
-  'card',
-  'card-foreground',
-  'popover',
-  'popover-foreground',
-  'primary',
-  'primary-foreground',
-  'secondary',
-  'secondary-foreground',
-  'muted',
-  'muted-foreground',
-  'accent',
-  'accent-foreground',
-  'destructive',
-  'warning',
-  'warning-foreground',
-  'border',
-  'input',
-  'ring',
-  'chart-1',
-  'chart-2',
-  'chart-3',
-  'chart-4',
-  'chart-5',
-  'sidebar',
-  'sidebar-foreground',
-  'sidebar-primary',
-  'sidebar-primary-foreground',
-  'sidebar-accent',
-  'sidebar-accent-foreground',
-  'sidebar-border',
-  'sidebar-ring',
-  'status-active',
-  'status-streaming',
-  'status-streaming-on-primary',
-  'status-connected',
-  'status-error',
-  'status-reconnecting',
-  'status-reconnecting-on-primary',
-  'surface-sunken',
-  'surface-raised',
-  'surface-subtle',
-  'surface-hover',
-  'error-accent',
-  'error-surface',
-  'error-foreground',
-  'error-avatar-fg',
-  'skill-accent',
-  'skill-surface',
-  'skill-foreground',
-  'skill-foreground-hover',
-  'bash-accent',
-  'custom-accent',
-  'custom-surface',
-  'custom-foreground',
-  'custom-foreground-hover',
-  'link',
-  'link-hover',
-  'avatar-bg',
-  'avatar-fg',
-  'shadow-color',
-];
-const SURFACE_KEYS = [
-  'background',
-  'foreground',
-  'selection',
-  'selection-foreground',
-  'cursor',
-  'active-line',
-  'gutter-background',
-  'gutter-foreground',
-  'line-number',
-  'active-line-number',
-  'matching-bracket',
-  'search-match',
-  'diff-addition-background',
-  'diff-deletion-background',
-];
+const UI_KEYS = UI_COLOR_TOKENS;
+const SURFACE_KEYS = EDITOR_SURFACE_ROLES;
 const SYNTAX_KEYS = SYNTAX_SCOPES;
-const TERMINAL_KEYS = [
-  'black',
-  'red',
-  'green',
-  'yellow',
-  'blue',
-  'magenta',
-  'cyan',
-  'white',
-  'bright-black',
-  'bright-red',
-  'bright-green',
-  'bright-yellow',
-  'bright-blue',
-  'bright-magenta',
-  'bright-cyan',
-  'bright-white',
-];
+const TERMINAL_KEYS = ANSI_COLOR_NAMES;
 
 function completeMap(value: unknown, keys: readonly string[]): value is Record<string, string> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const map = value as Record<string, unknown>;
   return keys.every((key) => typeof map[key] === 'string' && map[key].length > 0);
 }
-
-const REQUIRED_UI_KEYS = UI_KEYS.filter((key) => !(key in OPTIONAL_UI_ROLE_FALLBACKS));
 
 function normalizeCachedTheme(value: unknown): ResolvedTheme | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -132,15 +35,9 @@ function normalizeCachedTheme(value: unknown): ResolvedTheme | null {
   if (candidate.colorScheme !== 'light' && candidate.colorScheme !== 'dark') return null;
   if (!candidate.editor || typeof candidate.editor !== 'object' || Array.isArray(candidate.editor)) return null;
   const editor = candidate.editor as Record<string, unknown>;
-  if (!completeMap(candidate.ui, REQUIRED_UI_KEYS)) return null;
+  if (!completeMap(candidate.ui, UI_KEYS)) return null;
   if (!completeMap(editor.surface, SURFACE_KEYS) || !completeMap(editor.syntax, SYNTAX_KEYS) || !completeMap(editor.terminal, TERMINAL_KEYS)) return null;
-
-  const ui: Record<string, string> = { ...candidate.ui };
-  for (const [role, fallback] of Object.entries(OPTIONAL_UI_ROLE_FALLBACKS)) {
-    if (typeof ui[role] !== 'string' || !ui[role]) ui[role] = ui[fallback];
-  }
-  if (!completeMap(ui, UI_KEYS)) return null;
-  return { ...candidate, ui } as unknown as ResolvedTheme;
+  return candidate as unknown as ResolvedTheme;
 }
 
 const cacheProperties = [

@@ -1,5 +1,4 @@
 import Color from 'colorjs.io';
-import { OPTIONAL_UI_ROLE_FALLBACKS } from '../../shared/dist/index.js';
 import type {
   AnsiColorName,
   EditorSurfaceRole,
@@ -12,7 +11,15 @@ import type {
   ThemeSourceKind,
   UiColorToken,
 } from '../../shared/dist/index.js';
-import { LEGACY_SYNTAX_ROLE_SCOPES, REQUIRED_SYNTAX_ROOTS, SYNTAX_CHILDREN, SYNTAX_SCOPES, syntaxScopeRoot } from '../../shared/dist/index.js';
+import {
+  ANSI_COLOR_NAMES,
+  EDITOR_SURFACE_ROLES,
+  LEGACY_SYNTAX_ROLE_SCOPES,
+  SYNTAX_SCOPES,
+  UI_COLOR_TOKENS,
+  qualifyTokenStatements,
+  resolveTokens,
+} from '../../shared/dist/index.js';
 import { builtinThemeDefinitions } from './builtin-themes.js';
 import { BUILTIN_THEME_IDS, normalizeBuiltinThemeId } from './theme-ids.js';
 
@@ -39,109 +46,12 @@ export interface ThemeCatalogOptions {
 
 export type ThemeCatalogListener = (snapshot: ThemeCatalogSnapshot) => void;
 
-type SourceEntry = { definition: ThemeDefinition; source: ThemeSourceKind; path: string; order: number };
+type SourceEntry = { definition: ThemeDefinition; source: ThemeSourceKind; path: string };
 type Candidate = SourceEntry & { index: number };
 
-const UI_TOKENS: readonly UiColorToken[] = [
-  'background',
-  'foreground',
-  'card',
-  'card-foreground',
-  'popover',
-  'popover-foreground',
-  'primary',
-  'primary-foreground',
-  'secondary',
-  'secondary-foreground',
-  'muted',
-  'muted-foreground',
-  'accent',
-  'accent-foreground',
-  'destructive',
-  'warning',
-  'warning-foreground',
-  'border',
-  'input',
-  'ring',
-  'chart-1',
-  'chart-2',
-  'chart-3',
-  'chart-4',
-  'chart-5',
-  'sidebar',
-  'sidebar-foreground',
-  'sidebar-primary',
-  'sidebar-primary-foreground',
-  'sidebar-accent',
-  'sidebar-accent-foreground',
-  'sidebar-border',
-  'sidebar-ring',
-  'status-active',
-  'status-streaming',
-  'status-streaming-on-primary',
-  'status-connected',
-  'status-error',
-  'status-reconnecting',
-  'status-reconnecting-on-primary',
-  'surface-sunken',
-  'surface-raised',
-  'surface-subtle',
-  'surface-hover',
-  'error-accent',
-  'error-surface',
-  'error-foreground',
-  'error-avatar-fg',
-  'skill-accent',
-  'skill-surface',
-  'skill-foreground',
-  'skill-foreground-hover',
-  'bash-accent',
-  'custom-accent',
-  'custom-surface',
-  'custom-foreground',
-  'custom-foreground-hover',
-  'link',
-  'link-hover',
-  'avatar-bg',
-  'avatar-fg',
-  'shadow-color',
-];
-const OPTIONAL_UI_ROLES = Object.keys(OPTIONAL_UI_ROLE_FALLBACKS);
-const OPTIONAL_SYNTAX_SCOPES = ['meta', ...SYNTAX_CHILDREN] as const;
-const SURFACE_ROLES: readonly EditorSurfaceRole[] = [
-  'background',
-  'foreground',
-  'selection',
-  'selection-foreground',
-  'cursor',
-  'active-line',
-  'gutter-background',
-  'gutter-foreground',
-  'line-number',
-  'active-line-number',
-  'matching-bracket',
-  'search-match',
-  'diff-addition-background',
-  'diff-deletion-background',
-];
-const TERMINAL_ROLES: readonly AnsiColorName[] = [
-  'black',
-  'red',
-  'green',
-  'yellow',
-  'blue',
-  'magenta',
-  'cyan',
-  'white',
-  'bright-black',
-  'bright-red',
-  'bright-green',
-  'bright-yellow',
-  'bright-blue',
-  'bright-magenta',
-  'bright-cyan',
-  'bright-white',
-];
+const UI_TOKENS = UI_COLOR_TOKENS;
+const SURFACE_ROLES = EDITOR_SURFACE_ROLES;
+const TERMINAL_ROLES = ANSI_COLOR_NAMES;
 const BUILTIN_IDS: ReadonlySet<string> = new Set(BUILTIN_THEME_IDS);
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -194,16 +104,12 @@ function normalizeSyntaxScopes(value: Record<string, unknown>): Record<string, u
   return result;
 }
 
-function validateRoleMap(value: unknown, roles: readonly string[], allowPartial: boolean, label: string, optionalRoles: readonly string[] = []): string | null {
+function validateRoleMap(value: unknown, roles: readonly string[], label: string): string | null {
   if (!isRecord(value)) return `${label} must be an object`;
   const roleSet = new Set(roles);
   for (const key of Object.keys(value)) {
     if (!roleSet.has(key)) return `${label} contains unknown role ${key}`;
     if (!validateColorValue(value[key])) return `${label}.${key} must be a CSS Color 4 literal or palette reference`;
-  }
-  if (!allowPartial) {
-    const missing = roles.find((role) => !(role in value) && !optionalRoles.includes(role));
-    if (missing) return `${label}.${missing} is required`;
   }
   return null;
 }
@@ -220,16 +126,16 @@ function validateDefinition(value: unknown): { definition?: ThemeDefinition; mes
       if (!name.trim() || !validateLiteralOrColor(color)) return { message: `palette.${name} must be a CSS Color 4 literal` };
     }
   }
-  const uiError = validateRoleMap(value.ui, UI_TOKENS, value.extends !== undefined, 'ui', OPTIONAL_UI_ROLES);
+  const uiError = validateRoleMap(value.ui, UI_TOKENS, 'ui');
   if (uiError) return { message: uiError };
   if (!isRecord(value.editor)) return { message: 'editor must be an object' };
-  const surfaceError = validateRoleMap(value.editor.surface, SURFACE_ROLES, value.extends !== undefined, 'editor.surface');
+  const surfaceError = validateRoleMap(value.editor.surface, SURFACE_ROLES, 'editor.surface');
   if (surfaceError) return { message: surfaceError };
   if (!isRecord(value.editor.syntax)) return { message: 'editor.syntax must be an object' };
   const syntaxValues = normalizeSyntaxScopes(value.editor.syntax);
-  const syntaxError = validateRoleMap(syntaxValues, SYNTAX_SCOPES, value.extends !== undefined, 'editor.syntax', OPTIONAL_SYNTAX_SCOPES);
+  const syntaxError = validateRoleMap(syntaxValues, SYNTAX_SCOPES, 'editor.syntax');
   if (syntaxError) return { message: syntaxError };
-  const terminalError = validateRoleMap(value.editor.terminal, TERMINAL_ROLES, value.extends !== undefined, 'editor.terminal');
+  const terminalError = validateRoleMap(value.editor.terminal, TERMINAL_ROLES, 'editor.terminal');
   if (terminalError) return { message: terminalError };
   return {
     definition: {
@@ -252,7 +158,8 @@ function validateLiteralOrColor(value: unknown): value is string {
   return typeof value === 'string' && validLiteral(value);
 }
 
-function parseFile(raw: string, path: string): { definitions: ThemeDefinition[]; diagnostics: ThemeDiagnostic[]; valid: boolean } {
+/** Parse and validate one theme file. */
+export function parseThemeFile(raw: string, path: string): { definitions: ThemeDefinition[]; diagnostics: ThemeDiagnostic[]; valid: boolean } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -281,26 +188,47 @@ function resolveValue(value: ThemeColorValue | undefined, palette: Readonly<Reco
   return palette[value.palette];
 }
 
-/** Every child scope takes its root color unless the theme set the child itself. */
-function fillSyntaxScopes(values: Readonly<Partial<Record<SyntaxScope, string>>>, foreground: string): Record<SyntaxScope, string> {
-  const result = { meta: values.meta ?? foreground } as Record<SyntaxScope, string>;
-  for (const root of REQUIRED_SYNTAX_ROOTS) result[root] = values[root] ?? foreground;
-  for (const child of SYNTAX_CHILDREN) result[child] = values[child] ?? result[syntaxScopeRoot(child)];
-  return result;
+/** Values a theme states, with palette references replaced by their literals. */
+export interface StatedMaps {
+  ui: Record<string, string>;
+  'editor.surface': Record<string, string>;
+  'editor.syntax': Record<string, string>;
+  'editor.terminal': Record<string, string>;
 }
 
-function mergeRecord<K extends string>(
-  parent: Readonly<Record<K, string>> | undefined,
-  own: Readonly<Partial<Record<K, ThemeColorValue>>>,
+/** What one resolved theme stated itself, and what it inherited beside it. */
+export interface ResolvedThemeStatements {
+  /** Own statements merged over the base theme's statements. */
+  merged: StatedMaps;
+  /** Only the statements this theme makes itself. */
+  own: StatedMaps;
+}
+
+/** One resolved theme with the statements that produced it. */
+export interface ResolvedThemeSources {
+  themes: ResolvedTheme[];
+  statements: Map<string, ResolvedThemeStatements>;
+  diagnostics: ThemeDiagnostic[];
+}
+
+function mergeStated(
+  parent: Readonly<Record<string, string>> | undefined,
+  own: Readonly<Record<string, ThemeColorValue>>,
   palette: Readonly<Record<string, string>>,
   label: string,
-): Record<K, string> {
-  const merged: Partial<Record<K, string>> = { ...(parent ?? {}) };
-  for (const [key, value] of Object.entries(own)) merged[key as K] = resolveValue(value as ThemeColorValue, palette, `${label}.${key}`);
-  return merged as Record<K, string>;
+): Record<string, string> {
+  const merged: Record<string, string> = { ...(parent ?? {}) };
+  for (const [key, value] of Object.entries(own)) merged[key] = resolveValue(value as ThemeColorValue, palette, `${label}.${key}`);
+  return merged;
 }
 
-function resolveDefinitions(entries: readonly SourceEntry[], diagnostics: ThemeDiagnostic[]): ResolvedTheme[] {
+function unqualified<T extends string>(values: Readonly<Record<string, string>>, namespace: string, names: readonly T[]): Record<T, string> {
+  return Object.fromEntries(names.map((name) => [name, values[`${namespace}.${name}`] ?? ''])) as Record<T, string>;
+}
+
+/** Resolve theme sources into themes, keeping the statements that produced each one. */
+export function resolveThemeDefinitions(entries: readonly SourceEntry[]): ResolvedThemeSources {
+  const diagnostics: ThemeDiagnostic[] = [];
   const candidates = new Map<string, Candidate[]>();
   entries.forEach((entry, index) => {
     const list = candidates.get(entry.definition.id) ?? [];
@@ -310,7 +238,7 @@ function resolveDefinitions(entries: readonly SourceEntry[], diagnostics: ThemeD
   const resolved = new Map<string, ResolvedTheme>();
   const resolvedCandidateIndexes = new Map<string, number>();
   const resolvedPalettes = new Map<string, Record<string, string>>();
-  const explicitSyntax = new Map<string, Record<string, string>>();
+  const resolvedStatements = new Map<string, ResolvedThemeStatements>();
   const resolving: string[] = [];
   const failed = new Set<number>();
 
@@ -330,30 +258,39 @@ function resolveDefinitions(entries: readonly SourceEntry[], diagnostics: ThemeD
           const ownPalette = definition.palette ?? {};
           const inheritedPalette = parent ? (resolvedPalettes.get(parent.id) ?? {}) : {};
           const palette = { ...inheritedPalette, ...ownPalette };
-          const ui = mergeRecord(parent?.ui, definition.ui, palette, 'ui');
-          for (const [role, fallback] of Object.entries(OPTIONAL_UI_ROLE_FALLBACKS) as Array<[UiColorToken, UiColorToken]>) {
-            if (!(role in ui)) ui[role] = ui[fallback];
-          }
-          const surface = mergeRecord(parent?.editor.surface, definition.editor.surface, palette, 'editor.surface');
-          const syntaxValues = mergeRecord(parent ? explicitSyntax.get(parent.id) : undefined, definition.editor.syntax, palette, 'editor.syntax');
-          const terminal = mergeRecord(parent?.editor.terminal, definition.editor.terminal, palette, 'editor.terminal');
-          for (const role of UI_TOKENS) if (!(role in ui)) throw new Error(`ui.${role} is required`);
-          for (const role of SURFACE_ROLES) if (!(role in surface)) throw new Error(`editor.surface.${role} is required`);
-          for (const root of REQUIRED_SYNTAX_ROOTS) if (!(root in syntaxValues)) throw new Error(`editor.syntax.${root} is required`);
-          const syntax = fillSyntaxScopes(syntaxValues, surface.foreground);
-          for (const role of TERMINAL_ROLES) if (!(role in terminal)) throw new Error(`editor.terminal.${role} is required`);
+          const inherited = parent ? resolvedStatements.get(parent.id)?.merged : undefined;
+          const own: StatedMaps = {
+            ui: mergeStated(undefined, definition.ui, palette, 'ui'),
+            'editor.surface': mergeStated(undefined, definition.editor.surface, palette, 'editor.surface'),
+            'editor.syntax': mergeStated(undefined, definition.editor.syntax, palette, 'editor.syntax'),
+            'editor.terminal': mergeStated(undefined, definition.editor.terminal, palette, 'editor.terminal'),
+          };
+          const statements: ResolvedThemeStatements = {
+            merged: {
+              ui: { ...(inherited?.ui ?? {}), ...own.ui },
+              'editor.surface': { ...(inherited?.['editor.surface'] ?? {}), ...own['editor.surface'] },
+              'editor.syntax': { ...(inherited?.['editor.syntax'] ?? {}), ...own['editor.syntax'] },
+              'editor.terminal': { ...(inherited?.['editor.terminal'] ?? {}), ...own['editor.terminal'] },
+            },
+            own,
+          };
+          const values = resolveTokens(qualifyTokenStatements(statements.merged)).values;
           const theme: ResolvedTheme = {
             id: definition.id,
             name: definition.name,
             source: candidate.source,
             colorScheme: definition.colorScheme,
-            ui,
-            editor: { surface, syntax, terminal },
+            ui: unqualified(values, 'ui', UI_TOKENS),
+            editor: {
+              surface: unqualified(values, 'editor.surface', SURFACE_ROLES),
+              syntax: unqualified(values, 'editor.syntax', SYNTAX_SCOPES),
+              terminal: unqualified(values, 'editor.terminal', TERMINAL_ROLES),
+            },
           };
           resolved.set(id, theme);
           resolvedCandidateIndexes.set(id, candidate.index);
           resolvedPalettes.set(id, palette);
-          explicitSyntax.set(id, syntaxValues);
+          resolvedStatements.set(id, statements);
           return theme;
         } catch (error) {
           failed.add(candidate.index);
@@ -381,10 +318,11 @@ function resolveDefinitions(entries: readonly SourceEntry[], diagnostics: ThemeD
     }
   }
   void failed;
-  return entries
+  const themes = entries
     .filter((entry) => resolved.has(entry.definition.id))
     .map((entry) => resolved.get(entry.definition.id)!)
     .filter((theme, index, all) => all.findIndex((item) => item.id === theme.id) === index);
+  return { themes, statements: resolvedStatements, diagnostics };
 }
 
 /** Server boundary for built-in, extension, and user theme sources. */
@@ -447,9 +385,8 @@ export class ThemeCatalog {
   private async readAndPublish(): Promise<ThemeCatalogSnapshot> {
     const diagnostics: ThemeDiagnostic[] = [];
     const entries: SourceEntry[] = [];
-    let order = 0;
     for (const definition of this.options.builtinThemes.length > 0 ? this.options.builtinThemes : builtinThemeDefinitions()) {
-      entries.push({ definition: cloneDefinition(definition), source: 'builtin', path: '<builtin>', order: order++ });
+      entries.push({ definition: cloneDefinition(definition), source: 'builtin', path: '<builtin>' });
     }
     for (const path of this.extensionFiles) {
       let raw: string;
@@ -459,13 +396,13 @@ export class ThemeCatalog {
         diagnostics.push({ path, message: `failed to read theme file: ${error instanceof Error ? error.message : String(error)}`, source: 'extension' });
         continue;
       }
-      const parsed = parseFile(raw, path);
+      const parsed = parseThemeFile(raw, path);
       diagnostics.push(...parsed.diagnostics.map((diagnostic) => ({ ...diagnostic, source: 'extension' as const })));
-      for (const definition of parsed.definitions) entries.push({ definition, source: 'extension', path, order: order++ });
+      for (const definition of parsed.definitions) entries.push({ definition, source: 'extension', path });
     }
     let userDefinitions: ThemeDefinition[] = [];
     try {
-      const parsed = parseFile(await this.options.reader.read(this.options.userFile), this.options.userFile);
+      const parsed = parseThemeFile(await this.options.reader.read(this.options.userFile), this.options.userFile);
       if (parsed.valid) {
         userDefinitions = parsed.definitions;
         this.userDefinitions = userDefinitions.map(cloneDefinition);
@@ -477,9 +414,11 @@ export class ThemeCatalog {
       diagnostics.push({ path: this.options.userFile, message: `failed to read theme file: ${error instanceof Error ? error.message : String(error)}`, source: 'user' });
       userDefinitions = this.userDefinitions?.map(cloneDefinition) ?? [];
     }
-    for (const definition of userDefinitions) entries.push({ definition, source: 'user', path: this.options.userFile, order: order++ });
+    for (const definition of userDefinitions) entries.push({ definition, source: 'user', path: this.options.userFile });
 
-    const themes = resolveDefinitions(entries, diagnostics);
+    const resolution = resolveThemeDefinitions(entries);
+    diagnostics.push(...resolution.diagnostics);
+    const themes = resolution.themes;
     const nextSignature = JSON.stringify({ defaultThemeId: this.current.defaultThemeId, extensionFiles: this.extensionFiles, themes, diagnostics });
     const previousSignature = JSON.stringify({
       defaultThemeId: this.current.defaultThemeId,

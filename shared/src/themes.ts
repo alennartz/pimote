@@ -25,96 +25,77 @@ export type ThemeColorValue = string | { palette: string };
 /** Stable source precedence for resolved catalog entries. */
 export type ThemeSourceKind = 'builtin' | 'extension' | 'user';
 
+/** Every color-valued Pimote UI design token, in graph order. */
+export const UI_COLOR_TOKENS = [
+  'background',
+  'foreground',
+  'card',
+  'card-foreground',
+  'popover',
+  'popover-foreground',
+  'primary',
+  'primary-foreground',
+  'secondary',
+  'secondary-foreground',
+  'muted',
+  'muted-foreground',
+  'accent',
+  'accent-foreground',
+  'destructive',
+  'warning',
+  'warning-foreground',
+  'border',
+  'input',
+  'ring',
+  'chart-1',
+  'chart-2',
+  'chart-3',
+  'chart-4',
+  'chart-5',
+  'sidebar',
+  'sidebar-foreground',
+  'sidebar-primary',
+  'sidebar-primary-foreground',
+  'sidebar-accent',
+  'sidebar-accent-foreground',
+  'sidebar-border',
+  'sidebar-ring',
+  'status-active',
+  'status-streaming',
+  'status-streaming-on-primary',
+  'status-connected',
+  'status-error',
+  'status-reconnecting',
+  'status-reconnecting-on-primary',
+  'surface-sunken',
+  'surface-raised',
+  'surface-subtle',
+  'surface-hover',
+  'error-accent',
+  'error-surface',
+  'error-foreground',
+  'error-avatar-fg',
+  'skill-accent',
+  'skill-surface',
+  'skill-foreground',
+  'skill-foreground-hover',
+  'bash-accent',
+  'custom-accent',
+  'custom-surface',
+  'custom-foreground',
+  'custom-foreground-hover',
+  'link',
+  'link-hover',
+  'avatar-bg',
+  'avatar-fg',
+  'shadow-color',
+] as const;
+
 /** Every color-valued Pimote UI design token. */
-export type UiColorToken =
-  | 'background'
-  | 'foreground'
-  | 'card'
-  | 'card-foreground'
-  | 'popover'
-  | 'popover-foreground'
-  | 'primary'
-  | 'primary-foreground'
-  | 'secondary'
-  | 'secondary-foreground'
-  | 'muted'
-  | 'muted-foreground'
-  | 'accent'
-  | 'accent-foreground'
-  | 'destructive'
-  | 'warning'
-  | 'warning-foreground'
-  | 'border'
-  | 'input'
-  | 'ring'
-  | 'chart-1'
-  | 'chart-2'
-  | 'chart-3'
-  | 'chart-4'
-  | 'chart-5'
-  | 'sidebar'
-  | 'sidebar-foreground'
-  | 'sidebar-primary'
-  | 'sidebar-primary-foreground'
-  | 'sidebar-accent'
-  | 'sidebar-accent-foreground'
-  | 'sidebar-border'
-  | 'sidebar-ring'
-  | 'status-active'
-  | 'status-streaming'
-  | 'status-streaming-on-primary'
-  | 'status-connected'
-  | 'status-error'
-  | 'status-reconnecting'
-  | 'status-reconnecting-on-primary'
-  | 'surface-sunken'
-  | 'surface-raised'
-  | 'surface-subtle'
-  | 'surface-hover'
-  | 'error-accent'
-  | 'error-surface'
-  | 'error-foreground'
-  | 'error-avatar-fg'
-  | 'skill-accent'
-  | 'skill-surface'
-  | 'skill-foreground'
-  | 'skill-foreground-hover'
-  | 'bash-accent'
-  | 'custom-accent'
-  | 'custom-surface'
-  | 'custom-foreground'
-  | 'custom-foreground-hover'
-  | 'link'
-  | 'link-hover'
-  | 'avatar-bg'
-  | 'avatar-fg'
-  | 'shadow-color';
+export type UiColorToken = (typeof UI_COLOR_TOKENS)[number];
 
-/** Optional selected-chip foreground roles default to the primary foreground. */
-export const OPTIONAL_UI_ROLE_FALLBACKS = {
-  'status-streaming-on-primary': 'primary-foreground',
-  'status-reconnecting-on-primary': 'primary-foreground',
-} satisfies Partial<Record<UiColorToken, UiColorToken>>;
-
-/** Theme-independent editor surface roles. */
-export type EditorSurfaceRole =
-  | 'background'
-  | 'foreground'
-  | 'selection'
-  | 'selection-foreground'
-  | 'cursor'
-  | 'active-line'
-  | 'gutter-background'
-  | 'gutter-foreground'
-  | 'line-number'
-  | 'active-line-number'
-  | 'matching-bracket'
-  | 'search-match'
-  | 'diff-addition-background'
-  | 'diff-deletion-background';
-
-/** Every editor surface role in catalog order. */
-export const EDITOR_SURFACE_ROLES: readonly EditorSurfaceRole[] = [
+/** Theme-independent editor surface roles, in graph order. */
+export const EDITOR_SURFACE_ROLES = [
   'background',
   'foreground',
   'selection',
@@ -129,87 +110,26 @@ export const EDITOR_SURFACE_ROLES: readonly EditorSurfaceRole[] = [
   'search-match',
   'diff-addition-background',
   'diff-deletion-background',
-];
+] as const;
+
+/** Every editor surface role. */
+export type EditorSurfaceRole = (typeof EDITOR_SURFACE_ROLES)[number];
+
+/** Every root group in catalog order. */
+export const SYNTAX_ROOTS = ['comment', 'constant', 'entity', 'invalid', 'keyword', 'markup', 'meta', 'storage', 'string', 'support', 'variable'] as const;
 
 /** The TextMate root groups. Every syntax token belongs to exactly one root. */
-export type SyntaxRoot = 'comment' | 'constant' | 'entity' | 'invalid' | 'keyword' | 'markup' | 'meta' | 'storage' | 'string' | 'support' | 'variable';
+export type SyntaxRoot = (typeof SYNTAX_ROOTS)[number];
+
+/** Roots a theme must paint. `meta` groups structure and inherits the editor foreground. */
+export const REQUIRED_SYNTAX_ROOTS: readonly SyntaxRoot[] = SYNTAX_ROOTS.filter((root) => root !== 'meta');
 
 /**
  * TextMate child scopes. A theme sets a child only to depart from its root color.
  * Every name is a path from the TextMate naming conventions, save the four marked
  * VS Code conventions, which TextMate itself leaves unnamed.
  */
-export type SyntaxChild =
-  | 'comment.documentation'
-  | 'constant.numeric'
-  | 'constant.language'
-  | 'constant.character.escape'
-  | 'constant.other'
-  | 'entity.name.function'
-  | 'entity.name.function.macro'
-  | 'entity.name.type'
-  | 'entity.name.tag'
-  | 'entity.name.namespace'
-  | 'entity.name.label'
-  | 'entity.other.attribute-name'
-  | 'keyword.control'
-  | 'keyword.operator'
-  | 'markup.heading'
-  | 'markup.list'
-  | 'markup.quote'
-  | 'markup.italic'
-  | 'markup.bold'
-  | 'markup.underline.link'
-  | 'markup.raw'
-  | 'markup.strikethrough'
-  | 'markup.inserted'
-  | 'markup.deleted'
-  | 'markup.changed'
-  | 'storage.type'
-  | 'storage.modifier'
-  | 'string.quoted'
-  | 'string.regexp'
-  | 'string.other'
-  | 'support.function'
-  | 'support.type'
-  | 'support.constant'
-  | 'support.variable'
-  | 'variable.parameter'
-  | 'variable.other'
-  | 'variable.other.property'
-  | 'variable.other.enum-member'
-  | 'variable.language';
-
-/** A root group or one of its child scopes. */
-export type SyntaxScope = SyntaxRoot | SyntaxChild;
-
-/** The standard sixteen ANSI color slots. */
-export type AnsiColorName =
-  | 'black'
-  | 'red'
-  | 'green'
-  | 'yellow'
-  | 'blue'
-  | 'magenta'
-  | 'cyan'
-  | 'white'
-  | 'bright-black'
-  | 'bright-red'
-  | 'bright-green'
-  | 'bright-yellow'
-  | 'bright-blue'
-  | 'bright-magenta'
-  | 'bright-cyan'
-  | 'bright-white';
-
-/** Every root group in catalog order. */
-export const SYNTAX_ROOTS: readonly SyntaxRoot[] = ['comment', 'constant', 'entity', 'invalid', 'keyword', 'markup', 'meta', 'storage', 'string', 'support', 'variable'];
-
-/** Roots a theme must paint. `meta` groups structure and inherits the editor foreground. */
-export const REQUIRED_SYNTAX_ROOTS: readonly SyntaxRoot[] = SYNTAX_ROOTS.filter((root) => root !== 'meta');
-
-/** Every child scope in catalog order. */
-export const SYNTAX_CHILDREN: readonly SyntaxChild[] = [
+export const SYNTAX_CHILDREN = [
   'comment.documentation',
   'constant.numeric',
   'constant.language',
@@ -249,10 +169,39 @@ export const SYNTAX_CHILDREN: readonly SyntaxChild[] = [
   'variable.other.property',
   'variable.other.enum-member',
   'variable.language',
-];
+] as const;
 
-/** Every scope in catalog order. */
-export const SYNTAX_SCOPES: readonly SyntaxScope[] = [...SYNTAX_ROOTS, ...SYNTAX_CHILDREN];
+/** TextMate child scopes. */
+export type SyntaxChild = (typeof SYNTAX_CHILDREN)[number];
+
+/** Every scope in catalog order: the roots, then their children. */
+export const SYNTAX_SCOPES = [...SYNTAX_ROOTS, ...SYNTAX_CHILDREN] as const;
+
+/** A root group or one of its child scopes. */
+export type SyntaxScope = (typeof SYNTAX_SCOPES)[number];
+
+/** The standard sixteen ANSI color slots, in slot order. */
+export const ANSI_COLOR_NAMES = [
+  'black',
+  'red',
+  'green',
+  'yellow',
+  'blue',
+  'magenta',
+  'cyan',
+  'white',
+  'bright-black',
+  'bright-red',
+  'bright-green',
+  'bright-yellow',
+  'bright-blue',
+  'bright-magenta',
+  'bright-cyan',
+  'bright-white',
+] as const;
+
+/** The standard sixteen ANSI color slots. */
+export type AnsiColorName = (typeof ANSI_COLOR_NAMES)[number];
 
 /** The CSS custom property that publishes one editor token. */
 export function editorPropertyName(token: SyntaxScope | EditorSurfaceRole): string {

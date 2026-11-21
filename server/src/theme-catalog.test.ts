@@ -43,10 +43,9 @@ describe('ThemeCatalog', () => {
     }
   });
 
-  it('fills selected-chip status roles for existing standalone theme files', async () => {
+  it('rejects a standalone theme that omits a mandatory selected-chip status role', async () => {
     const legacyTheme = theme('alice/legacy-theme');
     delete legacyTheme.ui['status-streaming-on-primary'];
-    delete legacyTheme.ui['status-reconnecting-on-primary'];
     const reader = {
       read: async (path: string) => (path === '/extensions/legacy.json' ? JSON.stringify({ version: 1, themes: [legacyTheme] }) : JSON.stringify({ version: 1, themes: [] })),
     };
@@ -55,9 +54,8 @@ describe('ThemeCatalog', () => {
     const resolved = snapshot.themes.find((entry) => entry.id === legacyTheme.id);
     await service.close();
 
-    expect(snapshot.diagnostics).toEqual([]);
-    expect(resolved?.ui['status-streaming-on-primary']).toBe(resolved?.ui['primary-foreground']);
-    expect(resolved?.ui['status-reconnecting-on-primary']).toBe(resolved?.ui['primary-foreground']);
+    expect(snapshot.diagnostics).toEqual([expect.objectContaining({ themeId: legacyTheme.id, message: expect.stringContaining('ui.status-streaming-on-primary') })]);
+    expect(resolved).toBeUndefined();
   });
 
   it.each([

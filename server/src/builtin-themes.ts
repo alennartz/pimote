@@ -1,5 +1,5 @@
 import type { AnsiColorName, EditorSurfaceRole, SyntaxChild, SyntaxRoot, SyntaxScope, ThemeColorValue, ThemeDefinition, UiColorToken } from '../../shared/dist/index.js';
-import { REQUIRED_SYNTAX_ROOTS, SYNTAX_SCOPES } from '../../shared/dist/index.js';
+import { ANSI_COLOR_NAMES, EDITOR_SURFACE_ROLES, REQUIRED_SYNTAX_ROOTS, SYNTAX_SCOPES, UI_COLOR_TOKENS } from '../../shared/dist/index.js';
 
 /*
  * Palette provenance:
@@ -19,106 +19,9 @@ import { REQUIRED_SYNTAX_ROOTS, SYNTAX_SCOPES } from '../../shared/dist/index.js
  * and never converts or derives colors while loading a catalog.
  */
 
-const UI_TOKENS: readonly UiColorToken[] = [
-  'background',
-  'foreground',
-  'card',
-  'card-foreground',
-  'popover',
-  'popover-foreground',
-  'primary',
-  'primary-foreground',
-  'secondary',
-  'secondary-foreground',
-  'muted',
-  'muted-foreground',
-  'accent',
-  'accent-foreground',
-  'destructive',
-  'warning',
-  'warning-foreground',
-  'border',
-  'input',
-  'ring',
-  'chart-1',
-  'chart-2',
-  'chart-3',
-  'chart-4',
-  'chart-5',
-  'sidebar',
-  'sidebar-foreground',
-  'sidebar-primary',
-  'sidebar-primary-foreground',
-  'sidebar-accent',
-  'sidebar-accent-foreground',
-  'sidebar-border',
-  'sidebar-ring',
-  'status-active',
-  'status-streaming',
-  'status-streaming-on-primary',
-  'status-connected',
-  'status-error',
-  'status-reconnecting',
-  'status-reconnecting-on-primary',
-  'surface-sunken',
-  'surface-raised',
-  'surface-subtle',
-  'surface-hover',
-  'error-accent',
-  'error-surface',
-  'error-foreground',
-  'error-avatar-fg',
-  'skill-accent',
-  'skill-surface',
-  'skill-foreground',
-  'skill-foreground-hover',
-  'bash-accent',
-  'custom-accent',
-  'custom-surface',
-  'custom-foreground',
-  'custom-foreground-hover',
-  'link',
-  'link-hover',
-  'avatar-bg',
-  'avatar-fg',
-  'shadow-color',
-];
-
-const SURFACE_ROLES: readonly EditorSurfaceRole[] = [
-  'background',
-  'foreground',
-  'selection',
-  'selection-foreground',
-  'cursor',
-  'active-line',
-  'gutter-background',
-  'gutter-foreground',
-  'line-number',
-  'active-line-number',
-  'matching-bracket',
-  'search-match',
-  'diff-addition-background',
-  'diff-deletion-background',
-];
-
-const TERMINAL_ROLES: readonly AnsiColorName[] = [
-  'black',
-  'red',
-  'green',
-  'yellow',
-  'blue',
-  'magenta',
-  'cyan',
-  'white',
-  'bright-black',
-  'bright-red',
-  'bright-green',
-  'bright-yellow',
-  'bright-blue',
-  'bright-magenta',
-  'bright-cyan',
-  'bright-white',
-];
+const UI_TOKENS: readonly UiColorToken[] = UI_COLOR_TOKENS;
+const SURFACE_ROLES: readonly EditorSurfaceRole[] = EDITOR_SURFACE_ROLES;
+const TERMINAL_ROLES: readonly AnsiColorName[] = ANSI_COLOR_NAMES;
 
 /** Painted root groups are mandatory in a theme; children and `meta` are overrides. */
 type SyntaxPalette = Record<Exclude<SyntaxRoot, 'meta'>, string> & Partial<Record<SyntaxChild | 'meta', string>>;

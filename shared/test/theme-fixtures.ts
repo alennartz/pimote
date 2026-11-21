@@ -1,5 +1,6 @@
 import type { AnsiColorName, EditorSurfaceRole, ResolvedTheme, SyntaxScope, ThemeDefinition, ThemeSourceKind, UiColorToken } from '../src/themes.js';
 import { SYNTAX_SCOPES } from '../src/themes.js';
+import { MANDATORY_TOKENS, tokenNamespace, type TokenNamespace } from '../src/design-tokens.js';
 
 const uiTokens: UiColorToken[] = [
   'background',
@@ -124,4 +125,22 @@ export function resolvedTheme(id: string, name = id, source: ThemeSourceKind = '
 export function themeDefinition(id: string, name = id): ThemeDefinition {
   const { source: _source, ...definition } = resolvedTheme(id, name);
   return definition;
+}
+
+/** A definition that states only the mandatory tokens of the design token graph. */
+export function anchorThemeDefinition(id: string, name = id): ThemeDefinition {
+  const anchor = (token: string) => (token === 'ui.background' || token === 'editor.surface.background' ? '#ffffff' : '#111111');
+  const group = (namespace: TokenNamespace) =>
+    Object.fromEntries(MANDATORY_TOKENS.filter((token) => tokenNamespace(token) === namespace).map((token) => [token.slice(namespace.length + 1), anchor(token)]));
+  return {
+    id,
+    name,
+    colorScheme: id.includes('light') ? 'light' : 'dark',
+    ui: group('ui'),
+    editor: {
+      surface: group('editor.surface'),
+      syntax: group('editor.syntax'),
+      terminal: group('editor.terminal'),
+    },
+  };
 }

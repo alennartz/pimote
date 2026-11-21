@@ -36,7 +36,7 @@ describe('ThemeBridge', () => {
     bridge.stop();
   });
 
-  it('fills selected-chip roles from the primary foreground in older cached themes', () => {
+  it('ignores a cached theme that predates the mandatory selected-chip roles', () => {
     const config = options();
     const theme = resolvedTheme('pimote/dark');
     theme.ui['primary-foreground'] = '#123456';
@@ -44,11 +44,8 @@ describe('ThemeBridge', () => {
     config.storage.setItem(themeCacheKey('alice'), JSON.stringify({ ...theme, ui: legacyUi }));
     const bridge = new ThemeBridge(config);
 
-    const cached = bridge.start();
-
-    expect(cached?.ui['status-streaming-on-primary']).toBe('#123456');
-    expect(cached?.ui['status-reconnecting-on-primary']).toBe('#123456');
-    expect(config.target.root.style.getPropertyValue('--pimote-ui-status-streaming-on-primary')).toBe('#123456');
+    expect(bridge.start()).toBeNull();
+    expect(config.target.root.style.getPropertyValue('--pimote-ui-status-streaming-on-primary')).toBe('');
     bridge.stop();
   });
 

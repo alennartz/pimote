@@ -1,5 +1,5 @@
 import Color from 'colorjs.io';
-import type { ResolvedTheme, SyntaxScope, UiColorToken } from '../../shared/dist/index.js';
+import type { DesignToken, ResolvedTheme, SyntaxScope, UiColorToken } from '../../shared/dist/index.js';
 import { EDITOR_SURFACE_ROLES, editorPropertyName, REQUIRED_SYNTAX_ROOTS, SYNTAX_CHILDREN, SYNTAX_SCOPES, syntaxScopeRoot } from '../../shared/dist/index.js';
 
 export type ThemeAuditSeverity = 'warning' | 'error';
@@ -147,6 +147,20 @@ const DIFF_ROLES: ReadonlyArray<{ role: SyntaxScope; label: string; background?:
   { role: 'markup.deleted', label: 'deleted', background: 'deletion' },
   { role: 'markup.changed', label: 'changed' },
 ];
+
+function uiToken(role: UiColorToken): DesignToken {
+  return `ui.${role}`;
+}
+
+/** Every foreground and background token pair the audit compares. */
+export function auditedTokenPairs(): readonly { rule: string; foreground: DesignToken; background: DesignToken }[] {
+  return UI_PAIR_RULES.map((rule) => ({ rule: rule.rule, foreground: uiToken(rule.foreground), background: uiToken(rule.background) }));
+}
+
+/** Every group of mutually exclusive state roles the audit compares. */
+export function auditedStateGroups(): readonly { rule: string; surface: DesignToken; states: readonly DesignToken[] }[] {
+  return MUTUALLY_EXCLUSIVE_STATE_COLOR_GROUPS.map((group) => ({ rule: group.rule, surface: uiToken(group.surface), states: group.states.map((state) => uiToken(state.role)) }));
+}
 
 const COLOR_SPACE = 'oklch';
 const STATUS_TINT_AMOUNT = 0.1;
