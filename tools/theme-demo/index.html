@@ -535,12 +535,19 @@
         color: var(--pimote-editor-selection-foreground);
       }
       .editor .search {
-        background: transparent;
-        text-decoration: underline 2px var(--pimote-editor-search-match);
-        text-underline-offset: 2px;
+        background: var(--pimote-editor-search-match);
       }
       .editor .bracket {
         background: var(--pimote-editor-matching-bracket);
+      }
+      .editor.snippet {
+        max-height: 440px;
+      }
+      .is-bold {
+        font-weight: 700;
+      }
+      .is-italic {
+        font-style: italic;
       }
       .diff {
         overflow: auto;
@@ -865,7 +872,11 @@
             <pre
               class="editor"
             ><code><span class="editor-line"><span class="comment">// comments remain readable</span></span><span class="editor-line"><span class="keyword">const</span> <span class="type">value</span> = <span class="string search">"search match"</span>;</span><span class="editor-line active"><span class="keyword">if</span> (value <span class="bracket">[</span><span class="number">0</span><span class="bracket">]</span>) {</span><span class="editor-line">  <span class="function">render</span>(<span class="selection">value</span>);</span><span class="editor-line">}</span></code></pre>
-            <div style="height: 10px"></div>
+            <h3 style="margin-top: 14px">TypeScript file</h3>
+            <pre class="editor snippet"><code id="typescript-snippet"></code></pre>
+            <h3 style="margin-top: 14px">Markdown file</h3>
+            <pre class="editor snippet"><code id="markdown-snippet"></code></pre>
+            <h3 style="margin-top: 14px">Edit diff</h3>
             <pre class="diff"><code><span class="diff-line add">+ const next = calculate();</span>
 <span class="diff-line remove">- const next = previous;</span>
 <span class="diff-line context"> return next;</span></code></pre>
@@ -910,6 +921,17 @@
       const extensionTerminal = document.querySelector('#extension-terminal');
       const metrics = document.querySelector('#metrics');
       const findings = document.querySelector('#findings');
+      const snippetStyles = document.createElement('style');
+      snippetStyles.textContent = data.syntaxScopes
+        .map((scope) => {
+          const property = scope.replaceAll('.', '-');
+          return `.tok-${property} { color: var(--pimote-editor-${property}); }`;
+        })
+        .join('\n');
+      document.head.append(snippetStyles);
+      for (const [name, html] of Object.entries(data.snippets)) {
+        document.querySelector(`#${name}-snippet`).innerHTML = html;
+      }
       const themeById = new Map(data.themes.map((theme) => [theme.id, theme]));
       const auditById = new Map();
       for (const finding of data.audit.findings) {

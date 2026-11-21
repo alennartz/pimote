@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { builtinThemeDefinitions } from '../../server/src/builtin-themes.js';
 import { ThemeCatalog } from '../../server/src/theme-catalog.js';
 import { auditClientMappings, auditThemes, declaredEditorProperties } from '../../server/src/theme-audit.js';
+import { SYNTAX_SCOPES } from '../../shared/dist/index.js';
+import { renderSnippets } from './snippets.js';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 const port = Number(process.env.PORT ?? process.argv[2] ?? 4173);
@@ -26,6 +28,8 @@ async function loadPayload(): Promise<object> {
     palettes: Object.fromEntries(definitions.map((definition) => [definition.id, definition.palette ?? {}])),
     audit: auditThemes(snapshot.themes),
     mappingFindings: auditClientMappings(css, declaredEditorProperties()),
+    syntaxScopes: SYNTAX_SCOPES,
+    snippets: renderSnippets(),
   };
   await catalog.close();
   return payload;

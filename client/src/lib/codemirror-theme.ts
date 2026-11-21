@@ -4,7 +4,8 @@ import { tags } from '@lezer/highlight';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import type { ResolvedTheme, SyntaxScope } from '@pimote/shared';
 
-const syntaxTagRoles: Array<[unknown, SyntaxScope]> = [
+/** Lezer tag to Pimote scope, in stylesheet precedence order. */
+export const syntaxTagRoles: Array<[unknown, SyntaxScope]> = [
   [tags.comment, 'comment'],
   [tags.lineComment, 'comment'],
   [tags.blockComment, 'comment'],

@@ -18,6 +18,8 @@ The server loads the current built-in definitions from `server/src/builtin-theme
 
 The page mirrors the current consumer contracts from the button, status bar, session rail, context menu, message callout, markdown link, CodeMirror editor, edit diff, Bash output, and extension status components. It includes their UI surfaces, hover states, status states, editor syntax, selection, search markers, matching brackets, diffs, terminal output, and the current audit findings for the selected theme.
 
+A TypeScript module and a Markdown document render below the editor sample. `snippets.ts` writes both through the Lezer parsers and the client's tag-to-scope table, so heading levels, prose marks, and emphasis appear as the editor paints them rather than as a hand-written approximation.
+
 ## Publish a static snapshot
 
 The demo server serves live source data. Pimote can host a static snapshot of the same page when a browser review link must remain available after the server stops.
