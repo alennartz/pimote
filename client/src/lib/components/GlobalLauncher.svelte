@@ -206,7 +206,9 @@
     {/if}
   </Command.List>
   <div class="border-border text-muted-foreground flex items-center justify-between gap-2 border-t px-3 py-1.5 text-[11px]">
-    <div class="flex items-center gap-2.5">
+    <div class="flex flex-wrap items-center gap-2.5">
+      <span><kbd class="bg-muted rounded px-1 py-0.5 font-mono">{formatShortcut('Mod+K')}</kbd> launcher</span>
+      <span><kbd class="bg-muted rounded px-1 py-0.5 font-mono">?</kbd> shortcuts</span>
       <span><kbd class="bg-muted rounded px-1 py-0.5 font-mono">#</kbd> folders</span>
       <span><kbd class="bg-muted rounded px-1 py-0.5 font-mono">@</kbd> sessions</span>
       <span><kbd class="bg-muted rounded px-1 py-0.5 font-mono">&gt;</kbd> commands</span>

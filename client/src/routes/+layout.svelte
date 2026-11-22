@@ -19,6 +19,7 @@
   import '$lib/stores/login-store.js';
   import BranchExplorer from '$lib/components/BranchExplorer.svelte';
   import GlobalLauncher from '$lib/components/GlobalLauncher.svelte';
+  import ShortcutHelpDialog from '$lib/components/ShortcutHelpDialog.svelte';
   import LoginDialog from '$lib/components/LoginDialog.svelte';
   import { HotkeysProvider } from '@tanstack/svelte-hotkeys';
   import Panel from '$lib/components/Panel.svelte';
@@ -470,6 +471,9 @@
 
     <!-- Global launcher (Mod+K) -->
     <GlobalLauncher />
+
+    <!-- Keyboard shortcuts cheat sheet (?) -->
+    <ShortcutHelpDialog />
 
     <!-- Provider login dialog -->
     <LoginDialog />

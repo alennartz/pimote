@@ -3,6 +3,7 @@ import { branchTreeStore } from '../stores/branch-tree-store.svelte.js';
 import { globalSettingsStore } from '../stores/global-settings.svelte.js';
 import { loginStore } from '../stores/login-store.js';
 import { panelStore } from '../stores/panel-store.svelte.js';
+import { shortcutHelpStore } from '../stores/shortcut-help-store.svelte.js';
 import { closeSession, newSessionInProject, sessionRegistry } from '../stores/session-registry.svelte.js';
 import type { LauncherCommand } from './contracts.js';
 
@@ -82,6 +83,14 @@ export function getDefaultLauncherCommands(): LauncherCommand[] {
       group: 'app',
       isAvailable: () => connection.status === 'connected',
       run: () => void loginStore.open(),
+    },
+    {
+      id: 'view-keyboard-shortcuts',
+      label: 'View Keyboard Shortcuts',
+      keywords: ['keys', 'hotkeys', 'help', 'cheatsheet', 'bindings', 'map'],
+      group: 'app',
+      isAvailable: () => true,
+      run: () => shortcutHelpStore.open(),
     },
   ];
 }

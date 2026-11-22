@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
+import { formatForDisplay } from '@tanstack/svelte-hotkeys';
 import type { FolderInfo, LauncherSessionHit } from '@pimote/shared';
 import type { GlobalLauncherActions, LauncherCommand, LauncherSearchTransport } from '$lib/launcher/contracts.js';
 import { drainBodyScrollLockCleanup } from '../../test/bits-ui-cleanup.js';
@@ -115,6 +116,11 @@ describe('GlobalLauncher contract', () => {
     expect(input).not.toBeNull();
     expect(document.activeElement).toBe(input);
     expect(textarea.value).toBe('keep my draft');
+
+    // Footer advertises the entry points: launcher toggle and this map.
+    const footer = document.body.textContent ?? '';
+    expect(footer).toContain(formatForDisplay('Mod+K'));
+    expect(footer).toContain('?');
   });
 
   it('closes on Escape and marks the event defaultPrevented so underlying listeners do not fire', async () => {
