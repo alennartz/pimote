@@ -343,3 +343,94 @@ describe('active session bar behavior', () => {
     expect(writeText).toHaveBeenCalledWith('/w/alpha/2026-11-16T22-31-44_alpha.jsonl');
   });
 });
+
+describe('open subagent view lobes', () => {
+  const rootId = 'lobe-session';
+
+  function openChildView(path: string[], childSessionId: string): void {
+    sessionRegistry.handleEvent({
+      type: 'subagent_view_snapshot',
+      sessionId: rootId,
+      childSessionId,
+      path,
+      incarnation: `inc-${path.join('-')}`,
+      viewCursor: 1,
+      state: {
+        sessionId: childSessionId,
+        sessionFile: undefined,
+        model: null,
+        thinkingLevel: 'off',
+        availableThinkingLevels: [],
+        isStreaming: false,
+        isCompacting: false,
+        autoCompactionEnabled: true,
+        messageCount: 1,
+      },
+      messages: [],
+    });
+  }
+
+  function lobeGroup(): HTMLElement {
+    const found = target.querySelector<HTMLElement>('.lobe-group');
+    if (!found) throw new Error('lobe group not found');
+    return found;
+  }
+
+  function childLobe(label: string): HTMLButtonElement {
+    const found = [...lobeGroup().querySelectorAll<HTMLButtonElement>('.lobe.childl')].find((lobe) => lobe.textContent?.includes(label));
+    if (!found) throw new Error(`child lobe not found: ${label}`);
+    return found;
+  }
+
+  beforeEach(() => {
+    sessionRegistry.addSession(rootId, '/w/lobe', 'lobe');
+    sessionRegistry.switchTo(rootId);
+  });
+
+  afterEach(() => {
+    sessionRegistry.clearSubagentRoot(rootId);
+    sessionRegistry.removeSession(rootId);
+  });
+
+  it('renders open child views as lobes attached to the parent chip', async () => {
+    openChildView(['scout'], 'child-scout');
+    openChildView(['worker'], 'child-worker');
+    render();
+    await tick();
+
+    expect(lobeGroup().dataset.sessionChip).toBe(rootId);
+    expect(lobeGroup().querySelectorAll('.lobe.childl')).toHaveLength(2);
+    expect(lobeGroup().textContent).toContain('scout');
+    expect(lobeGroup().textContent).toContain('worker');
+  });
+
+  it('marks the selected child lobe and switches views on click', async () => {
+    openChildView(['scout'], 'child-scout');
+    openChildView(['worker'], 'child-worker');
+    sessionRegistry.selectSubagentView(rootId, ['worker']);
+    render();
+    await tick();
+
+    expect(childLobe('worker').className).toContain('viewed');
+    expect(childLobe('scout').className).not.toContain('viewed');
+
+    childLobe('scout').click();
+    await tick();
+    expect(sessionRegistry.getSelectedSubagentPath(rootId)).toEqual(['scout']);
+  });
+
+  it('closes only the view from a lobe dismiss button', async () => {
+    openChildView(['scout'], 'child-scout');
+    sessionRegistry.selectSubagentView(rootId, ['scout']);
+    render();
+    await tick();
+
+    const dismiss = childLobe('scout').querySelector<HTMLElement>('[title="Close view"]');
+    expect(dismiss).not.toBeNull();
+    dismiss!.click();
+    await tick();
+
+    expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'subagent_close_view', sessionId: rootId, path: ['scout'] }));
+    expect(sessionRegistry.getSelectedSubagentPath(rootId)).toBeNull();
+  });
+});

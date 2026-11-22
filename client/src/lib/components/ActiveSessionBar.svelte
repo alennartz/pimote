@@ -2,6 +2,7 @@
   import Archive from '@lucide/svelte/icons/archive';
   import Plus from '@lucide/svelte/icons/plus';
   import X from '@lucide/svelte/icons/x';
+  import Bot from '@lucide/svelte/icons/bot';
   import Check from '@lucide/svelte/icons/check';
   import Copy from '@lucide/svelte/icons/copy';
   import Trash2 from '@lucide/svelte/icons/trash-2';
@@ -10,7 +11,17 @@
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { connection } from '$lib/stores/connection.svelte.js';
-  import { sessionRegistry, switchToSession, closeSession, removeSessionOptimistically, newSessionInProject, type PerSessionState } from '$lib/stores/session-registry.svelte.js';
+  import {
+    sessionRegistry,
+    switchToSession,
+    closeSession,
+    removeSessionOptimistically,
+    newSessionInProject,
+    subagentPathKey,
+    type PerSessionState,
+    type SubagentAttachmentState,
+  } from '$lib/stores/session-registry.svelte.js';
+  import type { AgentPath } from '@pimote/shared';
   import { isMobileViewport } from '$lib/mobile-viewport.svelte.js';
   import { getExtensionUiQueue } from '$lib/stores/extension-ui-queue.svelte.js';
   import { getSessionPillSwipeHintShown, setSessionPillSwipeHintShown } from '$lib/stores/persistence.js';
@@ -99,6 +110,28 @@
 
     mobileActionsSessionId = null;
     switchToSession(sessionId);
+  }
+
+  function sameAgentPath(left: AgentPath | null | undefined, right: AgentPath | null | undefined): boolean {
+    return left !== null && left !== undefined && right !== null && right !== undefined && left.length === right.length && left.every((part, index) => part === right[index]);
+  }
+
+  /** Select an open child view from its bar lobe. Viewing a child implies the
+   *  parent session, so another session's view moves to the root first. */
+  function selectChildView(sessionId: string, path: AgentPath) {
+    if (suppressChipClick) {
+      suppressChipClick = false;
+      return;
+    }
+    mobileActionsSessionId = null;
+    if (sessionRegistry.viewedSessionId !== sessionId) switchToSession(sessionId);
+    sessionRegistry.selectSubagentView(sessionId, path);
+  }
+
+  /** Close one child view from its lobe without touching the session. The
+   *  registry clears the selection when the closed view was the shown one. */
+  function closeChildLobeView(sessionId: string, path: AgentPath): Promise<boolean> {
+    return sessionRegistry.closeSubagentView(sessionId, path);
   }
 
   /* ---------- chip order ---------- */
@@ -660,6 +693,98 @@
   </button>
 {/snippet}
 
+{#snippet viewGroupChip(
+  session: PerSessionState,
+  isViewed: boolean,
+  hasPendingUi: boolean,
+  chipLabel: string,
+  openViews: readonly SubagentAttachmentState[],
+  selectedChildPath: AgentPath | null,
+)}
+  <div
+    class="lobe-group"
+    style="touch-action: pan-x;"
+    data-session-chip={session.sessionId}
+    role="group"
+    aria-label={`${getSessionDisplayName(session) ?? session.projectName}: session with ${openViews.length} open subagent ${openViews.length === 1 ? 'view' : 'views'}`}
+  >
+    <button
+      class="lobe root group/lobe {isViewed && !selectedChildPath ? 'viewed' : ''}"
+      onclick={() => handlePillClick(session.sessionId)}
+      onauxclick={(e) => {
+        if (e.button === 1) {
+          e.preventDefault();
+          closeSession(session.sessionId);
+        }
+      }}
+      title={getSessionDisplayName(session) ?? session.projectName}
+    >
+      <span class="relative -my-0.5 flex size-4.5 shrink-0">
+        {#if session.status === 'working' && !hasPendingUi}
+          <span
+            class="{isViewed && !selectedChildPath
+              ? 'bg-status-streaming-on-primary/60'
+              : 'bg-status-streaming/60'} absolute top-1/2 left-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 animate-ping rounded-full"
+          ></span>
+        {/if}
+        <FolderNatureIcon
+          kind={folderIconKind(session.folder ?? { nature: 'code', shortcutCount: 0 })}
+          class="relative size-4.5 {getSessionPillIconColor(session, hasPendingUi, isViewed && !selectedChildPath)}"
+          strokeWidth={2.75}
+        />
+      </span>
+      <span class="max-w-[80px] truncate">{chipLabel}</span>
+      <span
+        class="{isViewed
+          ? 'text-primary-foreground/50 hover:bg-primary-foreground/20 hover:text-primary-foreground'
+          : 'text-secondary-foreground/50 hover:bg-secondary-foreground/20 hover:text-secondary-foreground'} ml-0.5 hidden items-center justify-center rounded-full p-0.5 transition-colors md:flex md:opacity-0 md:group-hover/lobe:opacity-100"
+        role="button"
+        tabindex="-1"
+        title="Close session"
+        onclick={(e) => {
+          e.stopPropagation();
+          closeSession(session.sessionId);
+        }}
+        onkeydown={(e) => {
+          if (e.key === 'Enter') {
+            e.stopPropagation();
+            closeSession(session.sessionId);
+          }
+        }}
+      >
+        <X class="size-3" />
+      </span>
+    </button>
+    {#each openViews as view (subagentPathKey(view.path))}
+      {@const childViewed = sameAgentPath(selectedChildPath, view.path)}
+      <button class="lobe childl group/childlobe {childViewed ? 'viewed' : ''}" onclick={() => selectChildView(session.sessionId, view.path)} title={view.path.join(' / ')}>
+        <Bot class="size-3 shrink-0" />
+        <span class="max-w-[80px] truncate">{view.path[view.path.length - 1]}</span>
+        <span
+          class="{childViewed
+            ? 'text-primary-foreground/50 hover:bg-primary-foreground/20 hover:text-primary-foreground'
+            : 'text-secondary-foreground/50 hover:bg-secondary-foreground/20 hover:text-secondary-foreground'} ml-0.5 hidden items-center justify-center rounded-full p-0.5 transition-colors md:flex md:opacity-0 md:group-hover/childlobe:opacity-100"
+          role="button"
+          tabindex="-1"
+          title="Close view"
+          onclick={(e) => {
+            e.stopPropagation();
+            void closeChildLobeView(session.sessionId, view.path);
+          }}
+          onkeydown={(e) => {
+            if (e.key === 'Enter') {
+              e.stopPropagation();
+              void closeChildLobeView(session.sessionId, view.path);
+            }
+          }}
+        >
+          <X class="size-3" />
+        </span>
+      </button>
+    {/each}
+  </div>
+{/snippet}
+
 {#if sessionRegistry.activeSessions.length > 0}
   <div data-session-navigation class="session-pill-bar-root border-border bg-muted/30 relative z-30 flex shrink-0 flex-col gap-1.5 border-t px-2 py-1.5">
     {#if mobileActionsSessionId && sessionRegistry.sessions[mobileActionsSessionId]}
@@ -697,13 +822,23 @@
           {@const isViewed = sessionRegistry.viewedSessionId === session.sessionId}
           {@const hasPendingUi = uiQueue.hasRequestForSession(session.sessionId)}
           {@const chipLabel = getSessionChipLabel(session) ?? session.projectName}
+          {@const openViews = sessionRegistry.getSubagentAttachments(session.sessionId).filter((attachment) => !attachment.closed)}
+          {@const selectedChildPath = sessionRegistry.getSelectedSubagentPath(session.sessionId)}
           <!-- A phone chip opens no menu: the swipe-up tray is its action surface. -->
           {#if isMobileViewport()}
-            {@render sessionChip(session, isViewed, hasPendingUi, chipLabel)}
+            {#if openViews.length > 0}
+              {@render viewGroupChip(session, isViewed, hasPendingUi, chipLabel, openViews, selectedChildPath)}
+            {:else}
+              {@render sessionChip(session, isViewed, hasPendingUi, chipLabel)}
+            {/if}
           {:else}
             <ContextMenu.Root open={openContextMenuSessionId === session.sessionId} onOpenChange={(open) => handleContextMenuOpenChange(session.sessionId, open)}>
               <ContextMenu.Trigger class="shrink-0">
-                {@render sessionChip(session, isViewed, hasPendingUi, chipLabel)}
+                {#if openViews.length > 0}
+                  {@render viewGroupChip(session, isViewed, hasPendingUi, chipLabel, openViews, selectedChildPath)}
+                {:else}
+                  {@render sessionChip(session, isViewed, hasPendingUi, chipLabel)}
+                {/if}
               </ContextMenu.Trigger>
               <ContextMenu.Portal>
                 <ContextMenu.Content class="bg-popover text-popover-foreground ring-foreground/10 z-50 min-w-36 overflow-hidden rounded-lg p-1 shadow-md ring-1">
@@ -855,5 +990,71 @@
 
   .session-chip-insert-line[hidden] {
     display: none;
+  }
+
+  /* Lobed capsule: a parent session chip with its open child views attached
+     as smaller lobes. The group carries data-session-chip, so the rail's drag
+     and tray gestures treat it as one chip. */
+  .lobe-group {
+    display: flex;
+    flex-shrink: 0;
+    align-items: stretch;
+    overflow: hidden;
+    border-radius: 9999px;
+    background: var(--secondary);
+    color: var(--secondary-foreground);
+  }
+
+  .lobe-group .lobe {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.375rem;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background-color 0.15s;
+  }
+
+  .lobe-group .lobe.root {
+    padding: 0.25rem 0.6rem 0.25rem 0.25rem;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--secondary-foreground);
+  }
+
+  .lobe-group .lobe.root:hover {
+    background: color-mix(in oklab, var(--secondary-foreground) 8%, transparent);
+  }
+
+  .lobe-group .lobe.root.viewed,
+  .lobe-group .lobe.root.viewed:hover {
+    background: var(--primary);
+    color: var(--primary-foreground);
+  }
+
+  .lobe-group .lobe.childl {
+    min-height: 24px;
+    padding: 0.2rem 0.55rem;
+    font-size: 11px;
+    font-weight: 500;
+    color: color-mix(in oklab, var(--secondary-foreground) 85%, transparent);
+    border-left: 1px solid color-mix(in oklab, var(--secondary-foreground) 18%, transparent);
+  }
+
+  .lobe-group .lobe.childl:hover {
+    background: color-mix(in oklab, var(--secondary-foreground) 8%, transparent);
+  }
+
+  .lobe-group .lobe.childl.viewed,
+  .lobe-group .lobe.childl.viewed:hover {
+    background: var(--primary);
+    color: var(--primary-foreground);
+    border-left-color: transparent;
+  }
+
+  .lobe-group .lobe.childl + .lobe.childl.viewed {
+    border-left-color: color-mix(in oklab, var(--primary-foreground) 18%, transparent);
   }
 </style>
