@@ -13,6 +13,11 @@
   import { decideSessionRoute } from '$lib/session-route.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { voiceCallStore } from '$lib/stores/voice-call-store.js';
+  import { isMobileViewport } from '$lib/mobile-viewport.svelte.js';
+  import { getExtensionEditorHost } from '$lib/stores/extension-editor-host.svelte.js';
+  import ExtensionEditorWorkspaces from '$lib/components/ExtensionEditorWorkspaces.svelte';
+  import { onMount } from 'svelte';
+  import { workspaceKeyId, type EditorWorkspaceRecord } from '$lib/extension-editor-workspace.js';
 
   // The URL is the source of truth for which conversation is open on a real
   // navigation (back/forward, deep links, reloads). Adopt the route's session
@@ -101,6 +106,35 @@
 
   let inCall = $derived(!sessionRegistry.viewedSubagentAttachment && voiceCallStore.state.phase !== 'idle' && voiceCallStore.state.sessionId === sessionRegistry.viewedSessionId);
 
+  const editorHost = getExtensionEditorHost();
+  let editorWorkspaces = $state<readonly EditorWorkspaceRecord[]>([...editorHost.workspaces]);
+
+  onMount(() => {
+    const syncWorkspaces = () => {
+      editorWorkspaces = [...editorHost.workspaces];
+    };
+    syncWorkspaces();
+    return editorHost.subscribe(syncWorkspaces);
+  });
+
+  // Mobile mounts extension editors inside this page's scroll flow, ahead of
+  // the chip rail. Desktop keeps them as global session surfaces in
+  // ExtensionDialog.
+  let sessionColumnEl = $state<HTMLElement | null>(null);
+  let activeEditorKey = $derived.by(() => {
+    editorWorkspaces.length;
+    const active = editorHost.active;
+    return active ? workspaceKeyId(active.key) : null;
+  });
+  let mobileEditorActive = $derived(isMobileViewport() && activeEditorKey !== null);
+
+  // A newly active editor must own the first screen, even when the column was
+  // last left scrolled down at the chip rail.
+  $effect(() => {
+    if (!mobileEditorActive || activeEditorKey === null) return;
+    sessionColumnEl?.scrollTo({ top: 0 });
+  });
+
   function killConflicts() {
     const sessionId = sessionRegistry.viewedSessionId;
     const pids = sessionRegistry.viewed?.conflictingProcesses?.map((p) => p.pid) ?? [];
@@ -126,12 +160,18 @@
   <CallingMode />
 {:else}
   <!-- Active session view -->
-  <div class="flex min-h-0 flex-1 flex-col">
+  <!-- While a mobile extension editor is active, this column becomes the
+       scroll container: the editor fills the first screen and the chip rail
+       plus composer sit below the fold, reachable by scrolling to the
+       bottom. -->
+  <div bind:this={sessionColumnEl} class="flex min-h-0 flex-1 flex-col" class:overflow-y-auto={mobileEditorActive}>
     <div class="hidden md:block">
       <StatusBar />
     </div>
-    <MobileRuntimeStatus />
-    {#if sessionRegistry.viewed?.conflictingProcesses?.length}
+    <div class={mobileEditorActive ? 'hidden' : 'contents'}>
+      <MobileRuntimeStatus />
+    </div>
+    {#if sessionRegistry.viewed?.conflictingProcesses?.length && !mobileEditorActive}
       <div class="bg-destructive/10 border-destructive/30 text-destructive flex items-center gap-2 border-b px-4 py-2 text-sm">
         <span>External pi processes detected in this folder.</span>
         <button class="bg-destructive text-primary-foreground hover:bg-destructive/80 ml-auto rounded px-3 py-1 text-xs font-medium" onclick={killConflicts}>
@@ -140,7 +180,14 @@
         <button class="border-destructive/30 hover:bg-destructive/20 rounded border px-3 py-1 text-xs font-medium" onclick={() => dismissConflicts()}> Dismiss </button>
       </div>
     {/if}
-    <MessageList child={sessionRegistry.viewedSubagentAttachment} />
+    {#if mobileEditorActive}
+      <div class="h-full w-full shrink-0">
+        <ExtensionEditorWorkspaces flow />
+      </div>
+    {/if}
+    <div class={mobileEditorActive ? 'hidden' : 'contents'}>
+      <MessageList child={sessionRegistry.viewedSubagentAttachment} />
+    </div>
     <InlineSelect />
     <PendingSteeringMessages />
     <ActiveSessionBar />

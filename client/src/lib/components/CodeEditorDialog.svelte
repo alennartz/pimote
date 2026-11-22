@@ -37,6 +37,10 @@
     body = null,
     viewport = null,
     accessibleTitle = null,
+    /** Render as an in-flow block instead of a fixed sheet (mobile session flow). */
+    flow = false,
+    /** Forwarded to the dialog portal; `disabled` keeps the content inline. */
+    portalProps = undefined,
     onclose,
     oninteractoutside = null,
     onsave,
@@ -77,6 +81,8 @@
     body?: Snippet | null;
     viewport?: 'desktop' | 'mobile' | null;
     accessibleTitle?: string | null;
+    flow?: boolean;
+    portalProps?: { to?: Element | string; disabled?: boolean };
     /** Every explicit close affordance and unhandled Escape route here; the consumer owns veto and confirm semantics. */
     onclose: () => void;
     /** Outside interaction policy. Defaults to the explicit close policy. */
@@ -188,12 +194,15 @@
     inert={preserveMount && !open ? true : undefined}
     onEscapeKeydown={onDismissAttempt}
     {onInteractOutside}
+    {portalProps}
     class="top-0 left-0 flex h-dvh w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 rounded-none p-0 {viewport === 'mobile'
       ? 'settings-mobile'
       : viewport === 'desktop'
         ? 'settings-desktop'
         : ''} {sessionSurface
-      ? 'z-20 max-md:top-[var(--pimote-mobile-surface-top)] max-md:h-[calc(100dvh-var(--pimote-mobile-surface-top))]'
+      ? flow
+        ? 'relative top-auto left-auto z-20 h-full max-h-none w-full'
+        : 'z-20 max-md:top-[var(--pimote-mobile-surface-top)] max-md:h-[calc(100dvh-var(--pimote-mobile-surface-top))]'
       : 'z-50 sm:top-1/2 sm:left-1/2 sm:h-[min(92dvh,960px)] sm:w-[min(96vw,1280px)] sm:max-w-[min(96vw,1280px)] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl'}"
   >
     {#if accessibleTitle}
