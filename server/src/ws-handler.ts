@@ -46,6 +46,7 @@ import { createCodeFolder } from './folder-create.js';
 import type { FolderListingService } from './folder-listing.js';
 import type { UserProfiles } from './user-profiles.js';
 import type { ThemePreferences } from './theme-preferences.js';
+import type { AppService } from './apps/index.js';
 import { classifyFolder, nodeFolderFs } from './folder-model/index.js';
 import { findExternalPiProcesses, killExternalPiProcesses } from './takeover.js';
 import type { PushNotificationService } from './push-notification.js';
@@ -67,6 +68,7 @@ export interface WsGlobalSettingsDependencies {
   capabilities?: () => ServerCapabilitiesEvent;
   themeDefaultChanged?: (defaultThemeId: string) => Promise<void>;
   themeCatalog?: Pick<import('./theme-catalog.js').ThemeCatalog, 'snapshot' | 'onChange' | 'setDefaultTheme'>;
+  appService?: AppService;
 }
 
 /** True when the forwarded input's first token is the retired `/new`
@@ -219,6 +221,7 @@ export class WsHandler {
     /** Honor-system connection identity resolved from the `?user=` query param at socket open. */
     private readonly user: string = 'default',
     private readonly themePreferences?: ThemePreferences,
+    private readonly appService?: AppService,
   ) {
     this.clientId = clientId;
     // Open-time pin initialization, nonblocking: a folder command arriving
@@ -940,6 +943,82 @@ export class WsHandler {
         case 'get_global_settings': {
           const manifest = this.globalSettings?.manifest ? await this.globalSettings.manifest() : { files: [] };
           this.sendResponse(id, true, manifest);
+          break;
+        }
+
+        case 'list_apps': {
+          if (!this.appService) {
+            this.sendResponse(id, false, undefined, 'Apps gateway is not configured');
+            break;
+          }
+          this.sendResponse(id, true, this.appService.snapshot());
+          break;
+        }
+
+        case 'register_app': {
+          if (!this.appService) {
+            this.sendResponse(id, false, undefined, 'Apps gateway is not configured');
+            break;
+          }
+          try {
+            const result = await this.appService.register({
+              slug: command.slug,
+              title: command.title,
+              target: command.target,
+              description: command.description,
+              overwrite: command.overwrite,
+            });
+            this.sendResponse(id, true, result);
+          } catch (error) {
+            this.sendResponse(id, false, undefined, error instanceof Error ? error.message : String(error));
+          }
+          break;
+        }
+
+        case 'update_app': {
+          if (!this.appService) {
+            this.sendResponse(id, false, undefined, 'Apps gateway is not configured');
+            break;
+          }
+          try {
+            const result = await this.appService.update({
+              slug: command.slug,
+              title: command.title,
+              description: command.description,
+              target: command.target,
+            });
+            this.sendResponse(id, true, result);
+          } catch (error) {
+            this.sendResponse(id, false, undefined, error instanceof Error ? error.message : String(error));
+          }
+          break;
+        }
+
+        case 'remove_app': {
+          if (!this.appService) {
+            this.sendResponse(id, false, undefined, 'Apps gateway is not configured');
+            break;
+          }
+          try {
+            const result = await this.appService.remove(command.slug);
+            this.sendResponse(id, true, result);
+          } catch (error) {
+            this.sendResponse(id, false, undefined, error instanceof Error ? error.message : String(error));
+          }
+          break;
+        }
+
+        case 'resync_apps': {
+          if (!this.appService) {
+            this.sendResponse(id, false, undefined, 'Apps gateway is not configured');
+            break;
+          }
+          try {
+            const result = await this.appService.resync();
+            this.sendResponse(id, true, result);
+          } catch (error) {
+            this.sendResponse(id, false, undefined, error instanceof Error ? error.message : String(error));
+          }
           break;
         }
         case 'file_get': {

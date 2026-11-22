@@ -47,6 +47,8 @@ export interface SessionManagerOptions {
   configSupplier?: () => PimoteConfig;
   staticHostFactory?: ExtensionFactory;
   fileDownloadFactory?: ExtensionFactory;
+  /** Durable global Apps extension factory; omitted when Apps gateway is unconfigured. */
+  appsFactory?: ExtensionFactory;
   /** Injects the `pimote-docs` system-prompt section into every session. */
   pimoteDocsFactory?: ExtensionFactory;
   /** Included only when canonical session cwd equals canonical managerRoot.
@@ -776,6 +778,7 @@ export class PimoteSessionManager {
 
   private readonly staticHostFactory?: ExtensionFactory;
   private readonly fileDownloadFactory?: ExtensionFactory;
+  private readonly appsFactory?: ExtensionFactory;
   private readonly managerExtensionFactory?: ExtensionFactory;
   private readonly pimoteDocsFactory?: ExtensionFactory;
   private readonly isVoiceModeActive?: (slot: ManagedSlot) => boolean;
@@ -791,6 +794,7 @@ export class PimoteSessionManager {
     this.loginOrchestrator = new LoginOrchestrator(this.modelRuntime);
     this.staticHostFactory = options.staticHostFactory;
     this.fileDownloadFactory = options.fileDownloadFactory;
+    this.appsFactory = options.appsFactory;
     this.managerExtensionFactory = options.managerExtensionFactory;
     this.pimoteDocsFactory = options.pimoteDocsFactory;
     this.isVoiceModeActive = options.isVoiceModeActive;
@@ -1104,6 +1108,7 @@ export class PimoteSessionManager {
 
     const staticHostFactory = this.staticHostFactory;
     const fileDownloadFactory = this.fileDownloadFactory;
+    const appsFactory = this.appsFactory;
     const managerExtensionFactory = this.managerExtensionFactory;
     const pimoteDocsFactory = this.pimoteDocsFactory;
     const sessionResumeFactory = createSessionResumeExtension({
@@ -1127,6 +1132,7 @@ export class PimoteSessionManager {
           ...(pimoteDocsFactory ? [pimoteDocsFactory] : []),
           ...(staticHostFactory ? [staticHostFactory] : []),
           ...(fileDownloadFactory ? [fileDownloadFactory] : []),
+          ...(appsFactory ? [appsFactory] : []),
           ...(managerExtensionFactory && (await loadManagerExtension({ cwd }, this.config)) ? [managerExtensionFactory] : []),
           // SDK sessions skip pi's built-in extensions, so register Pi's
           // codemode, tool-search, and MCP extensions here. Codemode and

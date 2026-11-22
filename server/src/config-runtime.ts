@@ -9,6 +9,8 @@ export interface ConfigRuntimeOptions {
   config: PimoteConfig;
   /** Optional authority for the active voice transport. */
   voiceAvailable?: boolean | (() => boolean);
+  /** Optional authority for the active Apps gateway. */
+  appsAvailable?: boolean | (() => boolean);
 }
 
 function cloneConfig(config: PimoteConfig): PimoteConfig {
@@ -16,6 +18,7 @@ function cloneConfig(config: PimoteConfig): PimoteConfig {
     ...config,
     roots: [...config.roots],
     voice: config.voice ? { ...config.voice } : undefined,
+    apps: config.apps ? { ...config.apps } : undefined,
     tagSnippets: normalizeTagSnippets(config.tagSnippets),
     settingsFiles: config.settingsFiles ? [...config.settingsFiles] : undefined,
   };
@@ -44,6 +47,7 @@ export class ConfigRuntime {
   private readonly startupConfig: PimoteConfig;
   private effectiveConfig: PimoteConfig;
   private readonly voiceAvailability: () => boolean;
+  private readonly appsAvailability: () => boolean;
   private writeQueue: Promise<void> = Promise.resolve();
 
   constructor(options: ConfigRuntimeOptions) {
@@ -56,6 +60,13 @@ export class ConfigRuntime {
     } else {
       const voiceAvailable = options.voiceAvailable ?? hasVoiceTransport(options.config);
       this.voiceAvailability = () => voiceAvailable;
+    }
+
+    if (typeof options.appsAvailable === 'function') {
+      this.appsAvailability = options.appsAvailable;
+    } else {
+      const appsAvailable = options.appsAvailable ?? options.config.apps !== undefined;
+      this.appsAvailability = () => appsAvailable;
     }
   }
 
@@ -94,6 +105,7 @@ export class ConfigRuntime {
     return {
       type: 'server_capabilities',
       voice: this.voiceAvailability(),
+      apps: this.appsAvailability(),
       tagSnippets: this.effectiveConfig.tagSnippets ? [...this.effectiveConfig.tagSnippets] : [],
     };
   }

@@ -20,6 +20,11 @@ export class ServerCapabilitiesStore {
     return this.advertised?.voice ?? false;
   }
 
+  /** Durable global Apps gateway is enabled on the server. False until advertised. */
+  get apps(): boolean {
+    return this.advertised?.apps ?? false;
+  }
+
   /** Validated Markdown wrap-tag snippets. Empty until the server advertises them. */
   get tagSnippets(): readonly string[] {
     return this.advertised?.tagSnippets ?? [];

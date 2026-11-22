@@ -79,7 +79,7 @@ The server has no client-auth layer; deployment supplies access control.
 
 Pi session and process-global extensions for voice, static hosting, one-shot downloads and registered theme files.
 
-**Responsibilities:** voice-call orchestration and speech bridge, static-host publishing, file-download offers, extension prompts, panel and EventBus integration, ordered theme-file registration through the global extension host
+**Responsibilities:** voice-call orchestration and speech bridge, static-host publishing, durable global Apps catalog and Caddy reconciliation, file-download offers, extension prompts, panel and EventBus integration, ordered theme-file registration through the global extension host
 
 The server-root voice orchestrator and shared JSON store bridge these extensions to server lifecycle and persistence.
 
@@ -91,6 +91,7 @@ The server-root voice orchestrator and shared JSON store bridge these extensions
 - `server/src/voice-orchestrator.ts`
 - `server/src/voice-orchestrator-boot.ts`
 - `server/src/static-host/**`
+- `server/src/apps/**`
 - `server/src/pimote-docs/**`
 - `server/src/file-download/**`
 - `server/src/session-json-store.ts`

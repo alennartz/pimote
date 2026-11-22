@@ -9,9 +9,12 @@ describe('ServerCapabilitiesStore', () => {
 
   it('reflects the server advertisement', () => {
     const store = new ServerCapabilitiesStore();
-    store.handleEvent({ type: 'server_capabilities', voice: true, tagSnippets: [] });
+    expect(store.apps).toBe(false);
+    store.handleEvent({ type: 'server_capabilities', voice: true, apps: true, tagSnippets: [] });
     expect(store.voice).toBe(true);
-    store.handleEvent({ type: 'server_capabilities', voice: false, tagSnippets: [] });
+    expect(store.apps).toBe(true);
+    store.handleEvent({ type: 'server_capabilities', voice: false, apps: false, tagSnippets: [] });
     expect(store.voice).toBe(false);
+    expect(store.apps).toBe(false);
   });
 });

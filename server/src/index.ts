@@ -33,6 +33,7 @@ import { FilePushSubscriptionStore, WebPushSender, migratePushSubscriptionStore 
 import {
   LEGACY_PIMOTE_PUSH_SUBSCRIPTIONS_PATH,
   PIMOTE_CONFIG_PATH,
+  PIMOTE_APPS_PATH,
   PIMOTE_EXTENSIONS_DIR,
   PIMOTE_FILE_DOWNLOAD_DIR,
   PIMOTE_REGISTRY_STORE_DIR,
@@ -46,6 +47,7 @@ import {
 import { FileSessionMetadataStore } from './session-metadata.js';
 import { buildVoiceOrchestrator } from './voice-orchestrator-boot.js';
 import { InMemoryStaticHostRegistry, FileStaticHostStore, gcStaticHostStore, createStaticHostExtension } from './static-host/index.js';
+import { AppService, CaddyAdminClient, FileAppStore, createAppsExtension } from './apps/index.js';
 import { bootstrapFileDownloads } from './file-download/bootstrap.js';
 import { getVersion } from './version.js';
 import { createUpdateChecker, fetchLatestVersionFromNpm, type UpdateChecker } from './update-check.js';
@@ -80,10 +82,26 @@ export async function main(options: StartOptions = {}) {
   // Startup-only fields remain captured in `config` by the consumers that own
   // listeners, roots, push, and voice transport.
   const voiceOrchestratorRef: { current: ReturnType<typeof buildVoiceOrchestrator> } = { current: null };
+  let appService: AppService | undefined;
+  if (config.apps) {
+    appService = new AppService({
+      config: config.apps,
+      pimotePort: port,
+      store: new FileAppStore(PIMOTE_APPS_PATH),
+      reconciler: CaddyAdminClient.fromConfig(config.apps),
+    });
+    const initialApps = await appService.initialize();
+    if (initialApps.sync.status === 'error') {
+      console.warn(`[apps] Boot reconciliation failed (${initialApps.apps.length} app(s) loaded): ${initialApps.sync.error}`);
+    } else {
+      console.log(`[apps] Gateway active (${initialApps.apps.length} app(s) reconciled to ${config.apps.caddyAdminUrl})`);
+    }
+  }
   const configRuntime = new ConfigRuntime({
     configPath: PIMOTE_CONFIG_PATH,
     config,
     voiceAvailable: () => voiceOrchestratorRef.current !== null,
+    appsAvailable: () => appService !== undefined,
   });
   const agentDir = getAgentDir();
   const packageSettings = SettingsManager.create(process.cwd(), agentDir);
@@ -174,6 +192,7 @@ export async function main(options: StartOptions = {}) {
   const staticHostRegistry = new InMemoryStaticHostRegistry();
   const staticHostStore = new FileStaticHostStore(PIMOTE_STATIC_HOST_DIR);
   const staticHostFactory = createStaticHostExtension({ registry: staticHostRegistry, store: staticHostStore });
+  const appsFactory = appService ? createAppsExtension({ service: appService }) : undefined;
   const fileDownloads = await bootstrapFileDownloads({ storeDir: PIMOTE_FILE_DOWNLOAD_DIR, validSessionIds });
   const managerContextBinding = new ManagerContextBinding();
   const managerExtensionFactory: ExtensionFactory = (pi) => createManagerExtension(managerContextBinding.get())(pi);
@@ -183,6 +202,7 @@ export async function main(options: StartOptions = {}) {
     configSupplier: () => configRuntime.snapshot(),
     staticHostFactory,
     fileDownloadFactory: fileDownloads.extensionFactory,
+    appsFactory,
     managerExtensionFactory,
     pimoteDocsFactory: createPimoteDocsExtension(),
     isVoiceModeActive: (slot) => voiceOrchestratorRef.current?.orchestrator.isCallActive(slot.sessionState.id) ?? false,
@@ -461,6 +481,7 @@ export async function main(options: StartOptions = {}) {
     capabilities: () => configRuntime.capabilities(),
     themeDefaultChanged: (defaultThemeId: string) => themeCatalog.setDefaultTheme(defaultThemeId).then(() => undefined),
     themeCatalog,
+    ...(appService ? { appService } : {}),
     reloadPimoteExtensions,
   };
 

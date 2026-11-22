@@ -28,6 +28,7 @@ The file is `$XDG_CONFIG_HOME/pimote/config.json`, which defaults to `~/.config/
 | `defaultInterpreterModel`                             | string or `{provider, modelId}` | automatic                        | Voice interpreter model; the slug form accepts a `:level` thinking suffix. Empty or unset leaves the session model to pi.    |
 | `defaultWorkerModel`                                  | string or `{provider, modelId}` | automatic                        | Voice worker model; the slug form accepts a `:level` thinking suffix. Empty or unset lets workers inherit the session model. |
 | `voice.speechmuxSignalUrl`, `voice.speechmuxLlmWsUrl` | string                          | none                             | Voice signalling and interpreter endpoints.                                                                                  |
+| `apps.publicUrlTemplate`, `apps.caddyAdminUrl`        | string                          | none                             | Wildcard App URL template and loopback Caddy admin API endpoint (`apps.caddyListen`, `apps.caddyServerName` optional).       |
 | `settingsFiles`                                       | string[]                        | none                             | Extra files in the global Settings catalog.                                                                                  |
 | `tagSnippets`                                         | string[]                        | none                             | Wrap-tag palette in the `AGENTS.md` editor.                                                                                  |
 | `folderSourcesDir`                                    | string                          | legacy                           | Retained for compatibility; production discovery uses the global extension host and ignores this setting.                    |
@@ -41,6 +42,7 @@ The server rejects a native config write, and leaves the file unchanged, when:
 - the JSON does not parse, or is not an object;
 - `roots` is not a non-empty array of strings;
 - `managerRoot` is set and is not a non-empty string;
+- `apps` is set with an invalid `publicUrlTemplate`, non-loopback `caddyAdminUrl`, invalid `caddyListen`, or invalid `caddyServerName`;
 - `settingsFiles` or `tagSnippets` is not an array of strings;
 - a `tagSnippets` entry does not match `^[A-Za-z][A-Za-z0-9_-]*$`.
 
@@ -50,13 +52,13 @@ A field with the wrong type falls back to its default. Only the cases above fail
 
 ### When a change applies
 
-| Field                                                                         | Applies                                                    |
-| ----------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `settingsFiles`, `tagSnippets`, `defaultTheme`                                | At once.                                                   |
-| `defaultInterpreterModel`, `defaultWorkerModel`                               | To the next voice extension build.                         |
-| `idleTimeout`                                                                 | At the next reaper check.                                  |
-| `bufferSize`                                                                  | To new session buffers, including reset and fork rebuilds. |
-| `roots`, `managerRoot`, `port`, `appName`, `voice`, VAPID keys, `updateCheck` | Only at restart.                                           |
+| Field                                                                                 | Applies                                                    |
+| ------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `settingsFiles`, `tagSnippets`, `defaultTheme`                                        | At once.                                                   |
+| `defaultInterpreterModel`, `defaultWorkerModel`                                       | To the next voice extension build.                         |
+| `idleTimeout`                                                                         | At the next reaper check.                                  |
+| `bufferSize`                                                                          | To new session buffers, including reset and fork rebuilds. |
+| `roots`, `managerRoot`, `port`, `appName`, `voice`, `apps`, VAPID keys, `updateCheck` | Only at restart.                                           |
 
 A write to a startup-only field succeeds and changes nothing until the server restarts. Restart the server after such a change.
 

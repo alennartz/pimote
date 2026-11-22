@@ -248,6 +248,10 @@ _Avoid_: project instructions (ambiguous with a code folder's `AGENTS.md`)
 A server-level WebSocket command for reading or atomically writing a file by path, independent of any session.
 _Avoid_: session file command
 
+**App**:
+A durable, process-global web application registered in Pimote (`apps.json`) and routed on its own origin by an external Caddy sidecar. Unlike a session-scoped static host (`/s/<slug>/`), an App outlives the creating session and appears on the Home screen.
+_Avoid_: static host (reserved for session-scoped HTML reports)
+
 **Tag snippet**:
 A configured tag name offered as a one-tap wrapper in Markdown editors; configured with `tagSnippets` in Pimote's native config.
 _Avoid_: tag template

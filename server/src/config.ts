@@ -4,6 +4,10 @@ import { dirname, isAbsolute, join, relative } from 'node:path';
 import { PIMOTE_CONFIG_PATH, PIMOTE_STATE_DIR } from './paths.js';
 import { DEFAULT_APP_NAME } from './branding.js';
 import { normalizeBuiltinThemeId } from './theme-ids.js';
+import { parseAppsConfig } from './apps/validation.js';
+import type { AppsConfig } from './apps/types.js';
+
+export type { AppsConfig };
 
 export interface ModelRef {
   provider: string;
@@ -43,6 +47,8 @@ export interface PimoteConfig {
   defaultWorkerModel?: string;
   /** Voice subsystem config. */
   voice?: VoiceConfig;
+  /** Durable global Apps gateway config (external Caddy sidecar + public wildcard origin). */
+  apps?: AppsConfig;
   vapidPublicKey?: string;
   vapidPrivateKey?: string;
   vapidEmail?: string;
@@ -148,6 +154,7 @@ function parseConfigObject(obj: Record<string, unknown>, configPath: string, hom
     defaultInterpreterModel: normalizeModelRef(obj.defaultInterpreterModel),
     defaultWorkerModel: normalizeModelRef(obj.defaultWorkerModel),
     voice: parseVoiceConfig(obj.voice),
+    apps: parseAppsConfig(obj.apps, configPath),
     vapidPublicKey: typeof obj.vapidPublicKey === 'string' ? obj.vapidPublicKey : undefined,
     vapidPrivateKey: typeof obj.vapidPrivateKey === 'string' ? obj.vapidPrivateKey : undefined,
     vapidEmail: typeof obj.vapidEmail === 'string' ? obj.vapidEmail : undefined,

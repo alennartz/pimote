@@ -66,6 +66,10 @@ export const PIMOTE_DOC_FILES: ReadonlyArray<{ path: string; purpose: string }> 
     path: 'docs/shipped/static-reports.md',
     purpose: 'Layout and visual design for HTML reports hosted with pimote_static_host.',
   },
+  {
+    path: 'docs/shipped/apps.md',
+    purpose: 'Durable global Apps backed by Caddy: config, target validation, Pi tools, and route sync behavior.',
+  },
 ];
 
 /** The `pimote-docs` section text: each file's absolute path and its purpose. */

@@ -1135,6 +1135,86 @@ export type SubagentResurrectResponseData = SubagentResurrectResult;
 /** Response data returned by a guarded subagent_teardown command. */
 export type SubagentTeardownResponseData = SubagentTeardownResult;
 
+// ---- Global durable Apps ----
+
+export interface AppInfo {
+  slug: string;
+  title: string;
+  description?: string;
+  target: string;
+  url: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBySessionId?: string;
+  folderPath?: string;
+}
+
+export interface AppsSyncState {
+  status: 'synced' | 'error';
+  lastSyncedAt?: string;
+  error?: string;
+}
+
+export interface ListAppsCommand extends CommandBase {
+  type: 'list_apps';
+}
+
+export interface ListAppsResponseData {
+  apps: AppInfo[];
+  sync: AppsSyncState;
+}
+
+export interface RegisterAppCommand extends CommandBase {
+  type: 'register_app';
+  slug: string;
+  title: string;
+  target: string;
+  description?: string;
+  overwrite?: boolean;
+}
+
+export interface RegisterAppResponseData {
+  app: AppInfo;
+  sync: AppsSyncState;
+}
+
+export interface UpdateAppCommand extends CommandBase {
+  type: 'update_app';
+  slug: string;
+  title?: string;
+  description?: string;
+  target?: string;
+}
+
+export interface UpdateAppResponseData {
+  app: AppInfo;
+  sync: AppsSyncState;
+}
+
+export interface RemoveAppCommand extends CommandBase {
+  type: 'remove_app';
+  slug: string;
+}
+
+export interface RemoveAppResponseData {
+  removed: boolean;
+  sync: AppsSyncState;
+}
+
+export interface ResyncAppsCommand extends CommandBase {
+  type: 'resync_apps';
+}
+
+export interface ResyncAppsResponseData {
+  sync: AppsSyncState;
+}
+
+export interface AppsChangedEvent {
+  type: 'apps_changed';
+  apps: AppInfo[];
+  sync: AppsSyncState;
+}
+
 export type PimoteCommand =
   | PromptCommand
   | SteerCommand
@@ -1187,6 +1267,11 @@ export type PimoteCommand =
   | GetGlobalSettingsCommand
   | GetThemeCatalogCommand
   | SetThemeCommand
+  | ListAppsCommand
+  | RegisterAppCommand
+  | UpdateAppCommand
+  | RemoveAppCommand
+  | ResyncAppsCommand
   | FileGetCommand
   | FilePutCommand
   | RegisterPushCommand
@@ -1991,6 +2076,8 @@ export interface ServerCapabilitiesEvent {
   type: 'server_capabilities';
   /** Voice calling is configured (speechmux signalling + LLM WS URLs). */
   voice: boolean;
+  /** Durable Apps gateway is configured (publicUrlTemplate + caddyAdminUrl). */
+  apps?: boolean;
   /** Validated Markdown wrap-tag palette. */
   tagSnippets: string[];
 }
@@ -2029,6 +2116,7 @@ export type PimoteEvent =
   | ConnectionRestoredEvent
   | FoldersChangedEvent
   | ThemeCatalogChangedEvent
+  | AppsChangedEvent
   | UserSessionsChangedEvent
   | SessionRestoreEvent
   | BufferedEventsEvent

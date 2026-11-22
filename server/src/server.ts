@@ -20,7 +20,8 @@ import { serveFileDownloadRoute, type DownloadManager } from './file-download/in
 import type { UserProfiles } from './user-profiles.js';
 import type { ThemeCatalog } from './theme-catalog.js';
 import crypto from 'node:crypto';
-import type { UpdateAvailableEvent, VersionMismatchEvent, ServerCapabilitiesEvent, ThemeCatalogChangedEvent } from '../../shared/dist/index.js';
+import type { UpdateAvailableEvent, VersionMismatchEvent, ServerCapabilitiesEvent, ThemeCatalogChangedEvent, AppsChangedEvent } from '../../shared/dist/index.js';
+import type { AppService } from './apps/index.js';
 import type { UpdateChecker } from './update-check.js';
 import { resolveUserName } from './user-profiles.js';
 import { handleImageHttpRoute } from './image-http.js';
@@ -153,8 +154,10 @@ export async function createServer(
   globalSettings?: WsGlobalSettingsDependencies,
   userProfiles?: UserProfiles,
   themeCatalog?: Pick<ThemeCatalog, 'snapshot' | 'onChange' | 'setDefaultTheme'>,
+  appService?: AppService,
 ): Promise<PimoteServer> {
   const effectiveThemeCatalog = themeCatalog ?? globalSettings?.themeCatalog;
+  const effectiveAppService = appService ?? globalSettings?.appService;
   const appName = resolveAppName(config);
   const clientVersion = await loadClientVersion();
   if (clientVersion) {
@@ -272,6 +275,10 @@ export async function createServer(
     const event: ThemeCatalogChangedEvent = { type: 'theme_catalog_changed', revision: snapshot.revision };
     for (const handler of clientRegistry.values()) handler.sendToClient(event);
   });
+  const stopAppsSubscription = effectiveAppService?.onChange((snapshot) => {
+    const event: AppsChangedEvent = { type: 'apps_changed', apps: snapshot.apps, sync: snapshot.sync };
+    for (const handler of clientRegistry.values()) handler.sendToClient(event);
+  });
 
   // Liveness heartbeat — see ws-heartbeat.ts for why this exists. 20s sits
   // under the ~30s idle drops observed through some proxy paths.
@@ -355,6 +362,7 @@ export async function createServer(
       userProfiles,
       user,
       themePreferences,
+      effectiveAppService,
     );
     takeOverClientSlot(clientRegistry, clientId, handler);
 
@@ -365,6 +373,7 @@ export async function createServer(
     const capabilities: ServerCapabilitiesEvent = globalSettings?.capabilities?.() ?? {
       type: 'server_capabilities',
       voice: voiceOrchestrator !== undefined,
+      apps: effectiveAppService !== undefined,
       tagSnippets: [],
     };
     handler.sendToClient(capabilities);
@@ -421,6 +430,7 @@ export async function createServer(
     close(): Promise<void> {
       return new Promise((resolve, reject) => {
         stopThemeCatalogSubscription?.();
+        stopAppsSubscription?.();
         heartbeat.stop();
 
         // Force-close all active WebSocket connections

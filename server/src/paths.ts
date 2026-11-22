@@ -19,6 +19,8 @@ export const PIMOTE_PUSH_SUBSCRIPTIONS_PATH = join(PIMOTE_STATE_DIR, 'push-subsc
 export const PIMOTE_SESSION_METADATA_PATH = join(PIMOTE_STATE_DIR, 'session-metadata.json');
 /** The per-user open-session profile store (`user-profiles.json`). */
 export const PIMOTE_USER_PROFILES_PATH = join(PIMOTE_STATE_DIR, 'user-profiles.json');
+/** Durable global Apps catalog (`apps.json`). */
+export const PIMOTE_APPS_PATH = join(PIMOTE_STATE_DIR, 'apps.json');
 
 /** Directory scanned for user Pimote extension modules. */
 export const PIMOTE_EXTENSIONS_DIR = join(PIMOTE_CONFIG_DIR, 'extensions');

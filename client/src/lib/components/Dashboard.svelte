@@ -18,9 +18,11 @@
     return () => query.removeEventListener('change', updateViewport);
   });
   import HomeToolbar from '$lib/components/HomeToolbar.svelte';
+  import AppsSection from '$lib/components/AppsSection.svelte';
   import FolderList from '$lib/components/FolderList.svelte';
   import { isPlaceholderSessionId, submitManagerMessage, type ManagerSubmitPorts } from '$lib/manager-composer.js';
   import { closeOpenSwipeCard } from '$lib/components/SwipeableCard.svelte';
+  import { appsStore } from '$lib/stores/apps-store.svelte.js';
   import { folderStore } from '$lib/stores/folder-store.svelte.js';
   import { connection } from '$lib/stores/connection.svelte.js';
   import { openNewSession, sessionRegistry, switchToSession } from '$lib/stores/session-registry.svelte.js';
@@ -77,6 +79,14 @@
       });
     }
   });
+
+  $effect(() => {
+    if (connection.status === 'connected' && serverCapabilities.apps) {
+      untrack(() => {
+        void appsStore.reload();
+      });
+    }
+  });
 </script>
 
 <GlobalSettingsDialog store={globalSettingsStore} {viewport} snippets={serverCapabilities.tagSnippets} themeStore={themeRuntime.store} />
@@ -103,6 +113,10 @@
       </div>
 
       <HomeToolbar bind:search bind:managerMode bind:managerDraft {managerReady} busy={managerBusy} onSubmitManager={submitManagerDraft} />
+
+      {#if serverCapabilities.apps}
+        <AppsSection {search} />
+      {/if}
 
       <section>
         <FolderList {search} {scrollElement} />
