@@ -54,7 +54,6 @@ function node(path: readonly string[]): SubagentNodeSnapshot {
     channels: ['parent', 'worker/scout'],
     waitingFor: [['worker', 'scout']],
     hasSubgroup: path.length === 1,
-    lastOutput: 'Callback ownership confirmed.',
   };
 }
 
@@ -189,10 +188,8 @@ describe('Panel hierarchy navigation', () => {
     expect(details.textContent).not.toContain('Working directory');
     expect(details.textContent).toContain('provider/review-model');
     const detailCommands = details.querySelectorAll('dl.agent-inspector-command');
-    expect(detailCommands[0]?.querySelector('dt')?.textContent).toBe('Last command');
+    expect(detailCommands[0]?.querySelector('dt')?.textContent).toBe('Last activity');
     expect(detailCommands[0]?.querySelector('dd')?.textContent).toContain('checking callback ownership');
-    expect(detailCommands[1]?.querySelector('dt')?.textContent).toBe('Last output');
-    expect(detailCommands[1]?.querySelector('dd code')?.textContent).toBe('Callback ownership confirmed.');
     const usage = details.querySelector('.agent-inspector-usage');
     expect(detailCommands[0]?.compareDocumentPosition(usage!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(details.textContent).toContain('parent');

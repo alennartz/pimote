@@ -28,7 +28,6 @@ export interface SubagentNodeMetadata {
   readonly contextPercent?: number;
   readonly channels?: readonly string[];
   readonly waitingTargets?: readonly AgentPath[];
-  readonly lastOutput?: string;
   readonly lastError?: string;
 }
 
@@ -281,7 +280,6 @@ interface WireNodeProjection {
   readonly waitingFor?: readonly AgentPath[];
   readonly hasChildren?: boolean;
   readonly hasSubgroup?: boolean;
-  readonly lastOutput?: string;
   readonly lastError?: string;
   readonly incarnation?: string;
 }
@@ -330,7 +328,6 @@ function projectNode(node: SubagentHierarchyNode | WireSubagentNodeSnapshot): Pr
     ...(candidate.channels !== undefined ? { channels: Object.freeze([...candidate.channels]) } : {}),
     ...(waitingTargets !== undefined ? { waitingTargets: Object.freeze(waitingTargets.map(copyPath)) } : {}),
     ...(hasChildren !== undefined ? { hasChildren } : {}),
-    ...(candidate.lastOutput !== undefined ? { lastOutput: candidate.lastOutput } : {}),
     ...(candidate.lastError !== undefined ? { lastError: candidate.lastError } : {}),
     ...(candidate.incarnation !== undefined ? { incarnation: candidate.incarnation } : {}),
   };
@@ -361,7 +358,6 @@ export function projectSubagentPanelRows(snapshot: PanelSnapshotInput, state: Su
           ...(node.contextPercent !== undefined ? { contextPercent: node.contextPercent } : {}),
           ...(node.channels !== undefined ? { channels: node.channels } : {}),
           ...(node.waitingTargets !== undefined ? { waitingTargets: node.waitingTargets } : {}),
-          ...(node.lastOutput !== undefined ? { lastOutput: node.lastOutput } : {}),
           ...(node.lastError !== undefined ? { lastError: node.lastError } : {}),
         },
         live,

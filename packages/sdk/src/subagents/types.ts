@@ -47,7 +47,6 @@ export type SubagentNodeSnapshot = Readonly<{
   channels: readonly string[];
   waitingFor: readonly AgentPath[];
   hasSubgroup: boolean;
-  lastOutput?: string;
   lastError?: string;
 }>;
 

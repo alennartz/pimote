@@ -29,7 +29,6 @@ const snapshot: SubagentPanelSnapshot = {
       contextPercent: 31,
       channels: ['parent', 'scout'],
       waitingTargets: [scoutPath],
-      lastOutput: 'Checking the redirect path.',
       hasChildren: true,
     },
     {
@@ -46,7 +45,6 @@ const snapshot: SubagentPanelSnapshot = {
       contextPercent: 24,
       channels: ['worker', 'parent'],
       waitingTargets: [workerPath],
-      lastOutput: 'Awaiting worker response.',
     },
     {
       path: explorerPath,
