@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createIncrementalHighlighter, ensureHljs, highlightToHtml } from './code-highlight.js';
+import { createIncrementalHighlighter, ensureHljs, highlightToHtml, resolveHighlightLanguageFromPath } from './code-highlight.js';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -43,6 +43,37 @@ describe('highlightToHtml', () => {
 
   it('returns an empty string for empty input with a null language', () => {
     expect(highlightToHtml('', null)).toBe('');
+  });
+});
+
+describe('resolveHighlightLanguageFromPath', () => {
+  it('resolves extensions that are registered aliases', async () => {
+    await ensureHljs();
+    expect(await resolveHighlightLanguageFromPath('src/app.ts')).toBe('typescript');
+    expect(await resolveHighlightLanguageFromPath('main.go')).toBe('go');
+    expect(await resolveHighlightLanguageFromPath('README.MD')).toBe('markdown');
+  });
+
+  it('maps suffixes that are not aliases to a registered grammar', async () => {
+    expect(await resolveHighlightLanguageFromPath('components/App.svelte')).toBe('xml');
+    expect(await resolveHighlightLanguageFromPath('a/b/c.pyi')).toBe('python');
+    expect(await resolveHighlightLanguageFromPath('app.cfg')).toBe('ini');
+  });
+
+  it('matches extension-less basenames like Dockerfile and Makefile', async () => {
+    expect(await resolveHighlightLanguageFromPath('deploy/Dockerfile')).toBe('dockerfile');
+    expect(await resolveHighlightLanguageFromPath('Makefile')).toBe('makefile');
+  });
+
+  it('splits windows-style paths', async () => {
+    expect(await resolveHighlightLanguageFromPath('C:\\web\\index.htm')).toBe('xml');
+  });
+
+  it('returns null for unknown extensions, dotfiles, and empty paths', async () => {
+    expect(await resolveHighlightLanguageFromPath('notes.zzz')).toBeNull();
+    expect(await resolveHighlightLanguageFromPath('.gitignore')).toBeNull();
+    expect(await resolveHighlightLanguageFromPath('dir/')).toBeNull();
+    expect(await resolveHighlightLanguageFromPath('')).toBeNull();
   });
 });
 

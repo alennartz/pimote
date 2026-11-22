@@ -29,6 +29,50 @@ export function ensureHljs(): Promise<SyntaxHighlighterModule> {
   return hljsLoading;
 }
 
+/** Extensions that are not registered hljs language aliases. Maps them to a
+ *  registered grammar so path-based coverage stays complete without keeping
+ *  a per-language extension map elsewhere. */
+const EXTENSION_LANGUAGE_FALLBACK: Record<string, string> = {
+  pyi: 'python',
+  ksh: 'bash',
+  htm: 'xml',
+  mdx: 'markdown',
+  svelte: 'xml',
+  cfg: 'ini',
+  conf: 'ini',
+  properties: 'ini',
+};
+
+/**
+ * Resolve a file path to an hljs language id.
+ *
+ * The extension is matched against registered grammar aliases (ts, py, rb,
+ * go, ...); a small fallback map covers suffixes that are not aliases, and
+ * extension-less names match their basename (Dockerfile, Makefile). Returns
+ * the canonical registered id (typescript, not ts) or null for unknown
+ * extensions, dotfiles, and empty paths; never throws. Resolves once the
+ * lazy highlighter module has loaded.
+ */
+export async function resolveHighlightLanguageFromPath(path: string): Promise<string | null> {
+  const last = path.split(/[/\\]/).pop() ?? '';
+  if (!last) return null;
+  const dot = last.lastIndexOf('.');
+  const key = dot > 0 ? last.slice(dot + 1).toLowerCase() : last.toLowerCase();
+  if (!key) return null;
+  try {
+    const { hljs } = await ensureHljs();
+    const fallback = EXTENSION_LANGUAGE_FALLBACK[key];
+    if (fallback) return fallback;
+    const descriptor = hljs.getLanguage(key);
+    if (!descriptor) return null;
+    // Normalize aliases (ts, md, rb, ...) to the registered grammar id so
+    // consumers can compare against canonical ids.
+    return hljs.listLanguages().find((id) => hljs.getLanguage(id) === descriptor) ?? key;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Highlight a complete code string to hljs HTML markup.
  *

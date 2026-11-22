@@ -9,7 +9,7 @@
   import { createWriteContentStreamer, extractWriteContent } from '$lib/write-content.js';
   import { createCodemodeCodeStreamer, extractCodemodeCode } from '$lib/codemode-content.js';
   import { createBashCommandStreamer, extractBashCommand } from '$lib/bash-content.js';
-  import { inferLanguageFromPath } from '$lib/editor-language.js';
+  import { resolveHighlightLanguageFromPath } from '$lib/code-highlight.js';
   import { imageFromToolData } from '$lib/image-content.js';
   import { observeFullyOffscreen } from '$lib/auto-collapse.js';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
@@ -213,13 +213,30 @@
     }
     return '';
   });
-  let writeLanguage = $derived(isWrite ? inferLanguageFromPath(writePath) : null);
-  let isMarkdown = $derived(writeLanguage === 'markdown');
-
   // Prefer the finalized body once args are available; fall back to the last
   // streamed body otherwise (same prefer-finalized-else-streamed pattern as edit).
   let finalizedBody = $derived<string | undefined>(isWrite && content.args ? extractWriteContent(content.args) : undefined);
   let writeBody = $derived(isWrite ? (finalizedBody ?? streamingBody) : '');
+
+  // hljs language for the write body. Resolution needs the lazy highlighter
+  // module for alias lookup, so it runs only while the section is expanded;
+  // unknown paths resolve to null and render as plain text.
+  let writeLanguage = $state<string | null>(null);
+  $effect(() => {
+    if (!isWrite || !expanded) {
+      writeLanguage = null;
+      return;
+    }
+    const path = writePath;
+    let cancelled = false;
+    void resolveHighlightLanguageFromPath(path).then((lang) => {
+      if (!cancelled) writeLanguage = lang;
+    });
+    return () => {
+      cancelled = true;
+    };
+  });
+  let isMarkdown = $derived(writeLanguage === 'markdown');
 
   // Prefer the finalized source once args are available; fall back to the last
   // streamed source otherwise (same prefer-finalized-else-streamed pattern as
