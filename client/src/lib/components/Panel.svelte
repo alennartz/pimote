@@ -687,7 +687,11 @@
     margin: 0;
   }
   .tree-row-command code {
-    display: block;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
     min-width: 0;
     color: var(--muted-foreground);
     font-family: var(--font-mono, monospace);
