@@ -715,7 +715,7 @@
   }
 
   .user-body {
-    background: var(--surface-hover);
+    background: var(--secondary);
     padding: 10px 14px;
     border-radius: 12px;
     border-top-left-radius: 4px;
