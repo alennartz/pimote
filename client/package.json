@@ -27,6 +27,7 @@
     "@internationalized/date": "^3.12.0",
     "@lucide/svelte": "^1.7.0",
     "@streamparser/json": "^0.0.22",
+    "@tanstack/svelte-hotkeys": "^0.25.3",
     "@tanstack/svelte-virtual": "^3.13.39",
     "@uiw/codemirror-theme-github": "^4.25.9",
     "ansi-to-html": "^0.7.2",

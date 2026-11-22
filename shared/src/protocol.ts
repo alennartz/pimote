@@ -673,6 +673,37 @@ export interface RemoveHubMemberCommand extends CommandBase {
   memberPath: string;
 }
 
+export type LauncherSearchScope = 'all' | 'folders' | 'sessions';
+
+/** Search cached folders and session summaries for the global launcher without
+ *  mutating connection pins or dashboard filter state. resp: SearchLauncherResponseData */
+export interface SearchLauncherCommand extends CommandBase {
+  type: 'search_launcher';
+  query: string;
+  /** Narrow server search when a category prefix is active. Default 'all'. */
+  scope?: LauncherSearchScope;
+  /** Max hits per category; server-clamped to [1, 25], default 10. */
+  limit?: number;
+  /** Default false, matching list_folders. */
+  includeArchived?: boolean;
+}
+
+export interface LauncherSessionHit {
+  sessionId: string;
+  folderPath: string;
+  folderName: string;
+  name?: string;
+  firstMessage: string;
+  /** Epoch ms from session summary modification time. */
+  modified: number;
+  archived: boolean;
+}
+
+export interface SearchLauncherResponseData {
+  folders: FolderInfo[];
+  sessions: LauncherSessionHit[];
+}
+
 /** List discovered folders (merged scan + registry curation) — one window of a
  *  pinned order. resp: ListFoldersResponseData */
 export interface ListFoldersCommand extends CommandBase {
@@ -1246,6 +1277,7 @@ export type PimoteCommand =
   | SetTreeLabelCommand
   | CreateFolderCommand
   | ListFoldersCommand
+  | SearchLauncherCommand
   | ListReposCommand
   | UpdateFolderCommand
   | CreatePersonaFolderCommand

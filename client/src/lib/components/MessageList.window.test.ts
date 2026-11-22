@@ -266,3 +266,91 @@ describe('MessageList find across the window', () => {
     expect(rowKeys()).toContain('m5');
   });
 });
+
+describe('MessageList transcript bottom shortcut contract', () => {
+  function detachTranscript(top = 200): void {
+    container.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true, cancelable: true }));
+    scrollTo(top);
+    flushSync();
+  }
+
+  it('Mod+End scrolls a detached transcript to the bottom even when a textarea is focused', async () => {
+    seedSession('s1', 40);
+    sessionRegistry.switchTo('s1');
+    mountList();
+    flushSync();
+    paint();
+
+    detachTranscript(200);
+    expect(target.querySelector('button.scroll-to-bottom')).not.toBeNull();
+
+    const composer = document.createElement('textarea');
+    document.body.appendChild(composer);
+    composer.focus();
+
+    const event = new KeyboardEvent('keydown', { key: 'End', ctrlKey: true, bubbles: true, cancelable: true });
+    composer.dispatchEvent(event);
+    await settle(10);
+    paint();
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(target.querySelector('button.scroll-to-bottom')).toBeNull();
+  });
+
+  it('plain End keeps native caret behavior inside a textarea and scrolls only outside text-entry targets', async () => {
+    seedSession('s1', 40);
+    sessionRegistry.switchTo('s1');
+    mountList();
+    flushSync();
+    paint();
+
+    detachTranscript(200);
+    expect(target.querySelector('button.scroll-to-bottom')).not.toBeNull();
+
+    const composer = document.createElement('textarea');
+    document.body.appendChild(composer);
+    composer.focus();
+
+    const inField = new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true });
+    composer.dispatchEvent(inField);
+    await settle(10);
+    expect(inField.defaultPrevented).toBe(false);
+    expect(target.querySelector('button.scroll-to-bottom')).not.toBeNull();
+
+    composer.blur();
+    const outside = new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true });
+    document.body.dispatchEvent(outside);
+    await settle(10);
+    paint();
+    expect(outside.defaultPrevented).toBe(true);
+    expect(target.querySelector('button.scroll-to-bottom')).toBeNull();
+  });
+
+  it('ignores Mod+F and Mod+End while focus is inside an open dialog', async () => {
+    seedSession('s1', 40);
+    sessionRegistry.switchTo('s1');
+    mountList();
+    flushSync();
+    paint();
+
+    detachTranscript(200);
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    const dialogInput = document.createElement('input');
+    dialog.appendChild(dialogInput);
+    document.body.appendChild(dialog);
+    dialogInput.focus();
+
+    const modF = new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true });
+    dialogInput.dispatchEvent(modF);
+    const modEnd = new KeyboardEvent('keydown', { key: 'End', ctrlKey: true, bubbles: true, cancelable: true });
+    dialogInput.dispatchEvent(modEnd);
+    await settle(10);
+
+    expect(modF.defaultPrevented).toBe(false);
+    expect(modEnd.defaultPrevented).toBe(false);
+    expect(target.querySelector('input[aria-label="Find in conversation"]')).toBeNull();
+    expect(document.activeElement).toBe(dialogInput);
+    expect(target.querySelector('button.scroll-to-bottom')).not.toBeNull();
+  });
+});

@@ -2,6 +2,7 @@
   import { connection } from '$lib/stores/connection.svelte.js';
   import { isMobileViewport } from '$lib/mobile-viewport.svelte.js';
   import { tick } from 'svelte';
+  import { createHotkeyAttachment, formatForDisplay } from '@tanstack/svelte-hotkeys';
   import NewSessionDialog from './NewSessionDialog.svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import Plus from '@lucide/svelte/icons/plus';
@@ -56,6 +57,9 @@
     (managerMode ? managerEl : searchEl)?.focus();
   }
 
+  const toggleModeHotkey = createHotkeyAttachment('Mod+/', () => void toggleMode(), { ignoreInputs: false });
+  const toggleShortcutLabel = formatForDisplay('Mod+/');
+
   /** Grow the field to its content so rows=1 never overflows — a fractional
    *  line-height mismatch would otherwise paint a hairline scrollbar. An empty
    *  field keeps the rows=1 height: measuring scrollHeight there would pick up
@@ -103,6 +107,7 @@
 <div class="relative flex items-center gap-2">
   <div class="relative min-w-0 flex-1">
     <div
+      {@attach toggleModeHotkey}
       class="border-border focus-within:ring-ring flex min-h-11 w-full items-center gap-1 rounded-2xl border bg-[var(--surface-2,var(--secondary))] px-1.5 py-1 shadow-lg transition-colors focus-within:ring-1 focus-within:outline-none max-md:min-h-12 {mode ===
       'manager'
         ? 'border-ring/60 ring-ring/40 ring-1'
@@ -113,7 +118,7 @@
         class="hover:bg-accent/50 focus-visible:ring-ring flex shrink-0 items-center gap-0.5 rounded-xl transition-colors focus-visible:ring-1 focus-visible:outline-none"
         data-mode={mode}
         onclick={() => void toggleMode()}
-        title={mode === 'search' ? 'Switch to the manager (AI)' : 'Switch to search'}
+        title={mode === 'search' ? `Switch to the manager (AI) (${toggleShortcutLabel})` : `Switch to search (${toggleShortcutLabel})`}
         aria-label={mode === 'search' ? 'Switch to the manager' : 'Switch to search'}
       >
         <span

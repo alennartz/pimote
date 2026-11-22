@@ -296,6 +296,19 @@ export class WsHandler {
           break;
         }
 
+        case 'search_launcher': {
+          const { folderListing } = this.requireFolderDeps();
+          if (!folderListing) throw new Error('Folder management is not available on this connection');
+          const result = await folderListing.searchLauncher({
+            query: typeof command.query === 'string' ? command.query : '',
+            scope: command.scope,
+            limit: command.limit,
+            includeArchived: command.includeArchived,
+          });
+          this.sendResponse(id, true, result);
+          break;
+        }
+
         case 'list_repos': {
           const { repoIndex } = this.requireFolderDeps();
           const repos = await repoIndex.listLazy();

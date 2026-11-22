@@ -50,10 +50,10 @@ function makeManagerSession(index: number): SessionInfo {
 
 let destroy: (() => void) | null = null;
 
-function render() {
+function render(props: Record<string, unknown> = {}) {
   const target = document.createElement('div');
   document.body.appendChild(target);
-  const component = mount(HomeToolbar, { target });
+  const component = mount(HomeToolbar, { target, props });
   return () => unmount(component);
 }
 
@@ -139,5 +139,46 @@ describe('combined search / manager box', () => {
     await tick();
 
     expect(document.body.textContent).toContain('Start a new session');
+  });
+
+  it('Mod+/ toggles between search and manager modes while preserving both drafts and focusing the replacement field', async () => {
+    destroy = render({ managerReady: true });
+    await tick();
+
+    const searchInput = document.querySelector<HTMLInputElement>('input[aria-label="Search folders"]')!;
+    searchInput.focus();
+    searchInput.value = 'pimote';
+    searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+    await tick();
+
+    const toManager = new KeyboardEvent('keydown', { key: '/', ctrlKey: true, bubbles: true, cancelable: true });
+    searchInput.dispatchEvent(toManager);
+    await tick();
+    await tick();
+
+    expect(toManager.defaultPrevented).toBe(true);
+    const managerInput = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message the manager"]');
+    expect(managerInput).not.toBeNull();
+    expect(document.activeElement).toBe(managerInput);
+
+    managerInput!.value = 'check release notes';
+    managerInput!.dispatchEvent(new Event('input', { bubbles: true }));
+    await tick();
+
+    const toSearch = new KeyboardEvent('keydown', { key: '/', ctrlKey: true, bubbles: true, cancelable: true });
+    managerInput!.dispatchEvent(toSearch);
+    await tick();
+    await tick();
+
+    expect(toSearch.defaultPrevented).toBe(true);
+    const restoredSearch = document.querySelector<HTMLInputElement>('input[aria-label="Search folders"]');
+    expect(restoredSearch).not.toBeNull();
+    expect(document.activeElement).toBe(restoredSearch);
+    expect(restoredSearch!.value).toBe('pimote');
+
+    // Toggle back to verify manager draft also survived.
+    restoredSearch!.dispatchEvent(new KeyboardEvent('keydown', { key: '/', ctrlKey: true, bubbles: true, cancelable: true }));
+    await tick();
+    expect(document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message the manager"]')?.value).toBe('check release notes');
   });
 });

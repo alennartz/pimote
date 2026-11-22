@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick, onDestroy, onMount } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
+  import { createHotkey } from '@tanstack/svelte-hotkeys';
   import { formatRelativeTime } from '$lib/format-relative-time.js';
   import type { GetTreeResponseData, PimoteAgentMessage, StreamingMessage, AssistantRowUsage } from '@pimote/shared';
   import { indexToolResultUsage, summarizeAssistantRowUsage } from '$lib/assistant-row-usage.js';
@@ -302,29 +303,49 @@
     return activeFindMatch.messageKey === `message-${entry.messageIndex ?? -1}`;
   }
 
-  function isTextEntryTarget(target: EventTarget | null): boolean {
-    if (!(target instanceof HTMLElement)) return false;
-    return target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT';
+  function isInsideDialog(target: EventTarget | null): boolean {
+    return target instanceof Element && target.closest('[role="dialog"], [aria-modal="true"]') !== null;
   }
 
-  function onKeydown(event: KeyboardEvent): void {
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+  createHotkey(
+    'Mod+F',
+    (event) => {
+      if (isInsideDialog(event.target)) return;
       event.preventDefault();
       findOpen = true;
       void tick().then(() => findBar?.focusInput());
-      return;
-    }
-    if (event.key === 'Escape' && findOpen) {
-      event.preventDefault();
+    },
+    { ignoreInputs: false, preventDefault: false },
+  );
+
+  createHotkey(
+    'Escape',
+    () => {
       closeFind();
-    }
-    // END re-glues a detached scroll viewer to the bottom. Text-entry targets
-    // keep the key for caret movement.
-    if (event.key === 'End' && !event.ctrlKey && !event.metaKey && !event.altKey && !stick.isAtBottom && !isTextEntryTarget(event.target)) {
+    },
+    () => ({ enabled: findOpen, ignoreInputs: false, ignoreDefaultPrevented: true }),
+  );
+
+  // Mod+End pins the transcript to the bottom even while typing in a text field,
+  // unless focus is inside a modal dialog.
+  createHotkey(
+    'Mod+End',
+    (event) => {
+      if (isInsideDialog(event.target)) return;
       event.preventDefault();
       scrollToBottom();
-    }
-  }
+    },
+    { ignoreInputs: false, preventDefault: false },
+  );
+
+  // Plain End re-glues a detached scroll viewer only outside text-entry targets.
+  createHotkey(
+    'End',
+    () => {
+      scrollToBottom();
+    },
+    () => ({ enabled: !stick.isAtBottom, ignoreInputs: true }),
+  );
 
   $effect(() => {
     const sessionId = session?.sessionId;
@@ -363,7 +384,6 @@
   });
 
   onMount(() => {
-    document.addEventListener('keydown', onKeydown);
     const media = typeof window.matchMedia === 'function' ? window.matchMedia('(max-width: 640px)') : null;
     const updateMobile = () => (mobileViewport = media?.matches ?? false);
     updateMobile();
@@ -371,7 +391,6 @@
     const resize = () => updateStickyTargets();
     window.addEventListener('resize', resize);
     return () => {
-      document.removeEventListener('keydown', onKeydown);
       media?.removeEventListener?.('change', updateMobile);
       window.removeEventListener('resize', resize);
     };

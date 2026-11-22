@@ -100,7 +100,7 @@ The server-root voice orchestrator and shared JSON store bridge these extensions
 
 Installable SvelteKit PWA for browsing, controlling and rendering remote pi sessions.
 
-**Responsibilities:** WebSocket connection and session registry, transcript streaming and resync, root and child views, composer and command dispatch, dashboard and manager workflows, settings and file editors, conversation and tree navigation, cost and usage views, extension UI and panels, voice calls, downloads and push, provider login, PWA updates and offline behavior, paired UI/editor/terminal palettes, Appearance preview/save/cancel and user-scoped theme cache, early theme bootstrap and static-report bridge
+**Responsibilities:** WebSocket connection and session registry, transcript streaming and resync, root and child views, composer and command dispatch, dashboard and manager workflows, global launcher and keyboard shortcuts, settings and file editors, conversation and tree navigation, cost and usage views, extension UI and panels, voice calls, downloads and push, provider login, PWA updates and offline behavior, paired UI/editor/terminal palettes, Appearance preview/save/cancel and user-scoped theme cache, early theme bootstrap and static-report bridge
 
 **Dependencies:** Protocol for wire types, Server's HTTP and WebSocket API
 

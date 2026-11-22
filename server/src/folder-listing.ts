@@ -12,7 +12,7 @@
  * stays at the repo-index adapter boundary — this module caches derived
  * metadata and orderings, never scan results.
  */
-import type { FolderInfo, FoldersChangedEvent } from '../../shared/dist/index.js';
+import type { FolderInfo, FoldersChangedEvent, LauncherSearchScope, LauncherSessionHit, SearchLauncherResponseData } from '../../shared/dist/index.js';
 import { randomUUID } from 'node:crypto';
 import type { SessionSummary, SessionSummaryIndex } from './session-summaries.js';
 import { enrichActiveSessionCounts } from './folder-registry.js';
@@ -78,6 +78,17 @@ export interface FolderQueryResult {
   epoch: number;
 }
 
+export interface SearchLauncherRequest {
+  query: string;
+  scope?: LauncherSearchScope;
+  limit?: number;
+  includeArchived?: boolean;
+}
+
+export type SearchLauncherResult = SearchLauncherResponseData;
+
+export type { LauncherSessionHit };
+
 export interface FolderListingService {
   /** Metadata scans are background-only. Cold calls use empty activity; refresh
    * failures retain the last good snapshot and never fail pin/query. Completion
@@ -115,6 +126,10 @@ export interface FolderListingService {
    *  cadence. */
   query(req: FolderQueryRequest): Promise<FolderQueryResult>;
 
+  /** Search cached folders and session summaries for the global launcher
+   *  without touching connection pins, order tokens, or epochs. */
+  searchLauncher(req: SearchLauncherRequest): Promise<SearchLauncherResult>;
+
   /** Build the `folders_changed` delta for a mutation: each mutation site
    *  reports the paths it touched (no diffing machinery — mutations know their
    *  targets); changed rows are re-resolved from the registry (full `FolderInfo`
@@ -128,9 +143,20 @@ export interface FolderListingService {
   invalidateSessionMetadata(folderPaths?: string[]): void;
 }
 
+interface SessionSearchEntry {
+  readonly id: string;
+  readonly name?: string;
+  readonly nameLower: string;
+  readonly firstMessage: string;
+  readonly firstMessageLower: string;
+  readonly text: string;
+  readonly modified: number;
+  readonly archived: boolean;
+}
+
 interface SessionMetadata {
   readonly lastActivity: number;
-  readonly sessions: ReadonlyArray<{ readonly id: string; readonly text: string; readonly archived: boolean }>;
+  readonly sessions: ReadonlyArray<SessionSearchEntry>;
 }
 
 interface OrderSnapshot {
@@ -160,11 +186,21 @@ function projectMetadata(summaries: ReadonlyMap<string, SessionSummary[]>, archi
       path,
       {
         lastActivity: Math.max(0, ...sessions.map((session) => session.modified.getTime())),
-        sessions: sessions.map((session) => ({
-          id: session.id,
-          text: `${session.name ?? ''}\n${session.firstMessage ?? ''}`.toLowerCase(),
-          archived: archivedLookup(session.path),
-        })),
+        sessions: sessions.map((session) => {
+          const nameLower = (session.name ?? '').toLowerCase();
+          const firstMessage = session.firstMessage ?? '';
+          const firstMessageLower = firstMessage.toLowerCase();
+          return {
+            id: session.id,
+            ...(session.name !== undefined ? { name: session.name } : {}),
+            nameLower,
+            firstMessage,
+            firstMessageLower,
+            text: `${nameLower}\n${firstMessageLower}`,
+            modified: session.modified.getTime(),
+            archived: archivedLookup(session.path),
+          };
+        }),
       },
     ]),
   );
@@ -189,6 +225,20 @@ function matchRow(row: FolderInfo, metadata: SessionMetadata | undefined, query:
   // lastActivity above stays ungated so ordering never shifts with it.
   const ids = metadata?.sessions.filter((session) => (includeArchived || !session.archived) && session.text.includes(query)).map((session) => session.id) ?? [];
   return ids.length ? { ...annotated, matchedSessionIds: ids } : undefined;
+}
+
+function normalizeLauncherLimit(limit: number | undefined): number {
+  return Number.isFinite(limit) ? Math.max(1, Math.min(25, Math.trunc(limit!))) : 10;
+}
+
+function folderDisplayName(row: FolderInfo): string {
+  return row.persona?.name ?? row.name;
+}
+
+function matchesFolderText(row: FolderInfo, query: string): boolean {
+  if (!query) return true;
+  const folderText = [folderDisplayName(row), row.name, row.path, ...row.tags];
+  return folderText.some((text) => text.toLowerCase().includes(query));
 }
 
 function normalizeWindow(offset: number | undefined, limit: number | undefined): { offset: number; limit: number } {
@@ -365,6 +415,78 @@ export class FolderListing implements FolderListingService {
     if (snapshot && snapshot.owner === req.connectionId) return { token: snapshot.token, epoch: this.epoch };
     if (req.token === undefined && connection?.pending) return connection.pending;
     return this.pin(req.connectionId);
+  }
+
+  async searchLauncher(req: SearchLauncherRequest): Promise<SearchLauncherResult> {
+    const scope: LauncherSearchScope = req.scope === 'folders' || req.scope === 'sessions' ? req.scope : 'all';
+    const limit = normalizeLauncherLimit(req.limit);
+    const query = (req.query ?? '').trim().toLowerCase();
+    const includeArchived = req.includeArchived === true;
+
+    const currentRows = await this.deps.listRows();
+    this.scheduleRefresh(currentRows);
+    if (this.metadata.size === 0 && this.refreshPending) {
+      await this.refreshPending;
+    }
+    const metadata = this.metadata;
+    const live = this.deps.listLiveSessions();
+    const eligibleRows = currentRows.filter((row) => includeArchived || !row.archived);
+
+    let folders: FolderInfo[] = [];
+    if (scope !== 'sessions') {
+      const activePaths = new Set(live.map((session) => session.folderPath));
+      const activity = (path: string): number => (activePaths.has(path) ? Number.MAX_SAFE_INTEGER : (metadata.get(path)?.lastActivity ?? 0));
+      const matched = eligibleRows.filter((row) => matchesFolderText(row, query));
+      matched.sort((a, b) => {
+        if (query) {
+          const aPrefix = folderDisplayName(a).toLowerCase().startsWith(query) ? 1 : 0;
+          const bPrefix = folderDisplayName(b).toLowerCase().startsWith(query) ? 1 : 0;
+          if (aPrefix !== bPrefix) return bPrefix - aPrefix;
+        }
+        return Number(b.favorite) - Number(a.favorite) || activity(b.path) - activity(a.path) || a.name.localeCompare(b.name) || a.path.localeCompare(b.path);
+      });
+      folders = matched.slice(0, limit).map((row) => {
+        const { matchedSessionIds: _annotation, ...copy } = row;
+        const lastActivity = metadata.get(row.path)?.lastActivity;
+        return lastActivity ? { ...copy, lastActivity } : copy;
+      });
+      if (folders.length > 0) {
+        await this.deps.enrichRows(folders);
+        enrichActiveSessionCounts(folders, live);
+      }
+    }
+
+    let sessions: LauncherSessionHit[] = [];
+    if (scope !== 'folders') {
+      const candidates: Array<{ hit: LauncherSessionHit; nameMatched: boolean }> = [];
+      for (const row of eligibleRows) {
+        const folderMeta = metadata.get(row.path);
+        if (!folderMeta) continue;
+        const folderName = folderDisplayName(row);
+        for (const session of folderMeta.sessions) {
+          if (!includeArchived && session.archived) continue;
+          const nameMatched = query !== '' && session.nameLower.includes(query);
+          const messageMatched = query !== '' && session.firstMessageLower.includes(query);
+          if (query !== '' && !nameMatched && !messageMatched) continue;
+          candidates.push({
+            nameMatched,
+            hit: {
+              sessionId: session.id,
+              folderPath: row.path,
+              folderName,
+              ...(session.name !== undefined ? { name: session.name } : {}),
+              firstMessage: session.firstMessage,
+              modified: session.modified,
+              archived: session.archived,
+            },
+          });
+        }
+      }
+      candidates.sort((a, b) => Number(b.nameMatched) - Number(a.nameMatched) || b.hit.modified - a.hit.modified || a.hit.sessionId.localeCompare(b.hit.sessionId));
+      sessions = candidates.slice(0, limit).map((entry) => entry.hit);
+    }
+
+    return { folders, sessions };
   }
 
   private sweepOrphans(): void {

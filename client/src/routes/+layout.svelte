@@ -18,7 +18,9 @@
   // Side-effect import: subscribes the login store to `login_step` events at app boot.
   import '$lib/stores/login-store.js';
   import BranchExplorer from '$lib/components/BranchExplorer.svelte';
+  import GlobalLauncher from '$lib/components/GlobalLauncher.svelte';
   import LoginDialog from '$lib/components/LoginDialog.svelte';
+  import { HotkeysProvider } from '@tanstack/svelte-hotkeys';
   import Panel from '$lib/components/Panel.svelte';
   import DownloadToast from '$lib/components/DownloadToast.svelte';
   import DownloadInbox from '$lib/components/DownloadInbox.svelte';
@@ -319,155 +321,160 @@
   });
 </script>
 
-<div bind:this={appShellEl} class="bg-background flex overflow-hidden" style={`height: ${appHeight}; --pimote-mobile-surface-top: ${mobileSurfaceTop}px;`}>
-  <!-- Main content -->
-  <div class="flex flex-1 flex-col overflow-hidden">
-    <NotificationBanner />
-    <UpdateBanner />
+<HotkeysProvider>
+  <div bind:this={appShellEl} class="bg-background flex overflow-hidden" style={`height: ${appHeight}; --pimote-mobile-surface-top: ${mobileSurfaceTop}px;`}>
+    <!-- Main content -->
+    <div class="flex flex-1 flex-col overflow-hidden">
+      <NotificationBanner />
+      <UpdateBanner />
 
-    <!-- Mobile header -->
-    <header
-      data-session-navigation
-      data-mobile-session-navigation
-      class="border-border relative z-30 flex min-h-12 shrink-0 items-center gap-2 border-b px-3 pt-[max(env(safe-area-inset-top),0.25rem)] md:hidden"
-    >
-      {#if page.url.pathname === '/'}
-        <button
-          type="button"
-          class="text-muted-foreground hover:text-foreground -ml-1 flex size-8 shrink-0 items-center justify-center rounded-md transition-colors max-md:size-11"
-          title="Open Settings"
-          aria-label="Open Settings"
-          onclick={() => void globalSettingsStore.loadManifest()}
-        >
-          <Settings class="size-5" />
-        </button>
-      {/if}
-      {#if mobileChild}
-        <button
-          class="text-muted-foreground hover:text-foreground -ml-1 flex size-8 shrink-0 items-center justify-center rounded-md transition-colors max-md:size-11"
-          title="Close child view"
-          aria-label="Close child view"
-          onclick={() => void closeSelectedChildView()}
-        >
-          <X class="size-5" />
-        </button>
-      {:else if sessionRegistry.viewedSessionId}
-        <button
-          class="text-muted-foreground hover:text-foreground -ml-1 flex size-8 shrink-0 items-center justify-center rounded-md transition-colors max-md:size-11"
-          title="Back to dashboard"
-          aria-label="Back to dashboard"
-          onclick={() => sessionRegistry.goHome()}
-        >
-          <ArrowLeft class="size-5" />
-        </button>
-      {/if}
-      <div class="min-w-0 flex-1 leading-tight">
-        {#if sessionRegistry.viewedSessionId && sessionRegistry.viewed && !mobileChild}
-          <SessionRenameDialog
-            sessionId={sessionRegistry.viewed.sessionId}
-            folderPath={sessionRegistry.viewed.folderPath}
-            sessionName={sessionRegistry.viewed.sessionName}
-            displayName={mobileHeaderTitle}
+      <!-- Mobile header -->
+      <header
+        data-session-navigation
+        data-mobile-session-navigation
+        class="border-border relative z-30 flex min-h-12 shrink-0 items-center gap-2 border-b px-3 pt-[max(env(safe-area-inset-top),0.25rem)] md:hidden"
+      >
+        {#if page.url.pathname === '/'}
+          <button
+            type="button"
+            class="text-muted-foreground hover:text-foreground -ml-1 flex size-8 shrink-0 items-center justify-center rounded-md transition-colors max-md:size-11"
+            title="Open Settings"
+            aria-label="Open Settings"
+            onclick={() => void globalSettingsStore.loadManifest()}
           >
-            {#snippet children({ openRenameDialog })}
-              <button
-                type="button"
-                class="text-foreground hover:text-foreground block w-full truncate text-left text-sm font-semibold select-none"
-                title={`Rename session: ${mobileHeaderTitle}`}
-                onclick={openRenameDialog}
-              >
-                {mobileHeaderTitle}
-              </button>
-            {/snippet}
-          </SessionRenameDialog>
-        {:else}
-          <div class="text-foreground truncate text-sm font-semibold">{mobileHeaderTitle}</div>
+            <Settings class="size-5" />
+          </button>
         {/if}
-        {#if mobileHeaderSubtitle}
-          <div class="text-muted-foreground mt-0.5 truncate text-[11px]">Child view · {mobileHeaderSubtitle}</div>
+        {#if mobileChild}
+          <button
+            class="text-muted-foreground hover:text-foreground -ml-1 flex size-8 shrink-0 items-center justify-center rounded-md transition-colors max-md:size-11"
+            title="Close child view"
+            aria-label="Close child view"
+            onclick={() => void closeSelectedChildView()}
+          >
+            <X class="size-5" />
+          </button>
+        {:else if sessionRegistry.viewedSessionId}
+          <button
+            class="text-muted-foreground hover:text-foreground -ml-1 flex size-8 shrink-0 items-center justify-center rounded-md transition-colors max-md:size-11"
+            title="Back to dashboard"
+            aria-label="Back to dashboard"
+            onclick={() => sessionRegistry.goHome()}
+          >
+            <ArrowLeft class="size-5" />
+          </button>
         {/if}
-      </div>
-
-      {#if sessionRegistry.viewedSessionId && mobileContextDisplay}
-        <span class="inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[11px] font-medium {mobileContextChipClass}" title="Context window usage">
-          {mobileContextDisplay}
-        </span>
-      {/if}
-
-      {#if sessionRegistry.viewed?.downloads.length}
-        <DownloadInbox variant="mobile" />
-      {/if}
-
-      {#if hasPanels && panelStore.isDrawer}
-        <button
-          class="text-muted-foreground hover:text-foreground border-border bg-background relative inline-flex size-8 shrink-0 items-center justify-center rounded-lg border max-md:size-11"
-          onclick={openPanels}
-          title="Open panels"
-          aria-label="Open panels"
-        >
-          <PanelRight class="size-4" />
-          <span class="bg-primary text-primary-foreground absolute -top-1 -right-1 min-w-4 rounded-full px-1 text-center text-[10px] leading-4 font-medium">
-            {hasHierarchy ? (activeSubagentRoot?.nodes.length ?? 0) : panelStore.cards.length}
-          </span>
-        </button>
-      {/if}
-
-      {#if sessionRegistry.viewedSessionId}
-        <div class="relative">
-          <SessionDetailsDialog />
-          {#if updateStore.showMarker}
-            <span class="bg-primary pointer-events-none absolute -top-0.5 -right-0.5 size-2 rounded-full" aria-hidden="true"></span>
+        <div class="min-w-0 flex-1 leading-tight">
+          {#if sessionRegistry.viewedSessionId && sessionRegistry.viewed && !mobileChild}
+            <SessionRenameDialog
+              sessionId={sessionRegistry.viewed.sessionId}
+              folderPath={sessionRegistry.viewed.folderPath}
+              sessionName={sessionRegistry.viewed.sessionName}
+              displayName={mobileHeaderTitle}
+            >
+              {#snippet children({ openRenameDialog })}
+                <button
+                  type="button"
+                  class="text-foreground hover:text-foreground block w-full truncate text-left text-sm font-semibold select-none"
+                  title={`Rename session: ${mobileHeaderTitle}`}
+                  onclick={openRenameDialog}
+                >
+                  {mobileHeaderTitle}
+                </button>
+              {/snippet}
+            </SessionRenameDialog>
+          {:else}
+            <div class="text-foreground truncate text-sm font-semibold">{mobileHeaderTitle}</div>
+          {/if}
+          {#if mobileHeaderSubtitle}
+            <div class="text-muted-foreground mt-0.5 truncate text-[11px]">Child view · {mobileHeaderSubtitle}</div>
           {/if}
         </div>
-      {/if}
-    </header>
 
-    <!-- Page content -->
-    <main class="flex flex-1 flex-col overflow-hidden">
-      {@render children()}
-    </main>
+        {#if sessionRegistry.viewedSessionId && mobileContextDisplay}
+          <span class="inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[11px] font-medium {mobileContextChipClass}" title="Context window usage">
+            {mobileContextDisplay}
+          </span>
+        {/if}
 
-    <!-- Extension status bar & widgets -->
-    <ExtensionStatus />
-  </div>
+        {#if sessionRegistry.viewed?.downloads.length}
+          <DownloadInbox variant="mobile" />
+        {/if}
 
-  <!-- Hierarchy-first panel host. A child hierarchy keeps the host present even
+        {#if hasPanels && panelStore.isDrawer}
+          <button
+            class="text-muted-foreground hover:text-foreground border-border bg-background relative inline-flex size-8 shrink-0 items-center justify-center rounded-lg border max-md:size-11"
+            onclick={openPanels}
+            title="Open panels"
+            aria-label="Open panels"
+          >
+            <PanelRight class="size-4" />
+            <span class="bg-primary text-primary-foreground absolute -top-1 -right-1 min-w-4 rounded-full px-1 text-center text-[10px] leading-4 font-medium">
+              {hasHierarchy ? (activeSubagentRoot?.nodes.length ?? 0) : panelStore.cards.length}
+            </span>
+          </button>
+        {/if}
+
+        {#if sessionRegistry.viewedSessionId}
+          <div class="relative">
+            <SessionDetailsDialog />
+            {#if updateStore.showMarker}
+              <span class="bg-primary pointer-events-none absolute -top-0.5 -right-0.5 size-2 rounded-full" aria-hidden="true"></span>
+            {/if}
+          </div>
+        {/if}
+      </header>
+
+      <!-- Page content -->
+      <main class="flex flex-1 flex-col overflow-hidden">
+        {@render children()}
+      </main>
+
+      <!-- Extension status bar & widgets -->
+      <ExtensionStatus />
+    </div>
+
+    <!-- Hierarchy-first panel host. A child hierarchy keeps the host present even
        when no SDK cards exist. The width is measured on the app container in the
        layout observer, not from the viewport media query. -->
-  {#if hasPanels && panelStore.presentation === 'sidebar' && panelStore.open && !panelStore.collapsed}
-    <div class="flex min-h-0 shrink-0 flex-col">
-      <Panel />
-    </div>
-  {/if}
+    {#if hasPanels && panelStore.presentation === 'sidebar' && panelStore.open && !panelStore.collapsed}
+      <div class="flex min-h-0 shrink-0 flex-col">
+        <Panel />
+      </div>
+    {/if}
 
-  <!-- Narrow containers use a dismissible drawer. Opening a child closes it. -->
-  {#if hasPanels && panelStore.presentation === 'drawer' && panelStore.open}
-    <div
-      class="fixed inset-0 z-30 bg-black/50"
-      role="presentation"
-      onclick={() => panelStore.closePanel()}
-      onkeydown={(event) => event.key === 'Escape' && panelStore.closePanel()}
-    ></div>
-    <div class="fixed inset-y-0 right-0 z-40 flex min-h-0 w-full max-w-[24rem] flex-col" data-panel-drawer>
-      <Panel onClose={() => panelStore.closePanel()} />
-    </div>
-  {/if}
+    <!-- Narrow containers use a dismissible drawer. Opening a child closes it. -->
+    {#if hasPanels && panelStore.presentation === 'drawer' && panelStore.open}
+      <div
+        class="fixed inset-0 z-30 bg-black/50"
+        role="presentation"
+        onclick={() => panelStore.closePanel()}
+        onkeydown={(event) => event.key === 'Escape' && panelStore.closePanel()}
+      ></div>
+      <div class="fixed inset-y-0 right-0 z-40 flex min-h-0 w-full max-w-[24rem] flex-col" data-panel-drawer>
+        <Panel onClose={() => panelStore.closePanel()} />
+      </div>
+    {/if}
 
-  <!-- Download offer prompt (global overlay) -->
-  <DownloadToast />
+    <!-- Download offer prompt (global overlay) -->
+    <DownloadToast />
 
-  <!-- File editor shared by dashboard and session actions -->
-  <ConfigFileEditor />
+    <!-- File editor shared by dashboard and session actions -->
+    <ConfigFileEditor />
 
-  <!-- Extension UI dialogs (global overlay) -->
-  <ExtensionDialog />
+    <!-- Extension UI dialogs (global overlay) -->
+    <ExtensionDialog />
 
-  <!-- Branch explorer -->
-  <BranchExplorer />
+    <!-- Branch explorer -->
+    <BranchExplorer />
 
-  <!-- Provider login dialog -->
-  <LoginDialog />
+    <!-- Global launcher (Mod+K) -->
+    <GlobalLauncher />
 
-  <!-- PWA install prompt (mobile only) -->
-  <InstallBanner />
-</div>
+    <!-- Provider login dialog -->
+    <LoginDialog />
+
+    <!-- PWA install prompt (mobile only) -->
+    <InstallBanner />
+  </div>
+</HotkeysProvider>
