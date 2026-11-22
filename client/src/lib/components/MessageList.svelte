@@ -397,6 +397,16 @@
   });
 
   function onScroll() {
+    const sc = scrollContainer;
+    if (sc) {
+      const nearBottom = sc.scrollHeight - sc.clientHeight - sc.scrollTop <= STICK_TO_BOTTOM_OFFSET_PX;
+      if (nearBottom) {
+        pinnedAtLastScroll = true;
+      } else if (lastScrollTop === null || sc.scrollTop < lastScrollTop) {
+        pinnedAtLastScroll = false;
+      }
+      lastScrollTop = sc.scrollTop;
+    }
     updateStickyTargets();
     scheduleEdgeCheck();
     schedulePreparation();
@@ -497,10 +507,14 @@
     return previousUserAbove(positions, viewportTop, threshold) ?? virtualizedTarget;
   }
 
+  let lastScrollTop: number | null = null;
+  let pinnedAtLastScroll = true;
+
   function followingTail(): boolean {
     const sc = scrollContainer;
     if (!sc) return true;
-    return sc.scrollHeight - sc.clientHeight - sc.scrollTop <= STICK_TO_BOTTOM_OFFSET_PX;
+    if (sc.scrollHeight - sc.clientHeight - sc.scrollTop <= STICK_TO_BOTTOM_OFFSET_PX) return true;
+    return !stick.escapedFromLock && stick.isAtBottom && pinnedAtLastScroll;
   }
 
   /**
@@ -603,6 +617,7 @@
   });
 
   function scrollToBottom() {
+    pinnedAtLastScroll = true;
     stick.scrollToBottom();
   }
 

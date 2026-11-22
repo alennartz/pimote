@@ -78,15 +78,17 @@ const browser = typeof window !== 'undefined';
 let mouseDown = false;
 
 if (browser) {
+  const clearMouseDown = () => {
+    mouseDown = false;
+  };
   document.addEventListener('mousedown', () => {
     mouseDown = true;
   });
-  document.addEventListener('mouseup', () => {
-    mouseDown = false;
-  });
-  document.addEventListener('click', () => {
-    mouseDown = false;
-  });
+  document.addEventListener('mouseup', clearMouseDown);
+  document.addEventListener('click', clearMouseDown);
+  document.addEventListener('dragstart', clearMouseDown);
+  document.addEventListener('contextmenu', clearMouseDown);
+  window.addEventListener('blur', clearMouseDown);
 }
 
 export class StickToBottom {
@@ -101,6 +103,7 @@ export class StickToBottom {
   private accumulated = 0;
   private lastScrollTop: number | undefined = undefined;
   private resizeDifference = 0;
+  private pendingViewportResizes = 0;
 
   constructor(private options: StickToBottomOptions) {
     this.isAtBottomState = true;
@@ -145,10 +148,24 @@ export class StickToBottom {
             preserveScrollPosition: true,
             duration: animation === 'instant' ? undefined : RETAIN_ANIMATION_DURATION_MS,
           });
-        } else if (this.isNearBottom()) {
-          // Negative resize can bring the bottom back into reach; re-pin.
-          this.escapedFromLockState = false;
-          this.isAtBottomState = true;
+        } else {
+          if (this.isNearBottom()) {
+            // Negative resize can bring the bottom back into reach; re-pin.
+            this.escapedFromLockState = false;
+            this.isAtBottomState = true;
+          }
+          // An offscreen shrink paired with new bottom content produces a net
+          // negative delta while leaving scrollTop above the new tail; follow it
+          // when pinned instead of stranding the new content below the fold.
+          if (this.isAtBottomState && this.scrollTop < this.targetScrollTop) {
+            const animation = mergeAnimations(this.options, this.options.resize);
+            this.scrollToBottom({
+              animation,
+              wait: true,
+              preserveScrollPosition: true,
+              duration: animation === 'instant' ? undefined : RETAIN_ANIMATION_DURATION_MS,
+            });
+          }
         }
 
         previousHeight = height;
@@ -184,13 +201,23 @@ export class StickToBottom {
         previousHeight = height;
         if (!changed) return;
 
+        // Guard resize-caused clamp scroll events (including when maxScrollTop
+        // drops to or below zero) on the same frame/timeout lifecycle as content resizes.
+        this.pendingViewportResizes++;
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            this.pendingViewportResizes = Math.max(0, this.pendingViewportResizes - 1);
+          }, 1);
+        });
+
         this.isNearBottomState = this.isNearBottom();
         // A reader inside the transcript stays where they are reading, and
         // content shorter than the viewport has no bottom to reach.
-        if (this.escapedFromLockState || this.maxScrollTop <= 0) return;
+        if (!this.isAtBottomState || this.escapedFromLockState || this.maxScrollTop <= 0) return;
 
         this.isAtBottomState = true;
         this.setScrollTop(this.targetScrollTop);
+        this.isNearBottomState = this.isNearBottom();
       });
 
       resizeObserver.observe(scrollElement);
@@ -258,7 +285,10 @@ export class StickToBottom {
   scrollToBottom = (scrollOptions: ScrollToBottomOptions = {}): Promise<boolean> => {
     if (typeof scrollOptions === 'string') scrollOptions = { animation: scrollOptions };
 
-    if (!scrollOptions.preserveScrollPosition) this.isAtBottomState = true;
+    if (!scrollOptions.preserveScrollPosition) {
+      this.isAtBottomState = true;
+      this.escapedFromLockState = false;
+    }
 
     // The wait grace period applies only while merging into a running
     // animation; a fresh scroll starts on the next frame.
@@ -365,7 +395,7 @@ export class StickToBottom {
   private isSelecting(): boolean {
     if (!mouseDown) return false;
     const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0) return false;
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return false;
     const range = selection.getRangeAt(0);
     const scrollElement = this.options.scrollElement();
     return Boolean(scrollElement && (range.commonAncestorContainer.contains(scrollElement) || scrollElement.contains(range.commonAncestorContainer)));
@@ -377,6 +407,7 @@ export class StickToBottom {
 
     const scrollTop = this.scrollTop;
     const ignoreScrollToTop = this.ignoreScrollToTop;
+    const atBottomAtEvent = scrollTop >= this.targetScrollTop;
     let previousScrollTop = this.lastScrollTop ?? scrollTop;
 
     this.lastScrollTop = scrollTop;
@@ -393,7 +424,7 @@ export class StickToBottom {
     // resize-caused scrolls behind the resizeDifference guard.
     // @see https://github.com/WICG/resize-observer/issues/25#issuecomment-248757228
     setTimeout(() => {
-      if (this.resizeDifference || scrollTop === ignoreScrollToTop) return;
+      if (this.resizeDifference || this.pendingViewportResizes > 0 || scrollTop === ignoreScrollToTop) return;
 
       if (this.isSelecting()) {
         this.stopScroll();
@@ -407,8 +438,9 @@ export class StickToBottom {
 
       const isScrollingDown = scrollTop > previousScrollTop;
       // A shrink of the viewport or of the content clamps the position down to
-      // the new maximum. Landing on the bottom is not a scroll away from it.
-      const isScrollingUp = scrollTop < previousScrollTop && scrollTop < this.maxScrollTop;
+      // the new maximum (which can sit up to 1px below maxScrollTop under
+      // fractional scaling). Landing on the bottom is not a scroll away from it.
+      const isScrollingUp = scrollTop < previousScrollTop && !atBottomAtEvent && scrollTop < this.targetScrollTop;
 
       if (isScrollingUp) this.stopScroll();
       if (isScrollingDown) this.escapedFromLockState = false;

@@ -240,6 +240,29 @@ describe('MessageList rendered window', () => {
     expect(keys.length).toBeLessThan(150);
     expect(keys.length * ROW_HEIGHT).toBeGreaterThan(VIEWPORT_HEIGHT);
   });
+
+  it('stays pinned when idle window preparation runs while a viewport shrink is awaiting realignment', async () => {
+    seedSession('s1', 200);
+    sessionRegistry.switchTo('s1');
+    mountList();
+    flushSync();
+    paint();
+
+    // Pinned at the bottom of the tail window (scrollHeight=2400, clientHeight=800 -> scrollTop=1599 < 2400 buffer).
+    scrollPosition.top = container.scrollHeight - VIEWPORT_HEIGHT - 1;
+    container.dispatchEvent(new Event('scroll'));
+
+    // Before idle preparation runs, a large viewport shrink (e.g. ask_user panel)
+    // opens a gap larger than the stick threshold, without any user scroll up.
+    Object.defineProperty(container, 'clientHeight', { configurable: true, get: () => 500 });
+    await settle(40);
+    // Notify the scroll state after the geometry change (simulating the next scroll/resize).
+    container.dispatchEvent(new Event('scroll'));
+    await settle(5);
+    flushSync();
+
+    expect(target.querySelector('.scroll-to-bottom')).toBeNull();
+  });
 });
 
 describe('MessageList find across the window', () => {

@@ -403,6 +403,170 @@ describe('MessageList scroll pin', () => {
     expect(container.scrollTop).toBe(1259); // followed to the new bottom
     expect(target.querySelector('.scroll-to-bottom')).toBeNull();
   });
+
+  it('stays glued to the bottom on a viewport shrink after re-pinning with the scroll-to-bottom button', async () => {
+    container.scrollTop = geometry.scrollHeight;
+    container.dispatchEvent(new Event('scroll'));
+    await settle();
+    paintFrame();
+
+    // Detach manually, then re-pin via the button.
+    container.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true }));
+    container.scrollTop = 200;
+    container.dispatchEvent(new Event('scroll'));
+    await settle();
+    flushSync();
+
+    const button = target.querySelector<HTMLButtonElement>('.scroll-to-bottom')!;
+    expect(button).not.toBeNull();
+    // Advance clock per frame so the spring animation reaches the bottom deterministically.
+    let now = performance.now();
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    button.click();
+    for (let i = 0; i < 120 && container.scrollTop < 599; i++) {
+      now += 16;
+      paintFrame();
+      container.dispatchEvent(new Event('scroll'));
+      await settle();
+    }
+    expect(container.scrollTop).toBeGreaterThanOrEqual(598);
+    expect(target.querySelector('.scroll-to-bottom')).toBeNull();
+
+    // A question panel or queued-message pill now shrinks the viewport.
+    geometry.clientHeight = 140;
+    fireResize(container);
+
+    expect(container.scrollTop).toBe(859);
+    expect(target.querySelector('.scroll-to-bottom')).toBeNull();
+  });
+
+  it('keeps a detached reader in place on viewport resize even after scrolling down partway', async () => {
+    container.scrollTop = geometry.scrollHeight;
+    container.dispatchEvent(new Event('scroll'));
+    await settle();
+    paintFrame();
+
+    container.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true }));
+    container.scrollTop = 100;
+    container.dispatchEvent(new Event('scroll'));
+    await settle();
+    // Reader scrolls down partway while still reading history far above the bottom.
+    container.scrollTop = 250;
+    container.dispatchEvent(new Event('scroll'));
+    await settle();
+    flushSync();
+    expect(target.querySelector('.scroll-to-bottom')).not.toBeNull();
+
+    geometry.clientHeight = 200;
+    fireResize(container);
+    await settle();
+    flushSync();
+
+    expect(container.scrollTop).toBe(250);
+    expect(target.querySelector('.scroll-to-bottom')).not.toBeNull();
+  });
+
+  it('stays pinned when a viewport growth clamp lands subpixel-short of maxScrollTop', async () => {
+    container.scrollTop = geometry.scrollHeight;
+    container.dispatchEvent(new Event('scroll'));
+    await settle();
+    paintFrame();
+
+    // Viewport grows (e.g. ask_user panel closes), and fractional DPR/zoom
+    // clamps scrollTop slightly below the integer scrollHeight - clientHeight.
+    geometry.clientHeight = 700;
+    geometry.top = 299.4;
+    container.dispatchEvent(new Event('scroll'));
+    await settle();
+    flushSync();
+
+    geometry.scrollHeight = 1200;
+    fireResize(inner);
+    paintFrame();
+    flushSync();
+    expect(container.scrollTop).toBe(499);
+    expect(target.querySelector('.scroll-to-bottom')).toBeNull();
+  });
+
+  it('stays pinned when queued messages clear and a new message renders before the clamp settles', async () => {
+    // Short transcript that only overflows while the panel/pill is visible.
+    geometry.scrollHeight = 500;
+    geometry.clientHeight = 400;
+    container.scrollTop = 99;
+    container.dispatchEvent(new Event('scroll'));
+    await settle();
+    paintFrame();
+
+    // Panel/pill clears -> viewport grows past scrollHeight -> browser clamps to 0.
+    geometry.clientHeight = 660;
+    container.scrollTop = 0;
+    fireResize(container);
+    container.dispatchEvent(new Event('scroll'));
+
+    // Consumed message arrives immediately, pushing scrollHeight back above clientHeight
+    // before the scroll handler's deferred escape check runs.
+    geometry.scrollHeight = 800;
+    await settle();
+    fireResize(inner);
+    paintFrame();
+    flushSync();
+
+    expect(container.scrollTop).toBe(139);
+    expect(target.querySelector('.scroll-to-bottom')).toBeNull();
+  });
+
+  it('follows new bottom content when an offscreen shrink produces a net negative content resize', async () => {
+    // Seed initial content height observation at 1000 and let the initial scroll finish.
+    for (const observer of RecordingResizeObserver.instances) {
+      if (observer.observed.has(inner)) {
+        observer.callback([{ contentRect: { height: 1000 } } as unknown as ResizeObserverEntry], observer as unknown as ResizeObserver);
+      }
+    }
+    paintFrame();
+    paintFrame();
+    expect(container.scrollTop).toBe(599);
+
+    // An offscreen block collapses (-270px, scroll anchoring shifts scrollTop down)
+    // while 100px of new output appends at the bottom (net -170px).
+    geometry.scrollHeight = 830;
+    geometry.top = 329; // anchored 100px above the new bottom (429)
+    for (const observer of RecordingResizeObserver.instances) {
+      if (observer.observed.has(inner)) {
+        observer.callback([{ contentRect: { height: 830 } } as unknown as ResizeObserverEntry], observer as unknown as ResizeObserver);
+      }
+    }
+    paintFrame();
+    flushSync();
+
+    expect(container.scrollTop).toBe(429);
+    expect(target.querySelector('.scroll-to-bottom')).toBeNull();
+  });
+
+  it('does not stall or detach when a collapsed selection exists and a pointer interaction starts elsewhere', async () => {
+    container.scrollTop = geometry.scrollHeight;
+    await settle();
+    paintFrame();
+
+    // Clicking inside the transcript leaves a collapsed selection caret.
+    const range = document.createRange();
+    range.selectNodeContents(inner);
+    range.collapse(true);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    // User presses mouse down (e.g. clicking an inline option or starting a drag).
+    document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+
+    geometry.scrollHeight = 1200;
+    fireResize(inner);
+    paintFrame();
+
+    expect(container.scrollTop).toBe(799);
+    expect(target.querySelector('.scroll-to-bottom')).toBeNull();
+
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  });
 });
 
 describe('MessageList hidden messages', () => {
