@@ -1,7 +1,16 @@
 import type { AppRouteReconciler } from './caddy-client.js';
 import type { AppStore } from './store.js';
 import type { AppInfo, AppRouteEntry, AppsConfig, AppsSnapshot, AppsSyncState, PersistedAppRecord, RegisterAppInput, UpdateAppInput } from './types.js';
-import { buildBlockedLocalPorts, renderAppHostname, renderPublicUrl, validateAppDescription, validateAppSlug, validateAppTarget, validateAppTitle } from './validation.js';
+import {
+  buildBlockedLocalPorts,
+  renderAppHostname,
+  renderPublicUrl,
+  validateAppDescription,
+  validateAppIcon,
+  validateAppSlug,
+  validateAppTarget,
+  validateAppTitle,
+} from './validation.js';
 
 export interface AppServiceOptions {
   config: AppsConfig;
@@ -56,11 +65,13 @@ export class AppService {
           const slug = validateAppSlug(record.slug);
           const title = validateAppTitle(record.title);
           const description = validateAppDescription(record.description);
+          const icon = validateAppIcon(record.icon, { blockedLocalPorts: this.blockedLocalPorts });
           const target = validateAppTarget(record.target, { blockedLocalPorts: this.blockedLocalPorts });
           this.records.set(slug, {
             slug,
             title,
             ...(description !== undefined ? { description } : {}),
+            ...(icon !== undefined ? { icon } : {}),
             target,
             createdAt: record.createdAt,
             updatedAt: record.updatedAt,
@@ -113,6 +124,7 @@ export class AppService {
       const slug = validateAppSlug(input.slug);
       const title = validateAppTitle(input.title);
       const description = validateAppDescription(input.description);
+      const icon = validateAppIcon(input.icon, { blockedLocalPorts: this.blockedLocalPorts });
       const target = validateAppTarget(input.target, { blockedLocalPorts: this.blockedLocalPorts });
 
       const existing = this.records.get(slug);
@@ -125,6 +137,7 @@ export class AppService {
         slug,
         title,
         ...(description !== undefined ? { description } : {}),
+        ...(icon !== undefined ? { icon } : {}),
         target,
         createdAt: existing?.createdAt ?? timestamp,
         updatedAt: timestamp,
@@ -158,17 +171,22 @@ export class AppService {
 
       const title = input.title !== undefined ? validateAppTitle(input.title) : existing.title;
       const description = input.description !== undefined ? validateAppDescription(input.description) : existing.description;
+      const icon = input.icon !== undefined ? validateAppIcon(input.icon, { blockedLocalPorts: this.blockedLocalPorts }) : existing.icon;
       const target = input.target !== undefined ? validateAppTarget(input.target, { blockedLocalPorts: this.blockedLocalPorts }) : existing.target;
 
       const updated: PersistedAppRecord = {
         ...existing,
         title,
         ...(description !== undefined ? { description } : {}),
+        ...(icon !== undefined ? { icon } : {}),
         target,
         updatedAt: this.now().toISOString(),
       };
       if (description === undefined) {
         delete updated.description;
+      }
+      if (icon === undefined) {
+        delete updated.icon;
       }
 
       const nextRecords = new Map(this.records);
@@ -251,6 +269,7 @@ export class AppService {
       slug: record.slug,
       title: record.title,
       ...(record.description !== undefined ? { description: record.description } : {}),
+      ...(record.icon !== undefined ? { icon: record.icon } : {}),
       target: record.target,
       url: renderPublicUrl(this.config.publicUrlTemplate, record.slug),
       createdAt: record.createdAt,

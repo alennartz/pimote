@@ -56,13 +56,15 @@ describe('AppsStore', () => {
     });
 
     const store = new AppsStore({ send });
-    const reg = await store.register({ slug: 'notes', title: 'Notes', target: 'http://127.0.0.1:4173' });
+    const reg = await store.register({ slug: 'notes', title: 'Notes', target: 'http://127.0.0.1:4173', icon: 'https://cdn.example.com/notes.png' });
     expect(reg.ok).toBe(true);
     expect(store.apps).toHaveLength(1);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ type: 'register_app', icon: 'https://cdn.example.com/notes.png' }));
 
-    const upd = await store.update({ slug: 'notes', title: 'Notes Pro' });
+    const upd = await store.update({ slug: 'notes', title: 'Notes Pro', icon: '' });
     expect(upd.ok).toBe(true);
     expect(store.apps[0]?.title).toBe('Notes Pro');
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ type: 'update_app', icon: '' }));
 
     const rem = await store.remove('notes');
     expect(rem).toEqual({ ok: true, removed: true });

@@ -21,7 +21,7 @@ import {
   RemoveAppOutputSchema,
   type AppToolContext,
 } from './tools.js';
-import { MAX_APP_DESCRIPTION_LENGTH, MAX_APP_SLUG_LENGTH, MAX_APP_TITLE_LENGTH } from './validation.js';
+import { MAX_APP_DESCRIPTION_LENGTH, MAX_APP_ICON_LENGTH, MAX_APP_SLUG_LENGTH, MAX_APP_TITLE_LENGTH } from './validation.js';
 
 const APP_SLUG_PATTERN = '^[a-z0-9]+(?:-[a-z0-9]+)*$';
 
@@ -45,6 +45,12 @@ const RegisterAppParametersSchema = toolObject({
     str({
       maxLength: MAX_APP_DESCRIPTION_LENGTH,
       description: 'Short summary shown on the Home card, up to 280 characters.',
+    }),
+  ),
+  icon: opt(
+    str({
+      maxLength: MAX_APP_ICON_LENGTH,
+      description: 'Optional icon image URL (http:// or https://, or data:image URI). Pimote serves it same-origin for the Home tile.',
     }),
   ),
   overwrite: opt(
@@ -76,6 +82,7 @@ export {
   effectivePort,
   isLoopbackHost,
   MAX_APP_DESCRIPTION_LENGTH,
+  MAX_APP_ICON_LENGTH,
   MAX_APP_SLUG_LENGTH,
   MAX_APP_TITLE_LENGTH,
   parseAppsConfig,
@@ -84,6 +91,7 @@ export {
   renderPublicUrl,
   targetToCaddyDial,
   validateAppDescription,
+  validateAppIcon,
   validateAppSlug,
   validateAppTarget,
   validateAppTitle,

@@ -21,6 +21,7 @@ export interface RegisterAppFormInput {
   title: string;
   target: string;
   description?: string;
+  icon?: string;
   overwrite?: boolean;
 }
 
@@ -28,6 +29,7 @@ export interface UpdateAppFormInput {
   slug: string;
   title?: string;
   description?: string;
+  icon?: string;
   target?: string;
 }
 
@@ -92,6 +94,7 @@ export class AppsStore {
       title: input.title,
       target: input.target,
       ...(input.description !== undefined ? { description: input.description } : {}),
+      ...(input.icon !== undefined ? { icon: input.icon } : {}),
       ...(input.overwrite !== undefined ? { overwrite: input.overwrite } : {}),
     });
     const data = response.data as RegisterAppResponseData | undefined;
@@ -109,6 +112,7 @@ export class AppsStore {
       slug: input.slug,
       ...(input.title !== undefined ? { title: input.title } : {}),
       ...(input.description !== undefined ? { description: input.description } : {}),
+      ...(input.icon !== undefined ? { icon: input.icon } : {}),
       ...(input.target !== undefined ? { target: input.target } : {}),
     });
     const data = response.data as UpdateAppResponseData | undefined;

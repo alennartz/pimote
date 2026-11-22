@@ -6,6 +6,7 @@ export const DEFAULT_CADDY_SERVER_NAME = 'pimote_apps';
 export const MAX_APP_SLUG_LENGTH = 63;
 export const MAX_APP_TITLE_LENGTH = 100;
 export const MAX_APP_DESCRIPTION_LENGTH = 280;
+export const MAX_APP_ICON_LENGTH = 2048;
 
 const APP_SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const CADDY_SERVER_NAME_RE = /^[a-zA-Z0-9_-]+$/;
@@ -49,6 +50,58 @@ export function validateAppDescription(description: string | undefined): string 
   if (trimmed.length > MAX_APP_DESCRIPTION_LENGTH) {
     throw new Error(`App description must be ${MAX_APP_DESCRIPTION_LENGTH} characters or fewer`);
   }
+  return trimmed;
+}
+
+export interface IconValidationOptions {
+  /** Localhost TCP ports owned by Pimote or Caddy that must never be fetched from. */
+  blockedLocalPorts?: ReadonlyMap<number, string>;
+}
+
+/** Validate an optional app icon URL: http(s) image URL or data:image URI. Blank clears the icon. */
+export function validateAppIcon(icon: string | undefined, options: IconValidationOptions = {}): string | undefined {
+  if (icon === undefined) return undefined;
+  if (typeof icon !== 'string') {
+    throw new Error('App icon must be a string');
+  }
+  const trimmed = icon.trim();
+  if (trimmed.length === 0) return undefined;
+  if (trimmed.length > MAX_APP_ICON_LENGTH) {
+    throw new Error(`App icon URL must be ${MAX_APP_ICON_LENGTH} characters or fewer`);
+  }
+
+  if (trimmed.toLowerCase().startsWith('data:image/')) {
+    const commaIndex = trimmed.indexOf(',');
+    if (commaIndex === -1 || commaIndex === trimmed.length - 1) {
+      throw new Error('App icon data URI must carry base64 payload');
+    }
+    return trimmed;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error(`Invalid app icon URL: ${JSON.stringify(icon)}`);
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`App icon URL must use http:// or https:// (got ${parsed.protocol})`);
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error('App icon URL must not include embedded credentials');
+  }
+  if (isMetadataOrLinkLocalHost(parsed.hostname)) {
+    throw new Error(`App icon URL host is blocked (link-local or cloud metadata address): ${parsed.hostname}`);
+  }
+  if (options.blockedLocalPorts && isLocalInterfaceHost(parsed.hostname)) {
+    const port = effectivePort(parsed);
+    const reason = options.blockedLocalPorts.get(port);
+    if (reason) {
+      throw new Error(`App icon URL cannot target local port ${port} (${reason})`);
+    }
+  }
+
   return trimmed;
 }
 

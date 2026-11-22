@@ -82,6 +82,44 @@ describe('AppService', () => {
     expect(reconciler.lastRoutes).toHaveLength(1);
   });
 
+  it('persists the icon through register, update, and restart', async () => {
+    const service = createService();
+    await service.initialize();
+
+    const registered = await service.register({
+      slug: 'iconic',
+      title: 'Iconic',
+      target: 'http://127.0.0.1:4400',
+      icon: 'https://cdn.example.com/iconic.png',
+    });
+    expect(registered.app.icon).toBe('https://cdn.example.com/iconic.png');
+
+    // Omitted icon on update keeps the existing one.
+    const retitled = await service.update({ slug: 'iconic', title: 'Iconic v2' });
+    expect(retitled.app.icon).toBe('https://cdn.example.com/iconic.png');
+
+    // Blank icon clears it.
+    const cleared = await service.update({ slug: 'iconic', icon: '  ' });
+    expect(cleared.app.icon).toBeUndefined();
+
+    const replaced = await service.update({ slug: 'iconic', icon: 'data:image/png;base64,AAAA' });
+    expect(replaced.app.icon).toBe('data:image/png;base64,AAAA');
+
+    const second = createService();
+    const loaded = await second.initialize();
+    expect(loaded.apps.find((app) => app.slug === 'iconic')?.icon).toBe('data:image/png;base64,AAAA');
+  });
+
+  it('rejects invalid icons at registration and update', async () => {
+    const service = createService();
+    await service.initialize();
+
+    await expect(service.register({ slug: 'bad-icon', title: 'Bad', target: 'http://127.0.0.1:4401', icon: 'http://169.254.169.254/icon.png' })).rejects.toThrow(/metadata/i);
+    await expect(service.register({ slug: 'bad-icon', title: 'Bad', target: 'http://127.0.0.1:4401', icon: 'javascript:alert(1)' })).rejects.toThrow(/http/);
+    await service.register({ slug: 'bad-icon', title: 'Bad', target: 'http://127.0.0.1:4401' });
+    await expect(service.update({ slug: 'bad-icon', icon: 'http://127.0.0.1:3000/icon.png' })).rejects.toThrow(/Pimote server port/);
+  });
+
   it('rejects duplicate slugs unless overwrite is true', async () => {
     const service = createService();
     await service.initialize();

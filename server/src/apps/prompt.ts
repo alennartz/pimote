@@ -9,6 +9,7 @@ export const APP_REGISTER_TOOL_GUIDELINES = [
 export const APP_REGISTER_TOOL_DESCRIPTION = [
   'Persists a durable App backed by an HTTP or HTTPS origin, reconciles its Caddy route, and returns {app, sync}.',
   'Rejects an existing slug unless overwrite is true, blocks Pimote, Caddy, and metadata targets, and rejects non-root target paths.',
+  'Accepts an optional icon image URL that Pimote proxies same-origin for the Home tile.',
   'When Caddy is unreachable, the App stays persisted with sync.status set to "error" and sync.error set to the failure message.',
 ].join(' ');
 

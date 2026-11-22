@@ -8,6 +8,7 @@ import {
   renderPublicUrl,
   targetToCaddyDial,
   validateAppDescription,
+  validateAppIcon,
   validateAppSlug,
   validateAppTarget,
   validateAppTitle,
@@ -132,6 +133,56 @@ describe('validateAppTarget', () => {
     expect(() => validateAppTarget('http://127.0.0.1:4173/subpath')).toThrow(/base path/i);
     expect(() => validateAppTarget('http://127.0.0.1:4173/?a=1')).toThrow(/query/i);
     expect(() => validateAppTarget('http://127.0.0.1:4173/#hash')).toThrow(/fragments/i);
+  });
+});
+
+describe('validateAppIcon', () => {
+  const blockedLocalPorts = buildBlockedLocalPorts(
+    {
+      publicUrlTemplate: 'https://{slug}.apps.example.com',
+      caddyAdminUrl: 'http://127.0.0.1:2019',
+      caddyListen: '127.0.0.1:8080',
+      caddyServerName: 'pimote_apps',
+    },
+    3000,
+  );
+
+  it('trims URLs and treats absent and blank icons as omitted', () => {
+    expect(validateAppIcon(undefined)).toBeUndefined();
+    expect(validateAppIcon('')).toBeUndefined();
+    expect(validateAppIcon('   ')).toBeUndefined();
+    expect(validateAppIcon('  https://cdn.example.com/logo.png  ', { blockedLocalPorts })).toBe('https://cdn.example.com/logo.png');
+  });
+
+  it('accepts http(s) URLs with paths and queries', () => {
+    expect(validateAppIcon('http://127.0.0.1:4173/logo.png', { blockedLocalPorts })).toBe('http://127.0.0.1:4173/logo.png');
+    expect(validateAppIcon('https://example.com/icon?v=2', { blockedLocalPorts })).toBe('https://example.com/icon?v=2');
+  });
+
+  it('accepts data:image URIs', () => {
+    expect(validateAppIcon('data:image/png;base64,AAAA')).toBe('data:image/png;base64,AAAA');
+    expect(() => validateAppIcon('data:image/png;base64,')).toThrow(/payload/);
+    expect(() => validateAppIcon('data:image/png')).toThrow(/payload/);
+    expect(() => validateAppIcon('data:text/html;base64,AAAA')).toThrow(/http/);
+  });
+
+  it('rejects non-http schemes, credentials, and overlong URLs', () => {
+    expect(() => validateAppIcon('ftp://example.com/icon.png')).toThrow(/http/);
+    expect(() => validateAppIcon('javascript:alert(1)')).toThrow(/http/);
+    expect(() => validateAppIcon('http://user:pass@example.com/icon.png')).toThrow(/credentials/i);
+    expect(() => validateAppIcon(`https://example.com/${'a'.repeat(2048)}`)).toThrow(/2048/);
+    expect(() => validateAppIcon(42 as unknown as string)).toThrow(/string/);
+  });
+
+  it('blocks metadata, link-local, and Pimote/Caddy-owned local ports', () => {
+    expect(() => validateAppIcon('http://169.254.169.254/icon.png', { blockedLocalPorts })).toThrow(/metadata/i);
+    expect(() => validateAppIcon('http://metadata.google.internal/icon.png', { blockedLocalPorts })).toThrow(/metadata/i);
+    expect(() => validateAppIcon('http://127.0.0.1:3000/icon.png', { blockedLocalPorts })).toThrow(/Pimote server port/);
+    expect(() => validateAppIcon('http://localhost:2019/icon.png', { blockedLocalPorts })).toThrow(/Caddy admin API port/);
+  });
+
+  it('allows loopback ports that are not owned by Pimote or Caddy', () => {
+    expect(validateAppIcon('http://127.0.0.1:4173/favicon.ico', { blockedLocalPorts })).toBe('http://127.0.0.1:4173/favicon.ico');
   });
 });
 

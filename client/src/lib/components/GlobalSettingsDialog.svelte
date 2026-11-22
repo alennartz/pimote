@@ -6,6 +6,8 @@
   import { connection } from '../stores/connection.svelte.js';
   import { getUser } from '../stores/persistence.js';
   import { userIdentity } from '../stores/user-identity.svelte.js';
+  import { serverCapabilities } from '../stores/server-capabilities.svelte.js';
+  import { appsStore } from '../stores/apps-store.svelte.js';
   import { inferLanguageFromPath } from '$lib/editor-language.js';
   import { isValidTagName, wrapWithTag } from '$lib/tag-wrap.js';
   import { AlertDialog } from 'bits-ui';
@@ -16,6 +18,7 @@
   import Check from '@lucide/svelte/icons/check';
   import CodeEditorDialog from './CodeEditorDialog.svelte';
   import AppearanceSettings from './AppearanceSettings.svelte';
+  import AppsSection from './AppsSection.svelte';
   import type { ThemeStore } from '../stores/theme-store.svelte.js';
   import { globalSettingsPresentation } from './global-settings-presentation.js';
 
@@ -45,6 +48,7 @@
   // dialog open and tab select, and after a save once the socket is back.
   let userTabActive = $state(false);
   let appearanceTabActive = $state(false);
+  let appsTabActive = $state(false);
   let userName = $state(getUser() ?? '');
   let persistedUser = $state(getUser() ?? '');
   let profiles = $state<UserSummary[]>([]);
@@ -57,7 +61,7 @@
   let adoptedProfileKnown = $derived(profiles.some((profile) => profile.name === trimmedName));
   let directFiles = $derived(store.files.slice(0, DIRECT_TAB_LIMIT));
   let overflowFiles = $derived(store.files.slice(DIRECT_TAB_LIMIT));
-  let overflowFileActive = $derived(!userTabActive && !appearanceTabActive && overflowFiles.some((file) => file.path === store.activePath));
+  let overflowFileActive = $derived(!userTabActive && !appearanceTabActive && !appsTabActive && overflowFiles.some((file) => file.path === store.activePath));
   let filesMenuOpen = $state(false);
 
   interface PaneOption {
@@ -74,19 +78,20 @@
     const options: PaneOption[] = [];
     if (themeStore) options.push({ key: 'appearance', label: 'Appearance', dirty: false, selected: appearanceTabActive, select: selectAppearanceTab });
     options.push({ key: 'user', label: 'User', dirty: userDirty, selected: userTabActive, select: selectUserTab });
+    if (serverCapabilities.apps) options.push({ key: 'apps', label: 'Apps', dirty: false, selected: appsTabActive, select: selectAppsTab });
     for (const file of store.files) {
       options.push({
         key: file.path,
         label: file.label,
         dirty: file.dirty,
-        selected: !userTabActive && !appearanceTabActive && file.path === store.activePath,
+        selected: !userTabActive && !appearanceTabActive && !appsTabActive && file.path === store.activePath,
         select: () => selectFile(file.path),
       });
     }
     return options;
   });
   let activePane = $derived(panes.find((pane) => pane.selected) ?? null);
-  let tagControlsVisible = $derived(!appearanceTabActive && !userTabActive && presentation.language === 'markdown');
+  let tagControlsVisible = $derived(!appearanceTabActive && !userTabActive && !appsTabActive && presentation.language === 'markdown');
 
   $effect(() => {
     if (!store.open || store.activePath) {
@@ -100,6 +105,7 @@
       cancelThemePreview();
       userTabActive = false;
       appearanceTabActive = false;
+      appsTabActive = false;
       userName = persistedUser;
     }
   });
@@ -120,6 +126,7 @@
   function selectUserTab(): void {
     cancelThemePreview();
     appearanceTabActive = false;
+    appsTabActive = false;
     userTabActive = true;
     filesMenuOpen = false;
     void fetchProfiles();
@@ -128,15 +135,26 @@
   function selectAppearanceTab(): void {
     if (!themeStore) return;
     userTabActive = false;
+    appsTabActive = false;
     appearanceTabActive = true;
     themeSaveError = null;
     filesMenuOpen = false;
+  }
+
+  function selectAppsTab(): void {
+    cancelThemePreview();
+    userTabActive = false;
+    appearanceTabActive = false;
+    appsTabActive = true;
+    filesMenuOpen = false;
+    void appsStore.ensureLoaded();
   }
 
   function selectFile(path: string): void {
     cancelThemePreview();
     userTabActive = false;
     appearanceTabActive = false;
+    appsTabActive = false;
     filesMenuOpen = false;
     void store.select(path);
   }
@@ -267,32 +285,46 @@
   {/if}
 {/snippet}
 
+{#snippet appsPane()}
+  <div class="flex min-h-0 flex-1 flex-col overflow-y-auto p-4 sm:p-6">
+    <AppsSection />
+  </div>
+{/snippet}
+
 <CodeEditorDialog
   open={store.open}
-  title={appearanceTabActive ? 'Appearance' : userTabActive ? 'User' : (active?.label ?? '')}
+  title={appearanceTabActive ? 'Appearance' : userTabActive ? 'User' : appsTabActive ? 'Apps' : (active?.label ?? '')}
   accessibleTitle="Global settings files"
-  subtitle={appearanceTabActive ? 'Interface and code palette' : userTabActive ? "This device's identity on the server" : (active?.path ?? null)}
+  subtitle={appearanceTabActive
+    ? 'Interface and code palette'
+    : userTabActive
+      ? "This device's identity on the server"
+      : appsTabActive
+        ? 'Durable web apps on this server'
+        : (active?.path ?? null)}
   hint={appearanceTabActive
     ? null
     : userTabActive
       ? userDirty
         ? 'Unsaved changes'
         : null
-      : active?.loaded && !active.exists
-        ? 'New file. It will be created on save.'
-        : active?.dirty
-          ? 'Unsaved changes'
-          : null}
-  error={appearanceTabActive ? themeSaveError : userTabActive ? null : (store.error ?? active?.error ?? null)}
-  saving={appearanceTabActive ? false : userTabActive ? false : (active?.saving ?? false)}
-  saveDisabled={appearanceTabActive ? (themeStore?.saveDisabled ?? true) : userTabActive ? !userDirty : !presentation.actions.saveEnabled || !active?.loaded}
+      : appsTabActive
+        ? null
+        : active?.loaded && !active.exists
+          ? 'New file. It will be created on save.'
+          : active?.dirty
+            ? 'Unsaved changes'
+            : null}
+  error={appearanceTabActive ? themeSaveError : userTabActive ? null : appsTabActive ? null : (store.error ?? active?.error ?? null)}
+  saving={appearanceTabActive ? false : userTabActive ? false : appsTabActive ? false : (active?.saving ?? false)}
+  saveDisabled={appearanceTabActive ? (themeStore?.saveDisabled ?? true) : userTabActive ? !userDirty : appsTabActive ? true : !presentation.actions.saveEnabled || !active?.loaded}
   saveLabel={appearanceTabActive ? 'Save theme' : 'Save'}
-  ready={appearanceTabActive ? true : (active?.loaded ?? false)}
-  editorKey={appearanceTabActive ? 'appearance' : (active?.path ?? null)}
+  ready={appearanceTabActive ? true : appsTabActive ? true : (active?.loaded ?? false)}
+  editorKey={appearanceTabActive ? 'appearance' : appsTabActive ? 'apps' : (active?.path ?? null)}
   toolbarVisible={tagControlsVisible && viewport !== 'mobile'}
-  language={inferLanguageFromPath(active?.path ?? '')}
-  badge={appearanceTabActive ? 'appearance' : userTabActive ? 'device setting' : null}
-  body={appearanceTabActive && themeStore ? appearancePane : userTabActive ? userPane : null}
+  language={appsTabActive ? null : inferLanguageFromPath(active?.path ?? '')}
+  badge={appearanceTabActive ? 'appearance' : userTabActive ? 'device setting' : appsTabActive ? 'apps' : null}
+  body={appearanceTabActive && themeStore ? appearancePane : userTabActive ? userPane : appsTabActive ? appsPane : null}
   bind:value={
     () => active?.draft ?? '',
     (value) => {
@@ -312,6 +344,9 @@
     }
     if (userTabActive) {
       saveUser();
+      return;
+    }
+    if (appsTabActive) {
       return;
     }
     if (active) void store.save(active.path);
@@ -372,9 +407,9 @@
           {#each directFiles as file (file.path)}
             <Button
               type="button"
-              variant={!userTabActive && !appearanceTabActive && file.path === store.activePath ? 'secondary' : 'ghost'}
+              variant={!userTabActive && !appearanceTabActive && !appsTabActive && file.path === store.activePath ? 'secondary' : 'ghost'}
               role="tab"
-              aria-selected={!userTabActive && !appearanceTabActive && file.path === store.activePath}
+              aria-selected={!userTabActive && !appearanceTabActive && !appsTabActive && file.path === store.activePath}
               class="max-w-[min(14rem,45vw)] min-w-0 shrink-0"
               onclick={() => selectFile(file.path)}
             >
@@ -405,7 +440,7 @@
                 {#each overflowFiles as file (file.path)}
                   <DropdownMenuItem
                     onclick={() => selectFile(file.path)}
-                    aria-current={!userTabActive && !appearanceTabActive && file.path === store.activePath ? 'page' : undefined}
+                    aria-current={!userTabActive && !appearanceTabActive && !appsTabActive && file.path === store.activePath ? 'page' : undefined}
                     class="min-w-0 justify-between gap-3"
                   >
                     <span class="min-w-0 truncate">{file.label}</span>

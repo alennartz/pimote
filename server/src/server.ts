@@ -22,6 +22,7 @@ import type { ThemeCatalog } from './theme-catalog.js';
 import crypto from 'node:crypto';
 import type { UpdateAvailableEvent, VersionMismatchEvent, ServerCapabilitiesEvent, ThemeCatalogChangedEvent, AppsChangedEvent } from '../../shared/dist/index.js';
 import type { AppService } from './apps/index.js';
+import { createAppIconProxy } from './apps/icon-proxy.js';
 import type { UpdateChecker } from './update-check.js';
 import { resolveUserName } from './user-profiles.js';
 import { handleImageHttpRoute } from './image-http.js';
@@ -158,6 +159,7 @@ export async function createServer(
 ): Promise<PimoteServer> {
   const effectiveThemeCatalog = themeCatalog ?? globalSettings?.themeCatalog;
   const effectiveAppService = appService ?? globalSettings?.appService;
+  const serveAppIconRoute = effectiveAppService ? createAppIconProxy({ source: effectiveAppService }) : undefined;
   const appName = resolveAppName(config);
   const clientVersion = await loadClientVersion();
   if (clientVersion) {
@@ -168,6 +170,9 @@ export async function createServer(
   const httpServer = http.createServer(async (req, res) => {
     // Content-addressed image bodies stay off the WebSocket transcript path.
     if (await handleImageHttpRoute(req, res)) return;
+
+    // App icons are proxied same-origin so the browser never loads cross-origin images.
+    if (serveAppIconRoute && (await serveAppIconRoute(req, res))) return;
 
     // 1. Health check
     if (req.method === 'GET' && req.url === '/health') {

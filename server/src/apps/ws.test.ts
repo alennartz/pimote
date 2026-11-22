@@ -142,10 +142,11 @@ describe('Apps WebSocket protocol integration', () => {
       title: 'Planner',
       target: 'http://127.0.0.1:4173',
       description: 'Task board',
+      icon: 'http://127.0.0.1:4173/logo.png',
     });
     expect(registerResp.success).toBe(true);
     expect(registerResp.data).toMatchObject({
-      app: { slug: 'planner', title: 'Planner', url: 'https://planner.apps.example.com' },
+      app: { slug: 'planner', title: 'Planner', url: 'https://planner.apps.example.com', icon: 'http://127.0.0.1:4173/logo.png' },
       sync: { status: 'synced' },
     });
 
@@ -164,9 +165,11 @@ describe('Apps WebSocket protocol integration', () => {
       type: 'update_app',
       slug: 'planner',
       title: 'Planner Pro',
+      icon: '',
     });
     expect(updateResp.success).toBe(true);
     expect(updateResp.data).toMatchObject({ app: { title: 'Planner Pro' } });
+    expect((updateResp.data as { app: { icon?: string } }).app.icon).toBeUndefined();
 
     const removeResp = await alice.sendCommand({ type: 'remove_app', slug: 'planner' });
     expect(removeResp.success).toBe(true);

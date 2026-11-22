@@ -11,11 +11,10 @@
   import Trash2 from '@lucide/svelte/icons/trash-2';
 
   interface Props {
-    search?: string;
     store?: AppsStore;
   }
 
-  let { search = '', store = appsStore }: Props = $props();
+  let { store = appsStore }: Props = $props();
 
   let dialogOpen = $state(false);
   let dialogMode = $state<'create' | 'edit'>('create');
@@ -23,16 +22,6 @@
   let confirmingRemoveSlug = $state<string | null>(null);
   let busyRemoveSlug = $state<string | null>(null);
   let actionError = $state<string | null>(null);
-
-  let normalizedQuery = $derived(search.trim().toLowerCase());
-  let filteredApps = $derived(
-    normalizedQuery.length === 0
-      ? store.apps
-      : store.apps.filter((app) => {
-          const haystack = `${app.title} ${app.slug} ${app.description ?? ''} ${app.target}`.toLowerCase();
-          return haystack.includes(normalizedQuery);
-        }),
-  );
 
   function openCreate(): void {
     dialogMode = 'create';
@@ -95,7 +84,7 @@
       <h2 class="text-muted-foreground text-xs font-semibold tracking-wider uppercase">Apps</h2>
       {#if store.apps.length > 0}
         <span class="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-xs font-medium">
-          {filteredApps.length}{normalizedQuery ? `/${store.apps.length}` : ''}
+          {store.apps.length}
         </span>
       {/if}
     </div>
@@ -122,9 +111,9 @@
     <p class="text-destructive text-sm" role="alert">{actionError ?? store.error}</p>
   {/if}
 
-  {#if filteredApps.length > 0}
+  {#if store.apps.length > 0}
     <div class="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-      {#each filteredApps as app (app.slug)}
+      {#each store.apps as app (app.slug)}
         <div class="border-border bg-card hover:border-primary/40 flex items-start justify-between gap-3 rounded-xl border p-3.5 transition-colors">
           <!-- eslint-disable svelte/no-navigation-without-resolve -->
           <a href={app.url} target="_blank" rel="noopener noreferrer" class="group flex min-w-0 flex-1 flex-col gap-1 focus-visible:outline-none">
@@ -135,6 +124,9 @@
             </div>
             {#if app.description}
               <p class="text-muted-foreground line-clamp-2 text-sm">{app.description}</p>
+            {/if}
+            {#if app.icon}
+              <span class="text-muted-foreground truncate text-xs">Icon: {app.icon}</span>
             {/if}
             <span class="text-muted-foreground truncate font-mono text-xs">{displayHost(app.url)}</span>
           </a>
@@ -176,7 +168,7 @@
         </div>
       {/each}
     </div>
-  {:else if !normalizedQuery && store.loaded}
+  {:else if store.loaded}
     <p class="text-muted-foreground text-sm">No apps registered yet.</p>
   {/if}
 </section>

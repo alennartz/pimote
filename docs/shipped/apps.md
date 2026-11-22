@@ -1,6 +1,6 @@
 # Durable Apps
 
-Durable **Apps** expose long-lived web applications on dedicated subdomains (for example `https://<slug>.apps.example.com`). Unlike session-scoped static hosts (`/s/<slug>/`), an App outlives the session that registered it and appears globally on the Pimote Home screen.
+Durable **Apps** expose long-lived web applications on dedicated subdomains (for example `https://<slug>.apps.example.com`). Unlike session-scoped static hosts (`/s/<slug>/`), an App outlives the session that registered it. Registered Apps appear on the Home screen as icon tiles, and the Settings dialog has an **Apps** pane for adding, editing, and removing them. When no Apps are registered, the Home screen shows no Apps section at all.
 
 ## Architecture
 
@@ -47,11 +47,19 @@ Each App targets an HTTP or HTTPS origin reachable from the Pimote host:
 
 Pimote does not supervise app processes. Start and maintain the upstream process outside Pimote (for example with systemd, Docker, or a remote host).
 
+## Icons
+
+Each App can carry an optional icon: an `http://` or `https://` image URL, or a `data:image` URI, up to 2048 characters. Rules mirror target validation: no credentials, no link-local or cloud metadata hosts, and no Pimote/Caddy-owned loopback ports.
+
+The browser never loads the icon URL directly. Pimote fetches it, requires an `image/*` content type and a 1 MB size cap, caches the bytes in memory, and serves them same-origin at `/app-icons/<slug>` with an ETag for revalidation. Failures are negatively cached for five minutes.
+
+The Home tile falls back to `<app url>/favicon.ico`, then to a letter tile with the title's first character.
+
 ## Pi tools
 
 When the Apps gateway is configured, three tools load in every session:
 
-- `pimote_app_register`: registers a durable App by `slug` (1 to 63 lowercase letters, digits, and single hyphens), `title`, `target`, optional `description`, and optional `overwrite` (default `false`). Returns `{app, sync}`.
+- `pimote_app_register`: registers a durable App by `slug` (1 to 63 lowercase letters, digits, and single hyphens), `title`, `target`, optional `description`, optional `icon` (image URL or `data:image` URI), and optional `overwrite` (default `false`). Returns `{app, sync}`.
 - `pimote_app_list`: returns all registered Apps sorted by title then slug plus `{sync}`.
 - `pimote_app_remove`: removes a registered App by `slug`, reconciles Caddy, and returns `{removed, sync}`.
 
@@ -59,6 +67,6 @@ When the Apps gateway is configured, three tools load in every session:
 
 Pimote does not poll upstream targets for health. It reports only Caddy route sync state (`synced` or `error`).
 
-- If Caddy is unreachable at boot or during a change, Pimote keeps the App catalog on disk, sets `sync.status` to `error`, and continues running. Click **Resync** on the Home screen (or trigger another change) after Caddy recovers.
+- If Caddy is unreachable at boot or during a change, Pimote keeps the App catalog on disk, sets `sync.status` to `error`, and continues running. Click **Resync** in Settings → Apps (or trigger another change) after Caddy recovers.
 - Reconciling Caddy updates the HTTP server config and triggers a Caddy reload. Active WebSocket connections on Apps close after Caddy's configured grace period, so apps that use WebSockets need normal reconnect logic.
 - Unmatched hostnames reaching Caddy's Pimote server receive HTTP `404` (`Unknown Pimote app`).

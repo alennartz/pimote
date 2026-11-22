@@ -979,6 +979,7 @@ export class WsHandler {
               title: command.title,
               target: command.target,
               description: command.description,
+              icon: command.icon,
               overwrite: command.overwrite,
             });
             this.sendResponse(id, true, result);
@@ -998,6 +999,7 @@ export class WsHandler {
               slug: command.slug,
               title: command.title,
               description: command.description,
+              icon: command.icon,
               target: command.target,
             });
             this.sendResponse(id, true, result);

@@ -21,6 +21,7 @@ function isPersistedAppRecord(value: unknown): value is PersistedAppRecord {
     typeof record.createdAt === 'string' &&
     typeof record.updatedAt === 'string' &&
     (record.description === undefined || typeof record.description === 'string') &&
+    (record.icon === undefined || typeof record.icon === 'string') &&
     (record.createdBySessionId === undefined || typeof record.createdBySessionId === 'string') &&
     (record.folderPath === undefined || typeof record.folderPath === 'string')
   );
@@ -66,6 +67,7 @@ export class FileAppStore implements AppStore {
         slug: entry.slug,
         title: entry.title,
         ...(entry.description !== undefined ? { description: entry.description } : {}),
+        ...(entry.icon !== undefined ? { icon: entry.icon } : {}),
         target: entry.target,
         createdAt: entry.createdAt,
         updatedAt: entry.updatedAt,

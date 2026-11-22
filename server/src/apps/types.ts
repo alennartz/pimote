@@ -17,6 +17,7 @@ export interface PersistedAppRecord {
   slug: string;
   title: string;
   description?: string;
+  icon?: string;
   target: string;
   createdAt: string;
   updatedAt: string;
@@ -34,6 +35,7 @@ export interface RegisterAppInput {
   title: string;
   target: string;
   description?: string;
+  icon?: string;
   overwrite?: boolean;
   createdBySessionId?: string;
   folderPath?: string;
@@ -43,6 +45,7 @@ export interface UpdateAppInput {
   slug: string;
   title?: string;
   description?: string;
+  icon?: string;
   target?: string;
 }
 

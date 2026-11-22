@@ -18,7 +18,7 @@
     return () => query.removeEventListener('change', updateViewport);
   });
   import HomeToolbar from '$lib/components/HomeToolbar.svelte';
-  import AppsSection from '$lib/components/AppsSection.svelte';
+  import AppTiles from '$lib/components/AppTiles.svelte';
   import FolderList from '$lib/components/FolderList.svelte';
   import { isPlaceholderSessionId, submitManagerMessage, type ManagerSubmitPorts } from '$lib/manager-composer.js';
   import { closeOpenSwipeCard } from '$lib/components/SwipeableCard.svelte';
@@ -114,8 +114,8 @@
 
       <HomeToolbar bind:search bind:managerMode bind:managerDraft {managerReady} busy={managerBusy} onSubmitManager={submitManagerDraft} />
 
-      {#if serverCapabilities.apps}
-        <AppsSection {search} />
+      {#if serverCapabilities.apps && appsStore.loaded && appsStore.apps.length > 0}
+        <AppTiles {search} />
       {/if}
 
       <section>

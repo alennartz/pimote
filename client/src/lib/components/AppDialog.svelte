@@ -19,6 +19,7 @@
   let title = $state('');
   let target = $state('');
   let description = $state('');
+  let icon = $state('');
   let submitting = $state(false);
   let formError = $state<string | null>(null);
 
@@ -29,11 +30,13 @@
         title = app.title;
         target = app.target;
         description = app.description ?? '';
+        icon = app.icon ?? '';
       } else {
         slug = '';
         title = '';
         target = '';
         description = '';
+        icon = '';
       }
       formError = null;
       submitting = false;
@@ -53,6 +56,7 @@
     const trimmedTitle = title.trim();
     const trimmedTarget = target.trim();
     const trimmedDescription = description.trim();
+    const trimmedIcon = icon.trim();
 
     if (mode === 'create' && !trimmedSlug) {
       formError = 'Slug is required.';
@@ -76,12 +80,14 @@
               title: trimmedTitle,
               target: trimmedTarget,
               ...(trimmedDescription ? { description: trimmedDescription } : {}),
+              ...(trimmedIcon ? { icon: trimmedIcon } : {}),
             })
           : await store.update({
               slug: trimmedSlug,
               title: trimmedTitle,
               target: trimmedTarget,
               description: trimmedDescription,
+              icon: trimmedIcon,
             });
 
       if (!result.ok) {
@@ -129,6 +135,12 @@
       <div class="flex flex-col gap-1.5">
         <label for="app-description" class="text-sm font-medium">Description</label>
         <Input id="app-description" bind:value={description} placeholder="Optional short summary" disabled={submitting} autocomplete="off" />
+      </div>
+
+      <div class="flex flex-col gap-1.5">
+        <label for="app-icon" class="text-sm font-medium">Icon URL</label>
+        <Input id="app-icon" bind:value={icon} placeholder="Optional image URL" disabled={submitting} autocomplete="off" spellcheck={false} />
+        <p class="text-muted-foreground text-xs">Shown as the app icon on the Home screen. Pimote fetches it and serves it from its own origin.</p>
       </div>
 
       {#if formError}

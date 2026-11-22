@@ -44,18 +44,19 @@ function renderSection(store: AppsStore, search = ''): HTMLElement {
 }
 
 describe('AppsSection', () => {
-  it('renders external new-tab links for registered apps and filters by search query', async () => {
+  it('renders external new-tab links for registered apps', async () => {
     const store = new AppsStore({ send: vi.fn() });
     store.handleEvent({ type: 'apps_changed', apps: APPS, sync: { status: 'synced' } });
 
-    const el = renderSection(store, 'budget');
+    const el = renderSection(store);
     await tick();
 
     const links = [...el.querySelectorAll('a')];
-    expect(links).toHaveLength(1);
+    expect(links).toHaveLength(2);
     expect(links[0]?.getAttribute('href')).toBe('https://budget.apps.example.com');
     expect(links[0]?.getAttribute('target')).toBe('_blank');
     expect(links[0]?.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(links.map((link) => link.textContent)).toEqual([expect.stringContaining('Budget Tracker'), expect.stringContaining('Quick Notes')]);
   });
 
   it('displays sync error banner and triggers resync when clicked', async () => {

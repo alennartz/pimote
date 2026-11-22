@@ -1172,6 +1172,8 @@ export interface AppInfo {
   slug: string;
   title: string;
   description?: string;
+  /** Optional icon source URL. The server proxies it at /app-icons/{slug} so the browser loads it same-origin. */
+  icon?: string;
   target: string;
   url: string;
   createdAt: string;
@@ -1201,6 +1203,7 @@ export interface RegisterAppCommand extends CommandBase {
   title: string;
   target: string;
   description?: string;
+  icon?: string;
   overwrite?: boolean;
 }
 
@@ -1214,6 +1217,7 @@ export interface UpdateAppCommand extends CommandBase {
   slug: string;
   title?: string;
   description?: string;
+  icon?: string;
   target?: string;
 }
 
