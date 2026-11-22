@@ -16,6 +16,7 @@ Design a report for comfortable reading at 360px and at 1440px. A report opens i
 ## Page structure
 
 - A `<title>` that matches the card title.
+- A viewport meta tag: `<meta name="viewport" content="width=device-width, initial-scale=1">`. Without it a phone renders a zoomed-out desktop page.
 - A header block with the title, a one-line dek, and a date when the date matters.
 - A key-takeaways block of 3 to 5 bullets at the top. Many readers never scroll past it.
 - A table of contents with anchor links when the report has four or more sections. Keep it visible on desktop and collapse it on a phone.
@@ -38,11 +39,13 @@ Do not shrink a desktop page. Adapt the layout to the space, and check both widt
 
 - Use fluid layouts, relative units, and media queries instead of fixed pixel widths.
 - Stack side-by-side layouts on a narrow screen, and collapse navigation that does not fit.
-- Keep controls large enough to tap, and keep essential information visible without hover.
+- Give every control a tap target of 44px or more, and keep essential information visible without hover.
+- Give form controls a font size of 16px, so a phone does not zoom on focus.
+- Honor `prefers-reduced-motion` when a report animates.
 - Reflow tables and code blocks so they stay usable at 360px.
 - On a wide screen, hold the content column at a readable width and use the remaining space for side-by-side comparison.
 
-Confirm there is no horizontal page scroll at either width, and no text below 14px.
+Check both widths in device emulation, then on a phone. Confirm there is no horizontal page scroll at either width, and no text below 14px.
 
 ## Shared theme bridge
 
