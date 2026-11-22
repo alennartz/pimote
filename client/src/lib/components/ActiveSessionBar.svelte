@@ -686,7 +686,12 @@
       </div>
     {/if}
 
-    <div class="flex shrink-0 overflow-x-auto overflow-y-hidden" class:session-rail-flow={!!mobileActionsSessionId} bind:this={railEl} {@attach railPointerGesture}>
+    <div
+      class="max-md:no-scrollbar flex shrink-0 overflow-x-auto overflow-y-hidden"
+      class:session-rail-flow={!!mobileActionsSessionId}
+      bind:this={railEl}
+      {@attach railPointerGesture}
+    >
       <div class="relative flex w-max shrink-0 items-center gap-1.5" bind:this={trackEl}>
         {#each sessionRegistry.activeSessions as session (session.sessionId)}
           {@const isViewed = sessionRegistry.viewedSessionId === session.sessionId}
