@@ -101,6 +101,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 /** Reconciles Pimote's dedicated HTTP server block in an external Caddy sidecar via its localhost admin API. */
 export class CaddyAdminClient implements AppRouteReconciler {
   private readonly adminBase: string;
+  private readonly adminOrigin: string;
   private readonly caddyListen: string;
   private readonly caddyServerName: string;
   private readonly timeoutMs: number;
@@ -108,6 +109,7 @@ export class CaddyAdminClient implements AppRouteReconciler {
 
   constructor(options: CaddyAdminClientOptions) {
     this.adminBase = options.caddyAdminUrl.replace(/\/+$/, '');
+    this.adminOrigin = new URL(this.adminBase).origin;
     this.caddyListen = options.caddyListen;
     this.caddyServerName = options.caddyServerName;
     this.timeoutMs = options.timeoutMs ?? 5000;
@@ -179,7 +181,10 @@ export class CaddyAdminClient implements AppRouteReconciler {
     try {
       return await this.fetchImpl(url, {
         method,
-        headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+        headers: {
+          Origin: this.adminOrigin,
+          ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        },
         body: body !== undefined ? JSON.stringify(body) : undefined,
         signal: AbortSignal.timeout(this.timeoutMs),
       });

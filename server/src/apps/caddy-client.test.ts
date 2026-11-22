@@ -35,6 +35,12 @@ async function startStubCaddy(initialConfig: Record<string, unknown> | null = nu
 
   const server = http.createServer((req, res) => {
     const pathname = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
+    const expectedOrigin = `http://${req.headers.host}`;
+    if (req.headers.origin !== expectedOrigin) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `client is not allowed to access from origin ${JSON.stringify(req.headers.origin ?? '')}` }));
+      return;
+    }
     const prefix = '/config/';
     if (!pathname.startsWith(prefix)) {
       res.writeHead(404).end('not found');
