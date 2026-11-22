@@ -433,4 +433,34 @@ describe('open subagent view lobes', () => {
     expect(connection.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'subagent_close_view', sessionId: rootId, path: ['scout'] }));
     expect(sessionRegistry.getSelectedSubagentPath(rootId)).toBeNull();
   });
+
+  it('returns to the root conversation when the parent lobe is clicked', async () => {
+    openChildView(['scout'], 'child-scout');
+    openChildView(['worker'], 'child-worker');
+    sessionRegistry.selectSubagentView(rootId, ['scout']);
+    render();
+    await tick();
+
+    const rootLobe = lobeGroup().querySelector<HTMLButtonElement>('.lobe.root');
+    rootLobe!.click();
+    await tick();
+
+    expect(sessionRegistry.getSelectedSubagentPath(rootId)).toBeNull();
+    expect(sessionRegistry.viewedSessionId).toBe(rootId);
+  });
+
+  it('keeps every attachment open while switching between child lobes', async () => {
+    openChildView(['scout'], 'child-scout');
+    openChildView(['worker'], 'child-worker');
+    sessionRegistry.selectSubagentView(rootId, ['scout']);
+    render();
+    await tick();
+
+    childLobe('worker').click();
+    await tick();
+
+    expect(sessionRegistry.getSelectedSubagentPath(rootId)).toEqual(['worker']);
+    expect(sessionRegistry.getSubagentAttachment(rootId, ['scout'])?.closed).toBe(false);
+    expect(sessionRegistry.getSubagentAttachment(rootId, ['worker'])?.closed).toBe(false);
+  });
 });

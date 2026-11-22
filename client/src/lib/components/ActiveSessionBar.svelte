@@ -128,6 +128,22 @@
     sessionRegistry.selectSubagentView(sessionId, path);
   }
 
+  /** The parent lobe always lands on the root conversation: leaving a child
+   *  view shown keeps it open as a lobe, it just stops being the surface. */
+  function selectRootView(sessionId: string) {
+    if (suppressChipClick) {
+      suppressChipClick = false;
+      return;
+    }
+    if (mobileActionsSessionId === sessionId) {
+      mobileActionsSessionId = null;
+      return;
+    }
+    mobileActionsSessionId = null;
+    sessionRegistry.selectSubagentView(sessionId, null);
+    if (sessionRegistry.viewedSessionId !== sessionId) switchToSession(sessionId);
+  }
+
   /** Close one child view from its lobe without touching the session. The
    *  registry clears the selection when the closed view was the shown one. */
   function closeChildLobeView(sessionId: string, path: AgentPath): Promise<boolean> {
@@ -710,7 +726,7 @@
   >
     <button
       class="lobe root group/lobe {isViewed && !selectedChildPath ? 'viewed' : ''}"
-      onclick={() => handlePillClick(session.sessionId)}
+      onclick={() => selectRootView(session.sessionId)}
       onauxclick={(e) => {
         if (e.button === 1) {
           e.preventDefault();
