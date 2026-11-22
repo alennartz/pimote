@@ -2406,6 +2406,7 @@ export class SessionRegistry {
     const { sessionId: _sessionId, path: _path, incarnation: _incarnation, type, ...payload } = command;
     const child = 'rootSessionId' in session ? (session as SubagentAttachmentState) : null;
     const streamingRevision = session.streamingRevision;
+    const singleDequeue = String(type) === 'dequeue_steering' && typeof payload.message === 'string';
     const response = await connection.send({
       ...payload,
       type: child ? `subagent_${String(type)}` : type,
@@ -2413,7 +2414,7 @@ export class SessionRegistry {
       ...(child ? { path: child.path, incarnation: child.incarnation } : {}),
       ...(child && type === 'abort' ? { expectedSessionId: child.sessionId } : {}),
     } as PimoteCommand);
-    this.applySurfaceCommandResponse(sessionId, String(type), response, session, streamingRevision);
+    this.applySurfaceCommandResponse(sessionId, String(type), response, session, streamingRevision, singleDequeue);
     return response;
   }
 
@@ -2427,11 +2428,21 @@ export class SessionRegistry {
     });
   }
 
-  private applySurfaceCommandResponse(sessionId: string, commandType: string, response: PimoteResponse, requestedSession: PerSessionState, streamingRevision: number): void {
+  private applySurfaceCommandResponse(
+    sessionId: string,
+    commandType: string,
+    response: PimoteResponse,
+    requestedSession: PerSessionState,
+    streamingRevision: number,
+    singleDequeue = false,
+  ): void {
     const session = this.getSessionState(sessionId);
     if (!session || !response.data || typeof response.data !== 'object') return;
     const data = response.data as Record<string, unknown>;
     if (
+      // Single-message dequeues return the recalled text only; the composer
+      // already shows it and the pill shrinks via the authoritative queue_update.
+      !singleDequeue &&
       (commandType === 'abort' || commandType === 'dequeue_steering') &&
       Array.isArray(data.steering) &&
       data.steering.every((text) => typeof text === 'string') &&

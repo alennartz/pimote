@@ -309,3 +309,113 @@ describe('composer focus on session navigation', () => {
     expect(document.activeElement).toBe(sessionButton);
   });
 });
+
+describe('composer history recall', () => {
+  function seedUserMessages(...texts: string[]) {
+    sessionRegistry.sessions.s1!.messages = texts.map((text) => ({
+      role: 'user',
+      content: [{ type: 'text', text }],
+    }));
+  }
+
+  it('does not intercept ArrowUp when no history exists', async () => {
+    setupSession();
+    const target = await render();
+    const textarea = composer(target);
+    textarea.focus();
+
+    expect(keydown(textarea, 'ArrowUp').defaultPrevented).toBe(false);
+    expect(keydown(textarea, 'ArrowDown').defaultPrevented).toBe(false);
+  });
+
+  it('walks transcript user messages with ArrowUp and ArrowDown, restoring the draft', async () => {
+    setupSession();
+    seedUserMessages('first prompt', 'second prompt');
+    const target = await render();
+    const textarea = composer(target);
+    textarea.focus();
+
+    expect(keydown(textarea, 'ArrowUp').defaultPrevented).toBe(true);
+    await settle();
+    expect(textarea.value).toBe('second prompt');
+    expect(textarea.selectionStart).toBe('second prompt'.length);
+
+    expect(keydown(textarea, 'ArrowUp').defaultPrevented).toBe(true);
+    await settle();
+    expect(textarea.value).toBe('first prompt');
+
+    expect(keydown(textarea, 'ArrowDown').defaultPrevented).toBe(true);
+    await settle();
+    expect(textarea.value).toBe('second prompt');
+
+    expect(keydown(textarea, 'ArrowDown').defaultPrevented).toBe(true);
+    await settle();
+    expect(textarea.value).toBe('');
+  });
+
+  it('recalls a queued steering message with ArrowUp and dequeues it', async () => {
+    setupSession();
+    const sent: Array<Record<string, unknown>> = [];
+    vi.spyOn(connection, 'send').mockImplementation(async (command) => {
+      const payload = command as unknown as Record<string, unknown>;
+      sent.push(payload);
+      if (payload.type === 'dequeue_steering') {
+        return { id: 'r', success: true, data: { steering: [payload.message], followUp: [] } };
+      }
+      return { id: 'r', success: true };
+    });
+    sessionRegistry.sessions.s1!.pendingSteeringMessages = ['queued one', 'queued two'];
+    const target = await render();
+    const textarea = composer(target);
+    textarea.focus();
+
+    expect(keydown(textarea, 'ArrowUp').defaultPrevented).toBe(true);
+    await settle();
+    expect(textarea.value).toBe('queued two');
+    expect(sent).toContainEqual(expect.objectContaining({ type: 'dequeue_steering', message: 'queued two' }));
+
+    expect(keydown(textarea, 'ArrowUp').defaultPrevented).toBe(true);
+    await settle();
+    expect(textarea.value).toBe('queued one');
+    expect(sent).toContainEqual(expect.objectContaining({ type: 'dequeue_steering', message: 'queued one' }));
+  });
+
+  it('keeps multiline caret navigation and stashes the draft at the first-line boundary', async () => {
+    setupSession();
+    seedUserMessages('older message');
+    const target = await render();
+    const textarea = await enter(target, 'line one\nline two');
+
+    expect(keydown(textarea, 'ArrowUp').defaultPrevented).toBe(false);
+    expect(textarea.value).toBe('line one\nline two');
+
+    textarea.setSelectionRange(0, 0);
+    expect(keydown(textarea, 'ArrowUp').defaultPrevented).toBe(true);
+    await settle();
+    expect(textarea.value).toBe('older message');
+
+    expect(keydown(textarea, 'ArrowDown').defaultPrevented).toBe(true);
+    await settle();
+    expect(textarea.value).toBe('line one\nline two');
+    expect(textarea.selectionStart).toBe('line one\nline two'.length);
+  });
+
+  it('exits history mode when the user edits the recalled text', async () => {
+    setupSession();
+    seedUserMessages('older message');
+    const target = await render();
+    const textarea = composer(target);
+    textarea.focus();
+
+    keydown(textarea, 'ArrowUp');
+    await settle();
+    expect(textarea.value).toBe('older message');
+
+    textarea.value = 'older message!';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    await settle();
+
+    expect(keydown(textarea, 'ArrowDown').defaultPrevented).toBe(false);
+    expect(textarea.value).toBe('older message!');
+  });
+});

@@ -29,7 +29,7 @@ export type SessionSurfaceCommand =
   | { type: 'steer'; id?: string; message: string; images?: string[] }
   | { type: 'follow_up'; id?: string; message: string }
   | { type: 'abort'; id?: string }
-  | { type: 'dequeue_steering'; id?: string }
+  | { type: 'dequeue_steering'; id?: string; message?: string }
   | { type: 'bash'; id?: string; command: string; excludeFromContext?: boolean }
   | { type: 'abort_bash'; id?: string }
   | { type: 'set_model'; id?: string; provider: string; modelId: string }
@@ -709,6 +709,24 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     return drafts.get(clientId) ?? { steering: [], followUp: [] };
   };
 
+  // Remove one steering entry by exact text and keep every other queued message
+  // queued. Drain and requeue happen synchronously so a run boundary cannot
+  // deliver or drop the surviving entries in between.
+  const dequeueSteeringMessage = (message: string): QueueTexts => {
+    const session = options.session;
+    const drained = session.clearQueue();
+    const removedIndex = drained.steering.lastIndexOf(message);
+    const steering = removedIndex === -1 ? [] : [drained.steering[removedIndex]];
+    const rest = removedIndex === -1 ? drained.steering : drained.steering.filter((_, index) => index !== removedIndex);
+    for (const text of rest) {
+      void session.prompt(text, { streamingBehavior: 'steer' }).catch((error: unknown) => console.error('[SessionSurface] steering requeue failed:', error));
+    }
+    for (const text of drained.followUp) {
+      void session.prompt(text, { streamingBehavior: 'followUp' }).catch((error: unknown) => console.error('[SessionSurface] follow-up requeue failed:', error));
+    }
+    return { steering, followUp: [] };
+  };
+
   const refreshSettings = (): void => {
     const event = makeSessionSettingsEvent(options.sessionId, options.session, capabilities);
     const encoded = JSON.stringify(event);
@@ -763,6 +781,7 @@ export function createSessionSurface(options: SessionSurfaceOptions): SessionSur
     switch (command.type) {
       case 'dequeue_steering':
         ensure('steer');
+        if (command.message !== undefined) return dequeueSteeringMessage(command.message);
         return drainQueues(caller?.clientId ?? '');
       case 'abort': {
         ensure('stop');

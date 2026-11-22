@@ -593,6 +593,8 @@ export interface RenameSessionCommand extends CommandBase {
 
 export interface DequeueSteeringCommand extends CommandBase {
   type: 'dequeue_steering';
+  /** When set, remove only the newest steering entry matching this exact text and requeue the rest. */
+  message?: string;
 }
 
 export interface ForkCommand extends CommandBase {

@@ -52,9 +52,31 @@
   let selectedCommand: CommandInfo | null = $state(null);
   let fileRefPrefix: string | null = $state(null);
 
+  // Prompt history recall (Up/Down). historyStash holds the composer text from
+  // before navigation started; null means history mode is inactive.
+  let historyStash: string | null = $state(null);
+
   // The composer owns /new locally, so pi's command stays out of the list —
   // every command shown here still dispatches to the agent.
   const commandItems = $derived(commandStore.getCommands(activeSurfaceKey).filter((command) => command.name !== 'new'));
+
+  // Oldest → newest recall entries: queued steering messages (pending, not yet
+  // in the transcript) followed by the surface's transcript user messages.
+  // Consecutive duplicates collapse so arrowing through repeated sends works.
+  const historyEntries = $derived.by(() => {
+    const queued = conversation?.pendingSteeringMessages ?? [];
+    const transcript: string[] = [];
+    for (const message of conversation?.messages ?? []) {
+      if (message.role !== 'user') continue;
+      const text = message.content
+        .filter((content) => content.type === 'text' && content.text)
+        .map((content) => content.text!)
+        .join('\n\n');
+      if (text.trim().length > 0) transcript.push(text);
+    }
+    const combined = [...queued, ...transcript];
+    return combined.filter((text, index) => index === 0 || text !== combined[index - 1]);
+  });
 
   function setSurfaceDraft(text: string): void {
     if (conversation) sessionRegistry.setDraftText(conversation.sessionId, text, { notify: false });
@@ -97,6 +119,7 @@
     autocompleteVisible = false;
     selectedCommand = null;
     fileRefPrefix = null;
+    historyStash = null;
     tick().then(() => autoResize());
 
     if (!sessionId) return;
@@ -319,6 +342,8 @@
   }
 
   function handleInput(e?: Event) {
+    // Editing exits history recall; the edited text wins over the stash.
+    historyStash = null;
     // When / is typed as the first char with existing text after it, insert a space separator
     if (e && textareaEl) {
       const ie = e as InputEvent;
@@ -338,6 +363,7 @@
   }
 
   async function sendMessage() {
+    historyStash = null;
     const text = inputText.trim();
     const origin = conversation;
     if (!canSend || !origin) return;
@@ -603,6 +629,69 @@
     handleAbort();
   }
 
+  function caretOnFirstLine(target: HTMLTextAreaElement): boolean {
+    const position = target.selectionStart ?? 0;
+    return !inputText.slice(0, position).includes('\n');
+  }
+
+  function caretOnLastLine(target: HTMLTextAreaElement): boolean {
+    const position = target.selectionStart ?? inputText.length;
+    return !inputText.slice(position).includes('\n');
+  }
+
+  async function dequeueSteeringMessage(text: string): Promise<void> {
+    const sessionId = conversation?.sessionId;
+    if (!sessionId) return;
+    try {
+      const response = await sessionRegistry.sendSurfaceCommand(sessionId, { type: 'dequeue_steering', message: text });
+      if (!response.success) console.error('Failed to dequeue steering message:', response.error);
+    } catch (error) {
+      console.error('Failed to dequeue steering message:', error);
+    }
+  }
+
+  function placeCaretAtEnd(text: string): void {
+    tick().then(() => {
+      if (textareaEl) textareaEl.selectionStart = textareaEl.selectionEnd = text.length;
+    });
+  }
+
+  function applyHistoryEntry(text: string): void {
+    inputText = text;
+    setSurfaceDraft(text);
+    // A pending steering message pulled into the composer leaves the queue so
+    // the agent never receives it; the pill shrinks via queue_update.
+    const queued = conversation?.pendingSteeringMessages;
+    if (queued && queued.lastIndexOf(text) !== -1) void dequeueSteeringMessage(text);
+    placeCaretAtEnd(text);
+  }
+
+  function recallPrevious(): boolean {
+    const entries = historyEntries;
+    if (entries.length === 0) return false;
+    if (historyStash === null) historyStash = inputText;
+    const index = entries.lastIndexOf(inputText);
+    const next = index === -1 ? entries.length - 1 : Math.max(0, index - 1);
+    applyHistoryEntry(entries[next]);
+    return true;
+  }
+
+  function recallNext(): boolean {
+    if (historyStash === null) return false;
+    const entries = historyEntries;
+    const index = entries.lastIndexOf(inputText);
+    if (index !== -1 && index < entries.length - 1) {
+      applyHistoryEntry(entries[index + 1]);
+      return true;
+    }
+    // Past the newest entry: restore the stashed draft and leave history mode.
+    inputText = historyStash;
+    setSurfaceDraft(inputText);
+    historyStash = null;
+    placeCaretAtEnd(inputText);
+    return true;
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     // Intercept keys when autocomplete is visible
     if (autocompleteVisible && autocompleteRef) {
@@ -631,6 +720,20 @@
       e.stopPropagation();
       handleAbort();
       return;
+    }
+
+    // History recall only in message mode. Up steps to older entries when the
+    // caret sits on the first line; Down steps forward from the last line, so
+    // multiline caret movement stays untouched.
+    if (!isBangCommand && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && textareaEl) {
+      if (e.key === 'ArrowUp' && caretOnFirstLine(textareaEl) && recallPrevious()) {
+        e.preventDefault();
+        return;
+      }
+      if (e.key === 'ArrowDown' && caretOnLastLine(textareaEl) && recallNext()) {
+        e.preventDefault();
+        return;
+      }
     }
 
     if (e.key === 'Enter' && !e.shiftKey) {

@@ -2307,6 +2307,74 @@ describe('WsHandler', () => {
         followUp: ['then deploy'],
       });
     });
+
+    it('removes only the newest matching steering entry when message is set and requeues the rest', async () => {
+      const session = createMockSlot({
+        id: 'session-1',
+        connectedClientId: 'client-1',
+      });
+      const prompts: Array<{ text: string; options?: Record<string, unknown> }> = [];
+      (session.session as any).clearQueue = () => ({
+        steering: ['queued one', 'queued two'],
+        followUp: ['later thing'],
+      });
+      (session.session as any).prompt = (text: string, options?: Record<string, unknown>) => {
+        prompts.push({ text, options });
+        return Promise.resolve();
+      };
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'dequeue_steering',
+          sessionId: 'session-1',
+          message: 'queued two',
+          id: 'req-dequeue-5',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-dequeue-5');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(true);
+      expect(resp!.data).toEqual({ steering: ['queued two'], followUp: [] });
+      expect(prompts).toEqual([
+        { text: 'queued one', options: { streamingBehavior: 'steer' } },
+        { text: 'later thing', options: { streamingBehavior: 'followUp' } },
+      ]);
+    });
+
+    it('returns empty steering when no queued entry matches the requested message', async () => {
+      const session = createMockSlot({
+        id: 'session-1',
+        connectedClientId: 'client-1',
+      });
+      const prompts: Array<{ text: string; options?: Record<string, unknown> }> = [];
+      (session.session as any).clearQueue = () => ({ steering: ['queued one'], followUp: [] });
+      (session.session as any).prompt = (text: string, options?: Record<string, unknown>) => {
+        prompts.push({ text, options });
+        return Promise.resolve();
+      };
+
+      const sessions = new Map([['session-1', session]]);
+      const { handler, sent } = createTestHandler('client-1', { sessions });
+
+      await handler.handleMessage(
+        JSON.stringify({
+          type: 'dequeue_steering',
+          sessionId: 'session-1',
+          message: 'missing',
+          id: 'req-dequeue-6',
+        }),
+      );
+
+      const resp = findResponse(sent, 'req-dequeue-6');
+      expect(resp).toBeDefined();
+      expect(resp!.success).toBe(true);
+      expect(resp!.data).toEqual({ steering: [], followUp: [] });
+      expect(prompts).toEqual([{ text: 'queued one', options: { streamingBehavior: 'steer' } }]);
+    });
   });
 
   describe('handleSessionReset — session replacement via extension commands', () => {
