@@ -327,7 +327,8 @@
   );
 
   // Mod+End pins the transcript to the bottom even while typing in a text field,
-  // unless focus is inside a modal dialog.
+  // unless focus is inside a modal dialog. Plain End is left to focus targets:
+  // the composer uses it to exit history recall.
   createHotkey(
     'Mod+End',
     (event) => {
@@ -336,15 +337,6 @@
       scrollToBottom();
     },
     { ignoreInputs: false, preventDefault: false },
-  );
-
-  // Plain End re-glues a detached scroll viewer only outside text-entry targets.
-  createHotkey(
-    'End',
-    () => {
-      scrollToBottom();
-    },
-    () => ({ enabled: !stick.isAtBottom, ignoreInputs: true }),
   );
 
   $effect(() => {

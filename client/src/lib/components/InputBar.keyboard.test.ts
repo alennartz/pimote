@@ -418,4 +418,112 @@ describe('composer history recall', () => {
     expect(keydown(textarea, 'ArrowDown').defaultPrevented).toBe(false);
     expect(textarea.value).toBe('older message!');
   });
+
+  it('shows history chevrons while navigating and hides them back at the draft', async () => {
+    setupSession();
+    seedUserMessages('older message', 'newer message');
+    const target = await render();
+    const textarea = composer(target);
+    textarea.focus();
+
+    const nav = () => target.querySelector('[data-testid="composer-history-nav"]');
+    expect(nav()).toBeNull();
+
+    keydown(textarea, 'ArrowUp');
+    await settle();
+    expect(textarea.value).toBe('newer message');
+    expect(nav()).not.toBeNull();
+    // Newest entry: one entry above, draft below.
+    expect(nav()!.querySelectorAll('svg')).toHaveLength(2);
+
+    keydown(textarea, 'ArrowUp');
+    await settle();
+    expect(textarea.value).toBe('older message');
+    expect(nav()!.querySelectorAll('svg')).toHaveLength(1);
+
+    keydown(textarea, 'ArrowDown');
+    keydown(textarea, 'ArrowDown');
+    await settle();
+    expect(textarea.value).toBe('');
+    expect(nav()).toBeNull();
+  });
+
+  it('drops straight to the draft with End from the end of a recalled entry', async () => {
+    setupSession();
+    seedUserMessages('older message', 'newer message');
+    sessionRegistry.sessions.s1!.draftText = 'draft in progress';
+    const target = await render();
+    const textarea = composer(target);
+    textarea.focus();
+
+    // Deep in history, one End skips every newer entry.
+    keydown(textarea, 'ArrowUp');
+    keydown(textarea, 'ArrowUp');
+    await settle();
+    expect(textarea.value).toBe('older message');
+    expect(textarea.selectionStart).toBe('older message'.length);
+
+    expect(keydown(textarea, 'End').defaultPrevented).toBe(true);
+    await settle();
+    expect(textarea.value).toBe('draft in progress');
+    expect(textarea.selectionStart).toBe('draft in progress'.length);
+    expect(target.querySelector('[data-testid="composer-history-nav"]')).toBeNull();
+    expect(keydown(textarea, 'ArrowDown').defaultPrevented).toBe(false);
+  });
+
+  it('keeps End native while the caret sits before the end of a recalled entry', async () => {
+    setupSession();
+    seedUserMessages('older message');
+    sessionRegistry.sessions.s1!.draftText = 'my draft';
+    const target = await render();
+    const textarea = composer(target);
+    textarea.focus();
+
+    keydown(textarea, 'ArrowUp');
+    await settle();
+    textarea.setSelectionRange(0, 0);
+    expect(keydown(textarea, 'End').defaultPrevented).toBe(false);
+    expect(textarea.value).toBe('older message');
+    expect(target.querySelector('[data-testid="composer-history-nav"]')).not.toBeNull();
+  });
+
+  it('leaves plain End native outside history mode', async () => {
+    setupSession();
+    seedUserMessages('older message');
+    const target = await render();
+    const textarea = await enter(target, 'typed text');
+
+    expect(keydown(textarea, 'End').defaultPrevented).toBe(false);
+    expect(textarea.value).toBe('typed text');
+  });
+
+  it('resizes the composer when a recalled entry has more lines than the draft', async () => {
+    setupSession();
+    seedUserMessages('alpha\nbeta');
+    const target = await render();
+
+    const lineCount = (element: HTMLTextAreaElement) => element.value.split('\n').length;
+    Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', {
+      configurable: true,
+      get() {
+        return lineCount(this) * 20;
+      },
+    });
+    try {
+      const textarea = await enter(target, 'hello');
+      expect(textarea.style.height).toBe('20px');
+
+      keydown(textarea, 'ArrowUp');
+      await settle();
+      expect(textarea.value).toBe('alpha\nbeta');
+      expect(textarea.style.height).toBe('40px');
+
+      keydown(textarea, 'ArrowDown');
+      await settle();
+      expect(textarea.value).toBe('hello');
+      expect(textarea.style.height).toBe('20px');
+    } finally {
+      delete (HTMLTextAreaElement.prototype as unknown as Record<string, unknown>).scrollHeight;
+    }
+  });
 });

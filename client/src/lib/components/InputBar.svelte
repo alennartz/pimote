@@ -18,6 +18,8 @@
   import MessageSquare from '@lucide/svelte/icons/message-square';
   import OctagonX from '@lucide/svelte/icons/octagon-x';
   import X from '@lucide/svelte/icons/x';
+  import ChevronUp from '@lucide/svelte/icons/chevron-up';
+  import ChevronDown from '@lucide/svelte/icons/chevron-down';
 
   let inputText = $state('');
   let messageTextareaEl: HTMLTextAreaElement | undefined = $state();
@@ -77,6 +79,14 @@
     }
     const combined = [...queued, ...transcript];
     return combined.filter((text, index) => index === 0 || text !== combined[index - 1]);
+  });
+
+  // Non-null while history recall holds the composer; `older` gates the up
+  // chevron (false only when parked on the oldest entry). A down chevron
+  // always shows in history mode: newer entries or the stashed draft sit below.
+  const historyNavigation = $derived.by(() => {
+    if (historyStash === null) return null;
+    return { older: historyEntries.lastIndexOf(inputText) !== 0 };
   });
 
   function setSurfaceDraft(text: string): void {
@@ -639,9 +649,13 @@
     }
   }
 
-  function placeCaretAtEnd(text: string): void {
+  function settleComposerText(text: string): void {
+    // Caret to the end and height fit, once Svelte has written the value into
+    // the textarea (scrollHeight reads stale otherwise).
     tick().then(() => {
-      if (textareaEl) textareaEl.selectionStart = textareaEl.selectionEnd = text.length;
+      if (!textareaEl) return;
+      textareaEl.selectionStart = textareaEl.selectionEnd = text.length;
+      autoResize();
     });
   }
 
@@ -652,7 +666,7 @@
     // the agent never receives it; the pill shrinks via queue_update.
     const queued = conversation?.pendingSteeringMessages;
     if (queued && queued.lastIndexOf(text) !== -1) void dequeueSteeringMessage(text);
-    placeCaretAtEnd(text);
+    settleComposerText(text);
   }
 
   function recallPrevious(): boolean {
@@ -674,11 +688,18 @@
       return true;
     }
     // Past the newest entry: restore the stashed draft and leave history mode.
-    inputText = historyStash;
+    restoreHistoryStash();
+    return true;
+  }
+
+  // Exits history mode with the stashed draft (or an empty composer when the
+  // draft itself was empty). Shared by Down past the newest entry and by End
+  // at the end of the current entry.
+  function restoreHistoryStash(): void {
+    inputText = historyStash ?? '';
     setSurfaceDraft(inputText);
     historyStash = null;
-    placeCaretAtEnd(inputText);
-    return true;
+    settleComposerText(inputText);
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -723,6 +744,16 @@
         e.preventDefault();
         return;
       }
+    }
+
+    // End at the end of the current entry drops straight to the list bottom —
+    // the stashed draft (or empty) — and leaves history mode. Caret elsewhere
+    // keeps the native jump to line end. Mod+End sticks the transcript to the
+    // bottom globally.
+    if (e.key === 'End' && historyStash !== null && textareaEl && textareaEl.selectionStart === inputText.length) {
+      restoreHistoryStash();
+      e.preventDefault();
+      return;
     }
 
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -837,6 +868,20 @@
           : 'pointer-events-none absolute inset-0 opacity-0'}
           {dragOver ? 'ring-ring ring-2' : ''}"
       ></textarea>
+
+      <!-- History recall position: entries above, draft or exit below -->
+      {#if historyNavigation}
+        <div
+          class="text-muted-foreground pointer-events-none absolute bottom-1.5 left-0.5 flex flex-col items-center gap-0.5"
+          aria-hidden="true"
+          data-testid="composer-history-nav"
+        >
+          {#if historyNavigation.older}
+            <ChevronUp class="size-3.5" />
+          {/if}
+          <ChevronDown class="size-3.5" />
+        </div>
+      {/if}
 
       <!-- Send / Steer button (inset in textarea) -->
       <button

@@ -320,7 +320,7 @@ describe('MessageList transcript bottom shortcut contract', () => {
     expect(target.querySelector('button.scroll-to-bottom')).toBeNull();
   });
 
-  it('plain End keeps native caret behavior inside a textarea and scrolls only outside text-entry targets', async () => {
+  it('plain End is native everywhere: no transcript scroll inside or outside a textarea', async () => {
     seedSession('s1', 40);
     sessionRegistry.switchTo('s1');
     mountList();
@@ -344,9 +344,8 @@ describe('MessageList transcript bottom shortcut contract', () => {
     const outside = new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true });
     document.body.dispatchEvent(outside);
     await settle(10);
-    paint();
-    expect(outside.defaultPrevented).toBe(true);
-    expect(target.querySelector('button.scroll-to-bottom')).toBeNull();
+    expect(outside.defaultPrevented).toBe(false);
+    expect(target.querySelector('button.scroll-to-bottom')).not.toBeNull();
   });
 
   it('ignores Mod+F and Mod+End while focus is inside an open dialog', async () => {

@@ -50,7 +50,6 @@
         { keys: 'Mod+F', label: 'Find in conversation' },
         { keys: 'Escape', label: 'Close find' },
         { keys: 'Mod+End', label: 'Stick to the bottom' },
-        { keys: 'End', label: 'Jump to the bottom when scrolled up' },
       ],
     },
     {
@@ -60,6 +59,9 @@
         { keys: 'Shift+Enter', label: 'New line' },
         { keys: 'Tab', label: 'Accept autocomplete suggestion' },
         { keys: 'Escape', label: 'Dismiss suggestion or abort while streaming' },
+        { keys: 'ArrowUp', label: 'Recall previous message' },
+        { keys: 'ArrowDown', label: 'Next message or back to your draft' },
+        { keys: 'End', label: 'From history: jump straight to your draft' },
       ],
     },
   ];
