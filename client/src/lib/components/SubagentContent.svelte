@@ -58,7 +58,9 @@
   let teardownAgents = $derived(teardownAgentsFor(content));
   let headerReferences = $derived(references.slice(0, 2));
   let extraReferenceCount = $derived(Math.max(0, references.length - headerReferences.length));
-  let detail = $derived(detailFor(content));
+  let detail = $derived(detailFor(content) || resultErrorFor(content) || '');
+  let resultError = $derived(resultErrorFor(content));
+  let unreportedFailure = $derived(content.subagentState === 'error' && resultError === undefined);
   let effectiveDurationMs = $derived(content.durationMs ?? durationMs ?? measuredDurationMs);
   let durationText = $derived(effectiveDurationMs === undefined ? '' : ` · ${formatDuration(effectiveDurationMs)}`);
   let failed = $derived(isFailure(content));
@@ -128,12 +130,18 @@
   function isFailure(block: SubagentContent): boolean {
     const data = block.data;
     if (block.subagentState === 'error' || block.subagentState === 'protocol_error' || data.operation === 'protocol_error') return true;
+    if (resultErrorFor(block) !== undefined) return true;
     if (data.operation === 'completion') return data.result.state === 'errored' || data.result.state === 'dead';
     if (data.operation === 'teardown') return data.result.status === 'not_found';
     if (data.operation === 'interrupt') return data.result.failed.length > 0;
-    if (data.operation === 'await') return resultText(data.result, 'error') !== undefined;
-    if (data.operation === 'send' || data.operation === 'respond') return resultText(data.result, 'error') !== undefined || resultBoolean(data.result, 'isError');
+    if (data.operation === 'send' || data.operation === 'respond') return resultBoolean(data.result, 'isError');
     return false;
+  }
+
+  /** Every tool-backed operation reports its failure text on `result.error`. */
+  function resultErrorFor(block: SubagentContent): string | undefined {
+    const error = resultText(block.data.result, 'error');
+    return error !== undefined && error.length > 0 ? error : undefined;
   }
 
   function teardownAgentsFor(block: SubagentContent): readonly TeardownAgent[] {
@@ -348,12 +356,10 @@
           separated={expectsResponse}
           streaming={active && resultText(content.data.result, 'phase') === 'responding'}
         />
-        <SubagentMarkdown label="Error" text={resultText(content.data.result, 'error')} />
       {:else if content.data.operation === 'respond'}
         {@const parameters = 'parameters' in content.data ? content.data.parameters : undefined}
         <SubagentMarkdown label="Reply" text={typeof parameters?.message === 'string' ? parameters.message : resultText(content.data.result, 'body')} streaming={active} />
         <SubagentMarkdown label="Result" text={resultText(content.data.result, 'message') ?? resultText(content.data.result, 'response')} />
-        <SubagentMarkdown label="Error" text={resultText(content.data.result, 'error')} />
       {:else if content.data.operation === 'await'}
         {#if content.data.result.statuses.length > 0}
           {#each content.data.result.statuses as agent (agent.path.join('/'))}
@@ -392,10 +398,8 @@
             {/each}
           </section>
         {/if}
-        {#if content.data.result.error}<SubagentMarkdown label="Wait error" text={content.data.result.error} />{/if}
       {:else if content.data.operation === 'completion'}
         <SubagentMarkdown text={content.data.result.output} />
-        <SubagentMarkdown label="Error" text={content.data.result.error} />
         {#if content.data.result.usage}<div class="subagent-usage">{usageLabel(content.data.result.usage)}</div>{/if}
       {:else if content.data.operation === 'interrupt'}
         {#each content.data.result.interrupted as agent (agent.path.join('/'))}
@@ -460,8 +464,11 @@
             <div class="subagent-usage">{usageLabel(agent.usage)}</div>
           </div>
         {/each}
-      {:else if content.data.operation === 'protocol_error'}
-        <SubagentMarkdown label="Error" text={content.data.result.error} />
+      {/if}
+      {#if resultError}
+        <SubagentMarkdown label="Error" text={resultError} />
+      {:else if unreportedFailure}
+        <div class="subagent-row-status subagent-failure-note">The tool call failed without an error message.</div>
       {/if}
     </div>
   {/if}
@@ -671,6 +678,11 @@
     font-size: 0.75rem;
     font-variant-numeric: tabular-nums;
     text-align: right;
+  }
+
+  .subagent-failure-note {
+    margin-top: 0.55rem;
+    color: var(--status-error);
   }
 
   .subagent-lifecycle-row {

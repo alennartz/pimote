@@ -101,6 +101,8 @@ export type SubagentInterruptResult = Readonly<{
   interrupted: readonly SubagentInterruptTarget[];
   pending: readonly SubagentInterruptTarget[];
   failed: readonly SubagentInterruptTarget[];
+  /** Failure text of the tool call itself, when it failed as a whole. */
+  error?: string;
 }>;
 
 export type SubagentResurrectedAgent = Readonly<{
@@ -115,15 +117,15 @@ export type SubagentResurrectedAgent = Readonly<{
 }>;
 
 export type SubagentFiniteData =
-  | Readonly<{ operation: 'delegation'; parameters: SubagentToolParameters; result: Readonly<{ children: readonly SubagentDelegatedChild[] }> }>
+  | Readonly<{ operation: 'delegation'; parameters: SubagentToolParameters; result: Readonly<{ children: readonly SubagentDelegatedChild[]; error?: string }> }>
   | Readonly<{ operation: 'completion'; result: SubagentCompletionResult }>
   | Readonly<{ operation: 'interrupt'; parameters: SubagentToolParameters; result: SubagentInterruptResult }>
   | Readonly<{
       operation: 'teardown';
       parameters: SubagentToolParameters;
-      result: Readonly<{ affectedAgents: readonly SubagentAffectedAgent[]; status: 'removed' | 'already_removed' | 'not_found' }>;
+      result: Readonly<{ affectedAgents: readonly SubagentAffectedAgent[]; status: 'removed' | 'already_removed' | 'not_found'; error?: string }>;
     }>
-  | Readonly<{ operation: 'resurrect'; parameters: SubagentToolParameters; result: Readonly<{ affectedAgents: readonly SubagentResurrectedAgent[] }> }>
+  | Readonly<{ operation: 'resurrect'; parameters: SubagentToolParameters; result: Readonly<{ affectedAgents: readonly SubagentResurrectedAgent[]; error?: string }> }>
   | Readonly<{ operation: 'protocol_error'; result: Readonly<{ error: string }> }>;
 
 export type SubagentFinalData = SubagentEndData | SubagentFiniteData;

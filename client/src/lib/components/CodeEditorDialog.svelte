@@ -202,7 +202,7 @@
         : ''} {sessionSurface
       ? flow
         ? 'relative top-auto left-auto z-20 h-full max-h-none w-full'
-        : 'z-20 max-md:top-[var(--pimote-mobile-surface-top)] max-md:h-[calc(100dvh-var(--pimote-mobile-surface-top))]'
+        : 'z-20 max-md:top-[var(--pimote-mobile-surface-top)] max-md:h-[calc(100dvh-var(--pimote-mobile-surface-top))] sm:max-w-none md:top-[calc(var(--pimote-session-surface-top,3rem)+0.75rem)] md:bottom-[calc(var(--pimote-session-surface-bottom,3.5rem)+0.75rem)] md:left-1/2 md:h-auto md:max-h-none md:w-[min(96vw,1280px)] md:max-w-[min(96vw,1280px)] md:-translate-x-1/2'
       : 'z-50 sm:top-1/2 sm:left-1/2 sm:h-[min(92dvh,960px)] sm:w-[min(96vw,1280px)] sm:max-w-[min(96vw,1280px)] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl'}"
   >
     {#if accessibleTitle}

@@ -86,6 +86,8 @@ A tool-backed operation starts with three fields and ends with three fields:
 
 `result` holds output, errors, outcome flags, and received metadata. Each kind narrows its own result type, such as `SubagentAwaitResult` or `SubagentCompletionResult`.
 
+Every tool-backed kind reports the failure text of the tool call itself on `result.error`. A failed delegation, interrupt, teardown, or resurrect keeps its reason there, beside the per-agent `error` fields of the agents it touched.
+
 An asynchronous custom message carries a result-only payload instead of tool parameters. A completion operation replaces an asynchronous subagent message.
 
 Deltas arrive per kind: delegation children, send request and response text, respond text, and await statuses. Pimote renders these fields as labeled data and renders free-form prose with its transcript Markdown renderer.

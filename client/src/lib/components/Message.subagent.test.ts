@@ -146,6 +146,23 @@ describe('subagent transcript cards', () => {
     expect(card(failedTarget, 'protocol_error').querySelector('.subagent-state-icon.failed')).not.toBeNull();
   });
 
+  it('shows the failure text of a failed tool call on every operation card', async () => {
+    const failures: readonly Readonly<{ data: PimoteSubagentFinalData; error: string }>[] = [
+      { data: { operation: 'delegation', parameters: {}, result: { children: [], error: 'Persona "nope" not found.' } }, error: 'Persona "nope" not found.' },
+      { data: { operation: 'interrupt', parameters: {}, result: { interrupted: [], pending: [], failed: [], error: 'No agent matched.' } }, error: 'No agent matched.' },
+      { data: { operation: 'teardown', parameters: {}, result: { affectedAgents: [], status: 'not_found', error: 'Agent is gone.' } }, error: 'Agent is gone.' },
+      { data: { operation: 'resurrect', parameters: {}, result: { affectedAgents: [], error: 'Session expired.' } }, error: 'Session expired.' },
+    ];
+    for (const { data, error } of failures) {
+      const { target } = await render(operation(data, 'error'));
+      const rendered = card(target, data.operation);
+      expect(rendered.querySelector('.subagent-state-icon.failed'), `${data.operation} marks the failure`).not.toBeNull();
+      expect(section(rendered, 'Error').textContent, `${data.operation} shows the failure text`).toContain(error);
+    }
+    const { target: bareTarget } = await render(operation({ operation: 'delegation', parameters: {}, result: { children: [] } }, 'error'));
+    expect(card(bareTarget, 'delegation').querySelector('.subagent-failure-note')?.textContent).toContain('failed without an error message');
+  });
+
   it('names the child agent in the assistant avatar slot', async () => {
     const { target } = await render(operation({ operation: 'send', parameters: { to: ['worker'], message: 'check' }, result: { response: 'done' } }), {
       rootSessionId: 'root-session',

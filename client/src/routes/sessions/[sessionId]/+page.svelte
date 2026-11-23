@@ -135,6 +135,35 @@
     sessionColumnEl?.scrollTo({ top: 0 });
   });
 
+  let statusBarWrapEl = $state<HTMLElement | null>(null);
+
+  // Desktop extension editors render as a floating sheet centered between the
+  // status bar and the chip rail. The dialog reads these viewport insets so
+  // its bottom edge always sits above the rail.
+  $effect(() => {
+    if (isMobileViewport()) return;
+    const root = document.documentElement;
+    const update = () => {
+      const top = Math.ceil(statusBarWrapEl?.getBoundingClientRect().bottom ?? 0);
+      const rail = sessionColumnEl?.querySelector<HTMLElement>('.session-pill-bar-root');
+      const bottom = rail ? Math.max(Math.ceil(window.innerHeight - rail.getBoundingClientRect().top), 0) : 0;
+      root.style.setProperty('--pimote-session-surface-top', `${top}px`);
+      root.style.setProperty('--pimote-session-surface-bottom', `${bottom}px`);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    if (statusBarWrapEl) observer.observe(statusBarWrapEl);
+    const rail = sessionColumnEl?.querySelector<HTMLElement>('.session-pill-bar-root');
+    if (rail) observer.observe(rail);
+    window.addEventListener('resize', update);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', update);
+      root.style.removeProperty('--pimote-session-surface-top');
+      root.style.removeProperty('--pimote-session-surface-bottom');
+    };
+  });
+
   function killConflicts() {
     const sessionId = sessionRegistry.viewedSessionId;
     const pids = sessionRegistry.viewed?.conflictingProcesses?.map((p) => p.pid) ?? [];
@@ -165,7 +194,7 @@
        plus composer sit below the fold, reachable by scrolling to the
        bottom. -->
   <div bind:this={sessionColumnEl} class="flex min-h-0 flex-1 flex-col" class:overflow-y-auto={mobileEditorActive}>
-    <div class="hidden md:block">
+    <div class="hidden md:block" bind:this={statusBarWrapEl}>
       <StatusBar />
     </div>
     <div class={mobileEditorActive ? 'hidden' : 'contents'}>
