@@ -769,15 +769,17 @@
   <div class="mx-auto flex max-w-3xl items-end gap-2">
     <!-- Abort button (desktop only, visible when streaming) -->
     {#if surfaceStreaming()}
-      <button
-        class="bg-destructive text-primary-foreground hover:bg-destructive/80 active:bg-destructive/70 mb-1 hidden shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors md:flex"
-        onpointerdown={(e) => e.preventDefault()}
-        onclick={handleAbort}
-        title="Abort"
-      >
-        <OctagonX class="size-4" />
-        <span class="hidden sm:inline">Abort</span>
-      </button>
+      <div class="hidden shrink-0 items-center self-stretch md:flex">
+        <button
+          class="bg-destructive text-primary-foreground hover:bg-destructive/80 active:bg-destructive/70 flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors"
+          onpointerdown={(e) => e.preventDefault()}
+          onclick={handleAbort}
+          title="Abort"
+        >
+          <OctagonX class="size-4" />
+          <span class="hidden sm:inline">Abort</span>
+        </button>
+      </div>
     {/if}
 
     <!-- Slash shortcut button (mobile only) -->
