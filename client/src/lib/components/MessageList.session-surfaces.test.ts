@@ -168,4 +168,14 @@ describe.each(['root', 'child'] as const)('%s live behavior', (kind) => {
       expect(target.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]')?.value).toBe('queued question\nkeep draft');
     });
   });
+
+  it('shows a compacting indicator in the transcript while context compaction runs', () => {
+    const f = fixture(kind);
+    const target = f.mount();
+    expect(target.textContent).not.toContain('Compacting context…');
+    f.dispatch('auto_compaction_start', { reason: 'manual' });
+    expect(target.textContent).toContain('Compacting context…');
+    f.dispatch('auto_compaction_end', { result: {}, aborted: false, willRetry: false });
+    expect(target.textContent).not.toContain('Compacting context…');
+  });
 });

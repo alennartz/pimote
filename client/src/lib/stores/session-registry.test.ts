@@ -986,6 +986,39 @@ describe('SessionRegistry', () => {
       );
       expect(registry.sessions['s1'].isCompacting).toBe(false);
     });
+
+    it('reloads the transcript after a successful idle compaction so the summary entry appears', async () => {
+      registry.addSession('s1', '/path', 'proj');
+      const send = vi.spyOn(connection, 'send').mockImplementation(async (command: any) => {
+        if (command.type === 'get_messages') return { id: 'r', success: true, data: { messages: [makeUserMessage('kept')] } };
+        return { id: 'r', success: true, data: {} };
+      });
+      try {
+        registry.handleEvent(makeSessionEvent('auto_compaction_start', 's1', { reason: 'manual' }));
+        registry.handleEvent(makeSessionEvent('auto_compaction_end', 's1', { result: {}, aborted: false, willRetry: false }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const types = send.mock.calls.map(([command]) => (command as { type: string }).type);
+        expect(types).toContain('get_messages');
+        expect(registry.sessions['s1'].messages.map((message) => message.content[0])).toEqual([{ type: 'text', text: 'kept' }]);
+      } finally {
+        send.mockRestore();
+      }
+    });
+
+    it('skips the post-compaction transcript reload for failed, retried, or aborted compactions', async () => {
+      registry.addSession('s1', '/path', 'proj');
+      const send = vi.spyOn(connection, 'send');
+      try {
+        registry.handleEvent(makeSessionEvent('auto_compaction_end', 's1', { result: {}, aborted: true, willRetry: false }));
+        registry.handleEvent(makeSessionEvent('auto_compaction_end', 's1', { result: {}, aborted: false, willRetry: true }));
+        registry.handleEvent(makeSessionEvent('auto_compaction_end', 's1', { result: {}, aborted: false, willRetry: false, errorMessage: 'boom' }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(send).not.toHaveBeenCalled();
+      } finally {
+        send.mockRestore();
+      }
+    });
   });
 
   // --------------------------------------------------------------------------

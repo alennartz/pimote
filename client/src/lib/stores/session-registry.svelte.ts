@@ -1685,6 +1685,13 @@ export class SessionRegistry {
         session.isCompacting = false;
         const compacted = event as import('@pimote/shared').AutoCompactionEndEvent;
         if (compacted.meta) this.updateMeta(sessionId, compacted.meta);
+        // A finished compaction appends a summary entry the live event stream
+        // never carries. Reload the transcript while idle so the "context
+        // compacted" chip appears; mid-run auto-compaction keeps its streamed
+        // transcript untouched. Failed or retried compactions add no entry.
+        if (!compacted.aborted && !compacted.willRetry && !compacted.errorMessage && !session.isStreaming && this.sessions[sessionId] === session) {
+          void fetchFullSessionData(sessionId, this);
+        }
         break;
       }
 
@@ -2488,9 +2495,9 @@ function applyOpenSessionData(sessionId: string, data: Pick<OpenSessionResponseD
   if (data.commands) commandStore.setCommands(sessionId, data.commands);
 }
 
-async function fetchFullSessionData(sessionId: string): Promise<void> {
+async function fetchFullSessionData(sessionId: string, registry: SessionRegistry = sessionRegistry): Promise<void> {
   try {
-    await Promise.all([sessionRegistry.sendSurfaceCommand(sessionId, { type: 'get_state' }), sessionRegistry.sendSurfaceCommand(sessionId, { type: 'get_messages' })]);
+    await Promise.all([registry.sendSurfaceCommand(sessionId, { type: 'get_state' }), registry.sendSurfaceCommand(sessionId, { type: 'get_messages' })]);
   } catch (error) {
     console.error('[SessionRegistry] Failed to fetch session data:', error);
   }

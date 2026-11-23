@@ -433,24 +433,22 @@
     }
 
     if (/^\/compact(?:\s|$)/.test(text)) {
+      // Compaction can run for a long time; leave the composer immediately and
+      // let the transcript's compacting indicator take over. A rejected or
+      // failed dispatch restores the text (only while the composer is empty).
       const submittedDraft = inputText;
+      const submittedImages = [...stagedImages];
       const customInstructions = text.slice('/compact'.length).trim() || undefined;
+      clearSubmittedComposer(true);
       try {
         const response = await send({ type: 'compact', customInstructions });
         if (!response.success) {
           console.error('Compact rejected:', response.error);
-          return;
+          restoreSubmittedComposer(submittedDraft, submittedImages, undefined, true);
         }
-        const session = sessionRegistry.getSessionState(sessionId);
-        if (session?.draftText === submittedDraft) sessionRegistry.setDraftText(sessionId, '', { notify: false });
-        if (!session || !isCurrent() || inputText !== submittedDraft) return;
-        inputText = '';
-        autocompleteVisible = false;
-        selectedCommand = null;
-        if (textareaEl) textareaEl.style.height = 'auto';
-        restoreTextareaFocus(focusSnapshot);
       } catch (error) {
         console.error('Failed to compact:', error);
+        restoreSubmittedComposer(submittedDraft, submittedImages, undefined, true);
       }
       return;
     }

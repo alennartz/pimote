@@ -710,6 +710,14 @@
         </div>
       {/if}
 
+      <!-- Compacting indicator (context compaction runs in the transcript's tail) -->
+      {#if session?.isCompacting}
+        <div class="compacting-indicator-row">
+          <StreamingIndicator />
+          <span class="compacting-label">Compacting context…</span>
+        </div>
+      {/if}
+
       {#if lastActivityText}
         <div class="last-activity">
           {lastActivityText}
@@ -885,6 +893,18 @@
 
   .streaming-indicator-row {
     padding: 4px 0 4px 38px;
+  }
+
+  .compacting-indicator-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0 4px 38px;
+  }
+
+  .compacting-label {
+    font-size: 0.85rem;
+    color: var(--muted-foreground);
   }
 
   .scroll-to-bottom {

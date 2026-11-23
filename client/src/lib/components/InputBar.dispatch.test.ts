@@ -259,7 +259,7 @@ describe('prompt dispatch outcome', () => {
 });
 
 describe('compact dispatch outcome', () => {
-  it('clears an unchanged draft on success and captures the originating session and instructions', async () => {
+  it('clears the composer immediately on submit and captures the originating session and instructions', async () => {
     const session = setupSession(false);
     let release!: (response: PimoteResponse) => void;
     const send = vi.spyOn(connection, 'send').mockImplementation((command) => {
@@ -274,7 +274,8 @@ describe('compact dispatch outcome', () => {
     });
     const textarea = await submit('  /compact focus on file diffs  ');
 
-    expect(session.draftText).toBe('  /compact focus on file diffs  ');
+    expect(textarea.value).toBe('');
+    expect(session.draftText).toBe('');
     expect(send).toHaveBeenCalledTimes(1);
     release({ id: 'r', success: true });
     for (let i = 0; i < 4; i++) await tick();
@@ -283,8 +284,9 @@ describe('compact dispatch outcome', () => {
     expect(session.draftText).toBe('');
   });
 
-  it('keeps a newer draft typed in the originating session', async () => {
+  it('keeps a newer draft typed during the compact instead of restoring the submitted one', async () => {
     const session = setupSession(false);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
     let release!: (response: PimoteResponse) => void;
     vi.spyOn(connection, 'send').mockImplementation(
       () =>
@@ -293,16 +295,17 @@ describe('compact dispatch outcome', () => {
         }),
     );
     const textarea = await submit('/compact old instructions');
+    expect(textarea.value).toBe('');
     await typeInto(textarea, '/compact newer instructions');
 
-    release({ id: 'r', success: true });
+    release({ id: 'r', success: false, error: 'rejected' });
     for (let i = 0; i < 4; i++) await tick();
 
     expect(textarea.value).toBe('/compact newer instructions');
     expect(session.draftText).toBe('/compact newer instructions');
   });
 
-  it('clears the unchanged originating draft without touching another viewed session', async () => {
+  it('clears the originating draft without touching another viewed session', async () => {
     const session = setupSession(false);
     sessionRegistry.addSession('s2', '/workspace/s2', 's2');
     const other = sessionRegistry.sessions['s2']!;
@@ -316,6 +319,7 @@ describe('compact dispatch outcome', () => {
     );
     const textarea = await submit('/compact old instructions');
 
+    expect(session.draftText).toBe('');
     sessionRegistry.switchTo('s2');
     await tick();
     expect(textarea.value).toBe('s2 draft');
@@ -331,7 +335,7 @@ describe('compact dispatch outcome', () => {
     expect(textarea.value).toBe('');
   });
 
-  it('keeps the draft when the compact response is rejected', async () => {
+  it('restores the draft when the compact response is rejected', async () => {
     const session = setupSession(false);
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(connection, 'send').mockResolvedValue({ id: 'r', success: false, error: 'rejected' });
@@ -342,7 +346,7 @@ describe('compact dispatch outcome', () => {
     expect(error).toHaveBeenCalledWith('Compact rejected:', 'rejected');
   });
 
-  it('keeps the draft when compact dispatch throws', async () => {
+  it('restores the draft when compact dispatch throws', async () => {
     const session = setupSession(false);
     vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(connection, 'send').mockRejectedValue(new Error('offline'));
@@ -352,7 +356,7 @@ describe('compact dispatch outcome', () => {
     expect(session.draftText).toBe('/compact old instructions');
   });
 
-  it('keeps both drafts when a compact response fails after switching sessions', async () => {
+  it('restores the originating draft in the registry when a compact response fails after switching sessions', async () => {
     const session = setupSession(false);
     sessionRegistry.addSession('s2', '/workspace/s2', 's2');
     const other = sessionRegistry.sessions['s2']!;
