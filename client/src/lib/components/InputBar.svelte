@@ -792,6 +792,16 @@
       </button>
     {/if}
 
+    <!-- History recall position: entries above, draft or exit below -->
+    {#if historyNavigation}
+      <div class="text-muted-foreground flex w-4 shrink-0 flex-col items-center gap-1" aria-hidden="true" data-testid="composer-history-nav">
+        {#if historyNavigation.older}
+          <ChevronUp class="size-4" />
+        {/if}
+        <ChevronDown class="size-4" />
+      </div>
+    {/if}
+
     <!-- Textarea with autocomplete + image drop zone -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="relative flex-1" ondragover={handleDragOver} ondragleave={handleDragLeave} ondrop={handleDrop}>
@@ -868,20 +878,6 @@
           : 'pointer-events-none absolute inset-0 opacity-0'}
           {dragOver ? 'ring-ring ring-2' : ''}"
       ></textarea>
-
-      <!-- History recall position: entries above, draft or exit below -->
-      {#if historyNavigation}
-        <div
-          class="text-muted-foreground pointer-events-none absolute bottom-1.5 left-0.5 flex flex-col items-center gap-0.5"
-          aria-hidden="true"
-          data-testid="composer-history-nav"
-        >
-          {#if historyNavigation.older}
-            <ChevronUp class="size-3.5" />
-          {/if}
-          <ChevronDown class="size-3.5" />
-        </div>
-      {/if}
 
       <!-- Send / Steer button (inset in textarea) -->
       <button
