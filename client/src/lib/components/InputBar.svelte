@@ -12,6 +12,7 @@
   import { extractFileRefPrefix, resolveFileRefSelection } from '$lib/file-ref-prefix.js';
   import { parseBangBashCommand } from '$lib/bash-command.js';
   import { uploadImages } from '$lib/image-upload.js';
+  import { caretOnFirstVisualRow, caretOnLastVisualRow } from '$lib/caret-visual-rows.js';
   import type { BashResponseData, CommandInfo, PromptResponseData } from '@pimote/shared';
   import Send from '@lucide/svelte/icons/send';
   import MessageSquare from '@lucide/svelte/icons/message-square';
@@ -627,16 +628,6 @@
     handleAbort();
   }
 
-  function caretOnFirstLine(target: HTMLTextAreaElement): boolean {
-    const position = target.selectionStart ?? 0;
-    return !inputText.slice(0, position).includes('\n');
-  }
-
-  function caretOnLastLine(target: HTMLTextAreaElement): boolean {
-    const position = target.selectionStart ?? inputText.length;
-    return !inputText.slice(position).includes('\n');
-  }
-
   async function dequeueSteeringMessage(text: string): Promise<void> {
     const sessionId = conversation?.sessionId;
     if (!sessionId) return;
@@ -721,14 +712,14 @@
     }
 
     // History recall only in message mode. Up steps to older entries when the
-    // caret sits on the first line; Down steps forward from the last line, so
-    // multiline caret movement stays untouched.
+    // caret sits on the first visual row (soft-wrapped rows count); Down steps
+    // forward from the last visual row, so multiline caret movement stays untouched.
     if (!isBangCommand && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && textareaEl) {
-      if (e.key === 'ArrowUp' && caretOnFirstLine(textareaEl) && recallPrevious()) {
+      if (e.key === 'ArrowUp' && caretOnFirstVisualRow(textareaEl) && recallPrevious()) {
         e.preventDefault();
         return;
       }
-      if (e.key === 'ArrowDown' && caretOnLastLine(textareaEl) && recallNext()) {
+      if (e.key === 'ArrowDown' && caretOnLastVisualRow(textareaEl) && recallNext()) {
         e.preventDefault();
         return;
       }
