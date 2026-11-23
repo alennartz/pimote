@@ -794,7 +794,7 @@
 
     <!-- History recall position: entries above, draft or exit below -->
     {#if historyNavigation}
-      <div class="text-muted-foreground flex w-4 shrink-0 flex-col items-center gap-1" aria-hidden="true" data-testid="composer-history-nav">
+      <div class="text-muted-foreground flex w-4 shrink-0 flex-col items-center justify-center gap-1 self-stretch" aria-hidden="true" data-testid="composer-history-nav">
         {#if historyNavigation.older}
           <ChevronUp class="size-4" />
         {/if}
