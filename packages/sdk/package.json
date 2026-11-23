@@ -1,6 +1,6 @@
 {
   "name": "@pimote/sdk",
-  "version": "0.16.0-rc.10",
+  "version": "0.16.0-rc.11",
   "description": "Pimote extensibility SDK: panel cards, background-activity reap guard, Pimote extensions, and source-only folder discovery",
   "type": "module",
   "license": "MIT",
