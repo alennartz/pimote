@@ -1,10 +1,13 @@
 # Subagents
 
-The subagents module supplies the interactive child view for a root session. One provider per session publishes a root-relative hierarchy, typed operations, one ordered replay cursor, and leases to child sessions that already exist.
+The subagents module lets an extension show its child agents in Pimote. One provider per root session supplies four things:
 
-Pimote renders the hierarchy in the session side panel. Opening a child attaches a view to the existing runtime, so the view never starts a second agent. The child runtimes stay owned by the extension that created them.
+- the child hierarchy
+- guarded lifecycle controls
+- leases on existing child sessions
+- pure presenters that turn native pi data into typed cards
 
-The my-pi subagents extension implements this provider for Pimote.
+The my-pi subagents extension implements the provider.
 
 ## Register a provider
 
@@ -14,140 +17,98 @@ import { registerProvider } from '@pimote/sdk/subagents';
 const unregister = registerProvider(pi, provider);
 ```
 
-`registerProvider(owner, provider)` publishes one provider on the session EventBus. `owner` is an `ExtensionAPI` or a bare `EventBus`, so a test can use the seam without a full pi object.
-
-Registering again on the same bus deactivates the previous responder and delivers the new provider to a discovery that already runs.
-
-The returned function stops answering. It never disposes the provider or its child sessions.
+`owner` is an `ExtensionAPI` or a bare `EventBus`. The registration answers discovery until `unregister()` runs. `unregister()` publishes `{ provider: undefined }`, so hosts learn the provider is gone. It never disposes the provider. Unregister before you register a replacement.
 
 ## Discover a provider
 
 ```ts
 import { discoverProvider } from '@pimote/sdk/subagents';
 
-const discovery = discoverProvider(pi, (provider) => {
-  // The current provider, or undefined when none is registered.
+const discovery = discoverProvider(pi);
+discovery.subscribe((provider) => {
+  // The provider, a replacement, or undefined after removal.
 });
 ```
 
-`discoverProvider` reports the current provider, then every later registration and replacement. It returns a handle with `provider`, `subscribe` (alias `onProvider`), and `close`.
-
-`SUBAGENT_PROVIDER_REQUEST` and `SUBAGENT_PROVIDER_RESPONSE` name the two EventBus channels. `register` and `discover` are aliases of the two functions.
+Discovery installs its listener before it asks. A provider registered earlier is always reported.
 
 ## Provider contract
 
 ```ts
 interface SubagentPresentationProvider extends SubagentProviderControls {
-  snapshot(): SubagentProviderSnapshot;
-  subscribe(listener: (event: SubagentProviderEvent) => void): () => void;
-  replay(after?: FeedCursor): SubagentPresentationReplay;
-  rehydrate(input: { session: BorrowedAgentSession; path: AgentPath }): Promise<void>;
+  snapshot(): SubagentTopologySnapshot;
+  subscribe(listener: (event: SubagentTopologyEvent) => void): () => void;
+  readonly presenters: SubagentPresenters;
 }
 ```
 
-| Member                         | Contract                                                         |
-| ------------------------------ | ---------------------------------------------------------------- |
-| `acquire(path)`                | Lease an existing child session for a view.                      |
-| `stop(request)`                | Stop one child.                                                  |
-| `teardown(path, incarnation)`  | Tear one child down and report the agents it affected.           |
-| `resurrect(request)`           | Revive a torn-down child.                                        |
-| `snapshot()`                   | Manifest, nodes, cursor, and active operations for a fresh view. |
-| `subscribe(listener)`          | Stream events. Returns an unsubscribe function.                  |
-| `replay(after?)`               | Return events after a cursor, or ask for a new snapshot.         |
-| `rehydrate({ session, path })` | Restore a persisted child view for one borrowed session.         |
+### Topology
 
-`snapshot()` reports `hiddenToolNames` and `hiddenCustomTypes` in its manifest. Pimote suppresses those native renderers and renders the provider's own operation data instead, so a suppressed tool cannot appear twice.
+`snapshot()` returns the live nodes and a `sequence`. Subscribe first, then read the snapshot, then drop events whose `sequence` is at or below it. Events are `node_added`, `node_updated`, `node_removed`, `runtime_replaced`, and `ready`.
 
-## Operations
+`ready` is false until the provider has restored every persisted child. Before `ready`, an absent path does not mean the child is gone.
 
-An operation names its kind, a root-relative agent `path`, and where its content belongs:
+Each node carries a path, an `incarnation`, and the current `sessionId`. The path is the public identity. The incarnation is unique for each spawn or resurrection at a path and survives runtime replacement. `held` and `heldSettlement` report the user hold.
 
-```ts
-type SubagentPlacement = { toolCallId: string; contentIndex: number; entryId?: string } | { entryId: string };
-```
+### Controls
 
-A tool-backed operation uses `toolCallId` and `contentIndex`. An operation carried by a custom entry uses `entryId`. Pimote places the operation inside its originating assistant row and keeps the surrounding native content in order.
+| Member                                           | Contract                                            |
+| ------------------------------------------------ | --------------------------------------------------- |
+| `acquire({ path, incarnation })`                 | Lease an existing child session for a view.         |
+| `stop({ path, incarnation, expectedSessionId })` | Stop the current run. Rejected for another runtime. |
+| `setHold({ path, incarnation, held })`           | Hold or release the child's settled results.        |
+| `teardown({ path, incarnation })`                | Remove the child and its subtree.                   |
+| `resurrect(request)`                             | Revive a torn-down child from its saved session.    |
 
-The kinds are `send`, `message_received`, `respond`, `await`, `delegation`, `completion`, `interrupt`, `teardown`, `resurrect`, and `protocol_error`.
+Every control validates the full path and incarnation inside the owner's mutation queue.
 
-## Payload envelope
+A lease never changes orchestration. Opening or closing a view has no effect on what the parent agent receives. Only the explicit hold does.
 
-A tool-backed operation starts with three fields and ends with three fields:
-
-```ts
-{
-  operation: 'await',
-  parameters: { agents: [['worker']] },
-  result: { statuses: [{ path: ['worker'], state: 'idle', output: 'Checks passed.' }] },
-}
-```
-
-`parameters` holds the complete normalized public inputs. Its type is `Record<string, unknown>`, so the shape is your provider's contract with its own tool, and Pimote does not enforce it.
-
-`result` holds output, errors, outcome flags, and received metadata. Each kind narrows its own result type, such as `SubagentAwaitResult` or `SubagentCompletionResult`.
-
-Every tool-backed kind reports the failure text of the tool call itself on `result.error`. A failed delegation, interrupt, teardown, or resurrect keeps its reason there, beside the per-agent `error` fields of the agents it touched.
-
-An asynchronous custom message carries a result-only payload instead of tool parameters. A completion operation replaces an asynchronous subagent message.
-
-Deltas arrive per kind: delegation children, send request and response text, respond text, and await statuses. Pimote renders these fields as labeled data and renders free-form prose with its transcript Markdown renderer.
-
-## Leases
-
-`acquire()` returns a `SubagentLease` for a child session that already exists.
+### Leases
 
 ```ts
 interface SubagentLease {
   readonly path: AgentPath;
+  readonly incarnation: string;
   readonly session: BorrowedAgentSession;
   readonly capabilities: SubagentCapabilities;
   subscribe(listener: (event: SubagentLeaseEvent) => void): () => void;
-  release(): Promise<void>;
+  release(): void;
 }
 ```
 
-| Member         | Contract                                                                                                                  |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `session`      | The borrowed runtime. Reading it after the lease closes or releases throws.                                               |
-| `capabilities` | What the child view may do.                                                                                               |
-| `subscribe`    | Lease events: `rebound` with a new session and optional capabilities, or `closed` with reason `removed` or `unavailable`. |
-| `release()`    | Idempotent. Never disposes the child.                                                                                     |
+`session` throws after the lease closes or releases. Lease events are `rebound`, which carries a new session and capabilities, and `closed`, with reason `removed` or `unavailable`. `release()` is idempotent and never disposes the child.
 
-`BorrowedAgentSession` exposes native `clearQueue` and `isBashRunning` beside the conversation controls. Pimote restores a drained queue to the senders that queued the messages.
+`BorrowedAgentSession` exposes conversation controls and omits `abort`. Stop goes through `stop()`.
 
-## Capabilities
+`capabilities.operations` lists the commands the child view admits. An absent list admits none.
 
-`capabilities.operations` lists the identity-preserving commands the child view admits. An absent list admits no commands, which is the safe default.
-
-`capabilities` also carries:
-
-| Member         | Contract                                           |
-| -------------- | -------------------------------------------------- |
-| `renderer`     | `visible` decides whether the child view can open. |
-| `resolveModel` | Child-local model resolution.                      |
-| `getSettings`  | Child-local settings for the view.                 |
-| `nativeBash`   | `admitted`, `execute`, and `abort` for child bash. |
-
-## Replay and persistence
-
-`replay(after)` returns events after a cursor, or `{ kind: 'snapshot_required' }` with reason `epoch_changed` or `history_unavailable`. Pimote requests a new snapshot in that case.
-
-Pimote restores persisted operations through `rehydrate()`, then `replay()`. Normalize older saved payloads into the current envelope inside the provider, so the client never decodes extension-specific details.
-
-`clearQueue` drains the child's queue, and Pimote restores each drained message to its sender. A provider that hides the queue from the view must still expose it here.
-
-## Cursors
-
-A cursor is an epoch and a sequence number:
+## Presenters
 
 ```ts
-type FeedCursor = { epoch: string; sequence: number };
+interface SubagentPresenters {
+  readonly toolNames: ReadonlyArray<string>;
+  readonly customTypes: ReadonlyArray<string>;
+  presentToolCall(input: SubagentToolCallInput): SubagentPresentation | undefined;
+  presentMessage(input: SubagentMessageInput): ReadonlyArray<SubagentPresentation> | undefined;
+  runningToolProgress(input: { sessionId: string; toolCallId: string }): unknown;
+}
 ```
 
-`snapshot()` returns a cursor with the state it describes, and each event advances the sequence. A provider replies to `replay(after)` from that cursor.
+Presenters are pure. They read only their input and return the same output for the same input. For input they cannot read, they return `undefined`, and Pimote renders the native content.
 
-Change the epoch when the previous sequence no longer means anything, such as after a provider restart. Pimote then gets `{ kind: 'snapshot_required' }` with reason `epoch_changed` and reads a fresh snapshot instead of a partial replay. Use `history_unavailable` when the events exist but are gone.
+The data comes from pi's own channels:
+
+- **Tool arguments.** pi-ai parses partial arguments while they stream. `argsComplete` turns true at the end of the tool call.
+- **Progress.** A tool calls `onUpdate` with details that hold its complete current state, never a delta. Pimote passes the latest details as `execution.progress`.
+- **Results.** A tool result's `details` and text arrive as `execution: { state: 'complete' | 'error' }`. pi saves a result for every executed call, including validation failures.
+- **Aborted calls.** A call in an assistant message that ended without a result arrives as `execution: { state: 'aborted' }`.
+- **Custom messages.** A message whose `customType` is listed arrives through `presentMessage`. One message can carry several operations.
+
+`runningToolProgress` returns the latest progress of a call that still runs, so a view that opens late shows current state.
+
+Pimote annotates the native transcript in place. A presented tool call keeps its position and gains a card. A presented custom message keeps its row. Live changes travel as patches of presenter output, and snapshots carry full cards.
 
 ## Exports
 
-`registerProvider`, `discoverProvider`, their aliases `register` and `discover`, the channel constants `SUBAGENT_PROVIDER_REQUEST` and `SUBAGENT_PROVIDER_RESPONSE`, and the types for providers, operations, placement, nodes, leases, capabilities, cursors, and replay.
+`registerProvider`, `discoverProvider`, the channel constants `SUBAGENT_PROVIDER_REQUEST` and `SUBAGENT_PROVIDER_RESPONSE`, and the types for providers, topology, controls, leases, capabilities, and presentations.

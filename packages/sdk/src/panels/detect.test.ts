@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { detect } from './detect.js';
+import type { PanelHost } from './detect.js';
 import type { Card } from './types.js';
-import type { EventBus, ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import type { EventBus } from '@earendil-works/pi-coding-agent';
 
 function createMockEventBus(): EventBus & { handlers: Map<string, Set<(data: unknown) => void>> } {
   const handlers = new Map<string, Set<(data: unknown) => void>>();
@@ -10,7 +11,9 @@ function createMockEventBus(): EventBus & { handlers: Map<string, Set<(data: unk
     emit(channel: string, data: unknown): void {
       const set = handlers.get(channel);
       if (set) {
-        for (const handler of set) handler(data);
+        for (const handler of set) {
+          handler(data);
+        }
       }
     },
     on(channel: string, handler: (data: unknown) => void): () => void {
@@ -21,14 +24,14 @@ function createMockEventBus(): EventBus & { handlers: Map<string, Set<(data: unk
       }
       set.add(handler);
       return () => {
-        set!.delete(handler);
+        set.delete(handler);
       };
     },
   };
 }
 
-function createMockExtensionAPI(eventBus: EventBus): ExtensionAPI {
-  return { events: eventBus } as unknown as ExtensionAPI;
+function createMockHost(eventBus: EventBus): PanelHost {
+  return { events: eventBus };
 }
 
 function installDetectionListener(eventBus: EventBus): void {
@@ -43,11 +46,11 @@ function makeCard(id: string, title: string): Card {
 
 describe('@pimote/panels detect', () => {
   let eventBus: ReturnType<typeof createMockEventBus>;
-  let pi: ExtensionAPI;
+  let pi: PanelHost;
 
   beforeEach(() => {
     eventBus = createMockEventBus();
-    pi = createMockExtensionAPI(eventBus);
+    pi = createMockHost(eventBus);
   });
 
   describe('detection protocol', () => {
@@ -73,7 +76,7 @@ describe('@pimote/panels detect', () => {
       expect(handle2).not.toBeNull();
       expect(handle1).not.toBe(handle2);
 
-      const received: unknown[] = [];
+      const received: Array<unknown> = [];
       eventBus.on('pimote:panels', (data) => received.push(data));
 
       handle1!.updateCards([makeCard('c1', 'Card 1')]);
@@ -91,7 +94,7 @@ describe('@pimote/panels detect', () => {
       expect(handleA).not.toBeNull();
       expect(handleB).not.toBeNull();
 
-      const received: unknown[] = [];
+      const received: Array<unknown> = [];
       eventBus.on('pimote:panels', (data) => received.push(data));
 
       handleA!.updateCards([makeCard('a1', 'Alpha Card')]);
@@ -108,7 +111,7 @@ describe('@pimote/panels detect', () => {
       installDetectionListener(eventBus);
       const handle = detect(pi, 'test-ns');
 
-      const received: unknown[] = [];
+      const received: Array<unknown> = [];
       eventBus.on('pimote:panels', (data) => received.push(data));
 
       const cards = [makeCard('c1', 'First'), makeCard('c2', 'Second')];
@@ -126,7 +129,7 @@ describe('@pimote/panels detect', () => {
       installDetectionListener(eventBus);
       const handle = detect(pi, 'test-ns');
 
-      const received: unknown[] = [];
+      const received: Array<unknown> = [];
       eventBus.on('pimote:panels', (data) => received.push(data));
 
       handle!.updateCards([makeCard('c1', 'First')]);
@@ -146,7 +149,7 @@ describe('@pimote/panels detect', () => {
       installDetectionListener(eventBus);
       const handle = detect(pi, 'test-ns');
 
-      const received: unknown[] = [];
+      const received: Array<unknown> = [];
       eventBus.on('pimote:panels', (data) => received.push(data));
 
       handle!.clear();
@@ -165,7 +168,7 @@ describe('@pimote/panels detect', () => {
       const handle1 = detect(pi, 'key');
       detect(pi, 'key'); // deactivates handle1
 
-      const received: unknown[] = [];
+      const received: Array<unknown> = [];
       eventBus.on('pimote:panels', (data) => received.push(data));
 
       handle1!.updateCards([makeCard('c1', 'Should not emit')]);
@@ -177,7 +180,7 @@ describe('@pimote/panels detect', () => {
       const handle1 = detect(pi, 'key');
       detect(pi, 'key'); // deactivates handle1
 
-      const received: unknown[] = [];
+      const received: Array<unknown> = [];
       eventBus.on('pimote:panels', (data) => received.push(data));
 
       handle1!.clear();

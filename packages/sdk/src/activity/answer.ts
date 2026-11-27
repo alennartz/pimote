@@ -1,5 +1,8 @@
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import type { EventBus } from '@earendil-works/pi-coding-agent';
 import type { ActivityMessage } from './types.js';
+
+/** Any object that exposes the shared session event bus, so tests and hosts skip the full ExtensionAPI. */
+export type ActivityHost = { readonly events: Pick<EventBus, 'on' | 'emit'> };
 
 /**
  * Answer pimote's background-activity polls for this session.
@@ -19,7 +22,7 @@ import type { ActivityMessage } from './types.js';
  * work. Register once per session; the returned unsubscribe is for symmetry
  * and tests — the bus dies with the session.
  */
-export function answerActivity(pi: ExtensionAPI, isActive: () => boolean): () => void {
+export function answerActivity(pi: ActivityHost, isActive: () => boolean): () => void {
   return pi.events.on('pimote:activity:request', () => {
     let active: boolean;
     try {

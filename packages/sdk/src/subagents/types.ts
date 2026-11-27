@@ -1,36 +1,39 @@
 import type { AgentSession, EventBus } from '@earendil-works/pi-coding-agent';
+import type { SubagentPresentationProvider } from './presentation.js';
 
-/** Root-relative identity of a my-pi child runtime. */
-export type AgentPath = readonly string[];
+/** Root-relative identity of a child runtime. The root session is the empty path. */
+export type AgentPath = ReadonlyArray<string>;
 
-/** Provider-owned replay position. Pimote keeps this separate from parent cursors. */
-export type FeedCursor = Readonly<{
-  epoch: string;
-  sequence: number;
+/** Operational state of one live child. */
+export type SubagentState = 'running' | 'waiting' | 'idle' | 'errored' | 'dead';
+
+/** The settled outcome of a child run. */
+export type SubagentSettlementState = 'idle' | 'errored' | 'dead' | 'stopped';
+
+export type SubagentCostBreakdown = Readonly<{
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
 }>;
 
-/** Native Pi transcript/session provenance for one semantic event. */
-export type PiEventRef = Readonly<{
-  sessionId: string;
-  entryId?: string;
-  toolCallId?: string;
-  kind: 'message' | 'tool_call' | 'custom_message' | 'lifecycle';
+/** Usage accumulated by one child runtime. */
+export type SubagentUsage = Readonly<{
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  cost: number;
+  costBreakdown?: SubagentCostBreakdown;
+  turns: number;
 }>;
 
-/** One child state included in await progress and settlement facts. */
-export type SubagentAwaitChildStatus = Readonly<{
-  path: AgentPath;
-  state: 'running' | 'waiting' | 'idle' | 'errored' | 'dead' | 'stopped';
-  output?: string;
-  error?: string;
-  sessionId?: string;
-}>;
-
-/** A public node projection carried by topology events and snapshots. */
+/** One live child as the side panel shows it. */
 export type SubagentNodeSnapshot = Readonly<{
   path: AgentPath;
-  /** Stable for runtime replacement. Changes when a path is removed or reused. */
+  /** Unique for each spawn or resurrection at a path. Stable across runtime replacement. */
   incarnation: string;
+  /** Current native session id. Changes on runtime replacement. */
   sessionId: string;
   /** Child runtime working directory. */
   cwd?: string;
@@ -44,64 +47,56 @@ export type SubagentNodeSnapshot = Readonly<{
   usage: SubagentUsage;
   /** Context fill as an integer percentage from 0 through 100. */
   contextFill?: number;
-  channels: readonly string[];
-  waitingFor: readonly AgentPath[];
+  channels: ReadonlyArray<string>;
+  waitingFor: ReadonlyArray<AgentPath>;
   hasSubgroup: boolean;
   lastError?: string;
+  /** The user holds this child's settled results back from its parent. */
+  held: boolean;
+  /** Set while a hold keeps a settled result from the parent. */
+  heldSettlement?: SubagentSettlementState;
 }>;
 
-/** Compatibility alias for consumers that call hierarchy rows nodes. */
-export type SubagentNode = SubagentNodeSnapshot;
-export type SubagentUsageSnapshot = SubagentUsage;
-
-/** Topology events accept the complete projection and old session-id facts. */
-export type SubagentNodeEventData = SubagentNodeSnapshot | Readonly<{ sessionId: string }>;
-
-export type SubagentRuntimeReplacedData = Readonly<{
-  oldSessionId: string;
-  newSessionId: string;
+/** Topology snapshot. Events with a sequence at or below `sequence` are already included. */
+export type SubagentTopologySnapshot = Readonly<{
+  sequence: number;
+  /** False until the provider has restored every persisted child. Absence is not final until then. */
+  ready: boolean;
+  /** Root session working directory, used to identify children that override it. */
+  rootCwd?: string;
+  nodes: ReadonlyArray<SubagentNodeSnapshot>;
 }>;
 
-export type SubagentState = 'running' | 'waiting' | 'idle' | 'errored' | 'dead';
-export type SubagentNodeState = SubagentState;
-
-export type SubagentCostBreakdown = Readonly<{
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-}>;
-
-/** Provider usage accumulated for one child runtime. */
-export type SubagentUsage = Readonly<{
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  cost: number;
-  costBreakdown?: SubagentCostBreakdown;
-  turns: number;
-}>;
-
-export type SubagentTeardownReason = 'not_found' | 'already_removed' | 'removed';
+/** Ordered topology changes. `sequence` increases by one per event within one provider. */
+export type SubagentTopologyEvent = Readonly<{ sequence: number }> &
+  (
+    | Readonly<{ kind: 'node_added' | 'node_updated'; node: SubagentNodeSnapshot }>
+    | Readonly<{ kind: 'node_removed'; node: SubagentNodeSnapshot; reason: 'removed' | 'stale' }>
+    | Readonly<{ kind: 'runtime_replaced'; path: AgentPath; incarnation: string; oldSessionId: string; newSessionId: string }>
+    | Readonly<{ kind: 'ready' }>
+  );
 
 export type SubagentTeardownResult = Readonly<{
   path: AgentPath;
   removed: boolean;
   sessionId?: string;
   incarnation?: string;
-  reason?: SubagentTeardownReason;
+  reason?: 'not_found' | 'already_removed' | 'removed';
 }>;
 
-/** Guarded request to stop the child that owns one public path incarnation. */
-export type SubagentStopRequest = Readonly<{
+/** Identifies one runtime of one child incarnation. Every guarded control carries it. */
+export type SubagentRuntimeRef = Readonly<{
   path: AgentPath;
   incarnation: string;
-  /** The host rejects a request for a replacement runtime at this path. */
-  expectedSessionId: string;
 }>;
 
-/** Input to the normal my-pi resurrection path. */
+/** Stop the current run of a child. Rejected when the runtime is not `expectedSessionId`. */
+export type SubagentStopRequest = SubagentRuntimeRef & Readonly<{ expectedSessionId: string }>;
+
+/** Set or clear the user hold on a child. */
+export type SubagentHoldRequest = SubagentRuntimeRef & Readonly<{ held: boolean }>;
+
+/** Input to the normal resurrection path. */
 export type SubagentResurrectRequest = Readonly<{
   /** Saved child session id returned by teardown. */
   sessionId: string;
@@ -110,11 +105,10 @@ export type SubagentResurrectRequest = Readonly<{
   /** New local id under `parentPath`. */
   localId: string;
   task: string;
-  channels: readonly string[];
+  channels: ReadonlyArray<string>;
   model?: string;
 }>;
 
-/** Result of a normal resurrection operation. */
 export type SubagentResurrectResult = Readonly<{
   path: AgentPath;
   node?: SubagentNodeSnapshot;
@@ -141,41 +135,62 @@ export type SubagentOperation =
   | 'state'
   | 'meta';
 
+export type SubagentModel = Parameters<AgentSession['setModel']>[0];
+export type SubagentBashResult = Awaited<ReturnType<AgentSession['executeBash']>>;
+
+export interface SubagentBashOptions {
+  id?: string;
+  excludeFromContext?: boolean;
+  signal?: AbortSignal;
+}
+
+export interface SubagentSettings {
+  availableThinkingLevels: ReadonlyArray<string>;
+  autoCompactionEnabled: boolean;
+  sessionName?: string;
+}
+
+export interface SubagentCommandInfo {
+  name: string;
+  description: string;
+  hasArgCompletions: boolean;
+}
+
+export interface SubagentAutocompleteItem {
+  value: string;
+  label: string;
+  description?: string;
+}
+
 /** Provider-owned child capabilities. It never exposes extension machinery. */
 export interface SubagentCapabilities {
   /** Explicitly admitted identity-preserving operations. Absence admits no commands. */
-  readonly operations?: readonly SubagentOperation[];
-  /** Whether the child renderer can expose a view. */
-  readonly renderer?: Readonly<{ visible?: boolean; [key: string]: unknown }>;
-  /** Child-local model resolution and settings. */
-  readonly resolveModel?: (provider: string, modelId: string) => Promise<unknown> | unknown;
-  readonly getSettings?: () => unknown;
-  /** Native bash admission and dispatch. */
+  readonly operations?: ReadonlyArray<SubagentOperation>;
+  /** Whether custom child entries render. */
+  readonly renderer?: Readonly<{ visible?: boolean }>;
+  readonly resolveModel?: (provider: string, modelId: string) => Promise<SubagentModel | undefined> | SubagentModel | undefined;
+  readonly getSettings?: () => SubagentSettings;
   readonly nativeBash?: Readonly<{
     admitted?: boolean;
-    execute?: (...args: readonly unknown[]) => Promise<unknown> | unknown;
-    abort?: (...args: readonly unknown[]) => Promise<void> | void;
-    [key: string]: unknown;
+    execute?: (command: string, options: SubagentBashOptions) => Promise<SubagentBashResult> | SubagentBashResult;
+    abort?: () => Promise<void> | void;
   }>;
-  readonly executeBash?: (...args: readonly unknown[]) => Promise<unknown> | unknown;
-  /** Filtered command and argument-completion descriptors. */
-  readonly getCommands?: (...args: readonly unknown[]) => Promise<unknown> | unknown;
-  readonly completeArgs?: (...args: readonly unknown[]) => Promise<unknown> | unknown;
-  readonly completeFileRefs?: (...args: readonly unknown[]) => Promise<unknown> | unknown;
-  readonly [key: string]: unknown;
+  readonly getCommands?: () => Promise<ReadonlyArray<SubagentCommandInfo>> | ReadonlyArray<SubagentCommandInfo>;
+  readonly completeArgs?: (commandName: string, prefix: string) => Promise<ReadonlyArray<SubagentAutocompleteItem>> | ReadonlyArray<SubagentAutocompleteItem>;
+  readonly completeFileRefs?: (prefix: string) => Promise<ReadonlyArray<SubagentAutocompleteItem>> | ReadonlyArray<SubagentAutocompleteItem>;
 }
 
-/** Minimal session-manager projection exposed beside a borrowed native session. */
 export type BorrowedSessionManager = Pick<
   AgentSession['sessionManager'],
   'getEntries' | 'getBranch' | 'buildContextEntries' | 'getTree' | 'getLeafId' | 'getCwd' | 'getLabel' | 'appendLabelChange'
 >;
 
 /**
- * Structural projection of the native child runtime borrowed by a view.
+ * The native child runtime borrowed by a view.
  *
- * The projection intentionally omits dispose, runtime replacement, session creation,
- * fork/switch/reload, extension binding, and unrestricted manager mutation.
+ * It omits dispose, abort, runtime replacement, session creation, fork, switch,
+ * reload, extension binding, and unrestricted manager mutation. Stop goes
+ * through `SubagentProviderControls.stop`.
  */
 export type BorrowedAgentSession = Pick<
   AgentSession,
@@ -193,7 +208,6 @@ export type BorrowedAgentSession = Pick<
   | 'prompt'
   | 'steer'
   | 'followUp'
-  | 'abort'
   | 'executeBash'
   | 'abortBash'
   | 'setModel'
@@ -207,62 +221,50 @@ export type BorrowedAgentSession = Pick<
   | 'getSessionStats'
 > & {
   readonly sessionManager: BorrowedSessionManager;
-  /** Current native steering queue, when supported by the provider. */
   readonly getSteeringMessages?: AgentSession['getSteeringMessages'];
-  /** Full-resync native state projection. */
+  readonly getFollowUpMessages?: AgentSession['getFollowUpMessages'];
   readonly state: Pick<AgentSession['state'], 'streamingMessage' | 'pendingToolCalls' | 'errorMessage'>;
 };
 
 export type SubagentLeaseEvent =
-  | Readonly<{ kind: 'rebound'; session: BorrowedAgentSession; capabilities?: SubagentCapabilities }>
+  | Readonly<{ kind: 'rebound'; session: BorrowedAgentSession; capabilities: SubagentCapabilities }>
   | Readonly<{ kind: 'closed'; reason: 'removed' | 'unavailable' }>;
 
-/** A borrowed child runtime. Release is idempotent and never disposes it. */
+/**
+ * A borrowed child runtime. A lease never changes orchestration: holding or
+ * releasing one has no effect on what the parent agent receives.
+ */
 export interface SubagentLease {
   readonly path: AgentPath;
-  /** Current native session; access throws after the lease closes or releases. */
+  readonly incarnation: string;
+  /** Current native session. Reading it after the lease closes or releases throws. */
   readonly session: BorrowedAgentSession;
   readonly capabilities: SubagentCapabilities;
   subscribe(listener: (event: SubagentLeaseEvent) => void): () => void;
-  release(): Promise<void>;
+  /** Idempotent. Never disposes the child runtime. */
+  release(): void;
 }
 
-/** Root-scoped lifecycle authority used by the provider. */
-export interface SubagentOwnerControlPort {
-  teardown(path: AgentPath, incarnation: string): Promise<SubagentTeardownResult>;
-  stop(request: SubagentStopRequest): Promise<void>;
-  resurrect(request: SubagentResurrectRequest): Promise<SubagentResurrectResult>;
-}
-
-/** Provider-owned leases and guarded lifecycle controls shared by the presentation seam. */
+/** Leases and guarded lifecycle controls. Every mutation validates path and incarnation inside the owner's mutation queue. */
 export interface SubagentProviderControls {
-  acquire(path: AgentPath): Promise<SubagentLease>;
-  teardown(path: AgentPath, incarnation: string): Promise<SubagentTeardownResult>;
+  acquire(ref: SubagentRuntimeRef): Promise<SubagentLease>;
+  teardown(ref: SubagentRuntimeRef): Promise<SubagentTeardownResult>;
   stop(request: SubagentStopRequest): Promise<void>;
+  setHold(request: SubagentHoldRequest): Promise<void>;
   resurrect(request: SubagentResurrectRequest): Promise<SubagentResurrectResult>;
 }
 
-/** EventBus request payload used by provider discovery. */
-export type SubagentProviderRequest = Readonly<{
-  /** Reserved for future handshake versions. */
-  version?: number;
-}>;
-
-/** EventBus response payload used by provider registration and discovery. */
+/** EventBus response payload. `provider: undefined` reports that the provider went away. */
 export type SubagentProviderResponse = Readonly<{
-  provider: import('./presentation.js').SubagentPresentationProvider;
+  provider: SubagentPresentationProvider | undefined;
 }>;
 
-/** A live discovery handle that tracks late registration and replacement. */
+/** A live discovery handle. Listeners receive every registration, replacement, and removal. */
 export interface SubagentProviderDiscovery {
-  readonly provider: import('./presentation.js').SubagentPresentationProvider | undefined;
-  /** Alias for callers that model discovery as a mutable current value. */
-  readonly current: import('./presentation.js').SubagentPresentationProvider | undefined;
-  subscribe(listener: (provider: import('./presentation.js').SubagentPresentationProvider | undefined) => void): () => void;
-  /** Alias for subscribe, useful at the host event boundary. */
-  onProvider(listener: (provider: import('./presentation.js').SubagentPresentationProvider | undefined) => void): () => void;
+  readonly provider: SubagentPresentationProvider | undefined;
+  subscribe(listener: (provider: SubagentPresentationProvider | undefined) => void): () => void;
   close(): void;
 }
 
-/** Extract the EventBus from either ExtensionAPI or an EventBus itself. */
+/** Either an ExtensionAPI or a bare EventBus. */
 export type SubagentEventBusOwner = Pick<EventBus, 'on' | 'emit'> | { readonly events: Pick<EventBus, 'on' | 'emit'> };

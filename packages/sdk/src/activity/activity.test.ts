@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { answerActivity } from './answer.js';
+import type { ActivityHost } from './answer.js';
 import { askActivity } from './ask.js';
-import type { EventBus, ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import type { EventBus } from '@earendil-works/pi-coding-agent';
 
 function createMockEventBus(): EventBus & { handlers: Map<string, Set<(data: unknown) => void>> } {
   const handlers = new Map<string, Set<(data: unknown) => void>>();
@@ -10,7 +11,9 @@ function createMockEventBus(): EventBus & { handlers: Map<string, Set<(data: unk
     emit(channel: string, data: unknown): void {
       const set = handlers.get(channel);
       if (set) {
-        for (const handler of set) handler(data);
+        for (const handler of set) {
+          handler(data);
+        }
       }
     },
     on(channel: string, handler: (data: unknown) => void): () => void {
@@ -21,14 +24,14 @@ function createMockEventBus(): EventBus & { handlers: Map<string, Set<(data: unk
       }
       set.add(handler);
       return () => {
-        set!.delete(handler);
+        set.delete(handler);
       };
     },
   };
 }
 
-function createMockExtensionAPI(eventBus: EventBus): ExtensionAPI {
-  return { events: eventBus } as unknown as ExtensionAPI;
+function createMockHost(eventBus: EventBus): ActivityHost {
+  return { events: eventBus };
 }
 
 function installRawResponder(eventBus: EventBus, active: boolean): void {
@@ -72,11 +75,11 @@ describe('@pimote/activity askActivity', () => {
 
 describe('@pimote/activity answerActivity', () => {
   let eventBus: ReturnType<typeof createMockEventBus>;
-  let pi: ExtensionAPI;
+  let pi: ActivityHost;
 
   beforeEach(() => {
     eventBus = createMockEventBus();
-    pi = createMockExtensionAPI(eventBus);
+    pi = createMockHost(eventBus);
   });
 
   it('answers a raw askActivity poll with the callback result', () => {
@@ -84,7 +87,7 @@ describe('@pimote/activity answerActivity', () => {
     expect(askActivity(eventBus)).toBe(true);
 
     const idleBus = createMockEventBus();
-    answerActivity(createMockExtensionAPI(idleBus), () => false);
+    answerActivity(createMockHost(idleBus), () => false);
     expect(askActivity(idleBus)).toBe(false);
   });
 

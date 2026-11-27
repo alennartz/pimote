@@ -16,7 +16,7 @@
     "@earendil-works/pi-agent-core": "1.6.0",
     "@earendil-works/pi-coding-agent": "1.6.0",
     "@earendil-works/pi-schema": "^1.6.0",
-    "@pimote/sdk": "*",
+    "@pimote/sdk": "0.16.0-rc.11",
     "@streamparser/json": "^0.0.22",
     "colorjs.io": "^0.7.1",
     "jiti": "^2.7.0",

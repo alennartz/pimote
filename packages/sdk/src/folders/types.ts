@@ -18,7 +18,7 @@ export interface RepoInfo {
   /** True when the repo path no longer exists on disk (deleted member, broken symlink). */
   missing?: boolean;
   /** Effective tags (user + source-contributed). Absent when untagged. */
-  tags?: string[];
+  tags?: Array<string>;
 }
 
 /** A repo entry contributed to the discovery index (feeds single-repo folders). */
@@ -35,9 +35,9 @@ export interface HubSourceEntry {
   kind: 'hub';
   path: string;
   name: string;
-  memberPaths: string[];
+  memberPaths: Array<string>;
   /** Source-contributed tags; shown to the user but not user-removable. */
-  tags?: string[];
+  tags?: Array<string>;
 }
 
 /** Anything a source lists: a repo, or a hub folder over member paths. */
@@ -52,7 +52,7 @@ export type SourceEntry = RepoSourceEntry | HubSourceEntry;
 export interface FolderSource {
   readonly id: string;
   /** Discover entries; called on cache miss. Must not mutate anything. */
-  list(): Promise<SourceEntry[]>;
+  list(): Promise<Array<SourceEntry>>;
   /**
    * Awaited before any open of a listed entry proceeds — whether the target
    * exists on disk or not, and from every open path (row click, new session,

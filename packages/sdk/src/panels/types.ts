@@ -14,8 +14,8 @@ export interface Card {
     title: string;
     tag?: string;
   };
-  body?: BodySection[];
-  footer?: string[];
+  body?: Array<BodySection>;
+  footer?: Array<string>;
   /**
    * Optional same-origin URL. When present, the client renders the entire
    * card as a clickable link. Static-host routes open in the current tab on
@@ -27,10 +27,10 @@ export interface Card {
 
 export interface PanelHandle {
   /** Replace this handle's cards. Full snapshot — previous cards for this namespace are discarded. */
-  updateCards(cards: Card[]): void;
+  updateCards(cards: Array<Card>): void;
   /** Remove all cards for this namespace. */
   clear(): void;
 }
 
 /** Message shapes emitted on the 'pimote:panels' EventBus channel. */
-export type PanelMessage = { type: 'cards'; namespace: string; cards: Card[] } | { type: 'clear'; namespace: string };
+export type PanelMessage = { type: 'cards'; namespace: string; cards: Array<Card> } | { type: 'clear'; namespace: string };

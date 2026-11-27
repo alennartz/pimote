@@ -45,11 +45,10 @@
   },
   "workspaces": [
     "server",
-    "client",
-    "packages/sdk"
+    "client"
   ],
   "scripts": {
-    "build": "npm run patch:dependencies && npm run build --workspace=@pimote/sdk && npm run build:shared && npm run build --workspace=@pimote/server && npm run build --workspace=client",
+    "build": "npm run patch:dependencies && npm run build:shared && npm run build --workspace=@pimote/server && npm run build --workspace=client",
     "patch:dependencies": "node ./scripts/patch-dependencies.mjs",
     "build:shared": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('shared/dist', { recursive: true, force: true }); rmSync('shared/tsconfig.tsbuildinfo', { force: true });\" && tsc -b shared --force",
     "start": "node ./bin/pimote.js start",
@@ -88,7 +87,7 @@
     "@earendil-works/pi-coding-agent": "1.6.0",
     "@earendil-works/pi-schema": "^1.6.0",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
-    "@pimote/sdk": "^0.15.0-rc.2",
+    "@pimote/sdk": "0.16.0-rc.11",
     "@streamparser/json": "^0.0.22",
     "colorjs.io": "^0.7.1",
     "jiti": "^2.7.0",

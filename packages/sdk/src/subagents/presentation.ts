@@ -1,183 +1,193 @@
-import type {
-  AgentPath,
-  BorrowedAgentSession,
-  FeedCursor,
-  PiEventRef,
-  SubagentNodeEventData,
-  SubagentNodeSnapshot,
-  SubagentProviderControls,
-  SubagentRuntimeReplacedData,
-  SubagentUsage,
-} from './types.js';
+import type { AgentPath, SubagentProviderControls, SubagentSettlementState, SubagentTopologyEvent, SubagentTopologySnapshot, SubagentUsage } from './types.js';
 
-export type SubagentPresentationManifest = Readonly<{
-  hiddenToolNames: readonly string[];
-  hiddenCustomTypes: readonly string[];
-}>;
+/**
+ * Presentation is a pure function of native pi data.
+ *
+ * Tools stream progress through `onUpdate` details, tool results and custom
+ * messages carry final details, and the provider's presenters map that data to
+ * typed card data. Pimote calls the same presenters for live events and for
+ * saved entries, so a live card and a reloaded card cannot differ.
+ */
 
-export type SubagentOperationKind = 'send' | 'message_received' | 'respond' | 'await' | 'delegation' | 'completion' | 'interrupt' | 'teardown' | 'resurrect' | 'protocol_error';
+export type SubagentOperationKind = 'send' | 'message_received' | 'respond' | 'await' | 'delegation' | 'completion' | 'interrupt' | 'teardown' | 'resurrect';
 
-/** Normalized public tool inputs. Final operations carry complete values. */
-export type SubagentToolParameters = Readonly<Record<string, unknown>>;
+export type SubagentPresentationState = 'active' | 'complete' | 'error' | 'aborted';
 
-export type SubagentPlacement = Readonly<{ toolCallId: string; contentIndex: number; entryId?: string }> | Readonly<{ entryId: string }>;
+/** Child state as an operation reports it. `held` and `removed` are outcomes, not registry states. */
+export type SubagentAgentOutcome = 'running' | 'waiting' | SubagentSettlementState | 'held' | 'removed';
 
-export type SubagentOperationTarget = Readonly<{
-  operationId: string;
-  kind: SubagentOperationKind;
+export type SubagentAgentStatus = Readonly<{
   path: AgentPath;
-  placement?: SubagentPlacement;
-}>;
-
-export type SubagentAwaitStatus = Readonly<{
-  path: AgentPath;
-  state: 'running' | 'waiting' | 'idle' | 'errored' | 'dead' | 'stopped';
+  state: SubagentAgentOutcome;
   output?: string;
   error?: string;
   sessionId?: string;
-}>;
-
-export type SubagentCompletionResult = Readonly<{
-  state: 'idle' | 'errored' | 'dead' | 'stopped';
-  output?: string;
-  error?: string;
   usage?: SubagentUsage;
+  /** A settlement that replaced a held one the parent never received. */
+  replacedHeldResult?: boolean;
 }>;
 
-export type SubagentAwaitResult = Readonly<{
-  statuses: readonly SubagentAwaitStatus[];
-  interrupted?: boolean;
-  error?: string;
+export type SubagentDelegatedAgent = Readonly<{
+  id: string;
+  task: string;
+  persona?: string;
+  model?: string;
+  cwd?: string;
+  channels?: ReadonlyArray<string>;
 }>;
 
-export type SubagentStartData =
-  | Readonly<{ operation: 'delegation'; parameters: SubagentToolParameters; result: Readonly<{ children: readonly SubagentDelegatedChild[] }> }>
-  | Readonly<{
-      operation: 'send';
-      parameters: SubagentToolParameters;
-      result: Readonly<{ response: string; phase: 'ready' | 'sending' | 'waiting' | 'responding' }>;
-    }>
-  | Readonly<{ operation: 'respond'; parameters: SubagentToolParameters; result: Readonly<Record<string, unknown>> }>
-  | Readonly<{ operation: 'await'; parameters: SubagentToolParameters; result: SubagentAwaitResult }>;
+export type SubagentDelegatedChild = Readonly<{
+  path: AgentPath;
+  task: string;
+  persona?: string;
+  status?: SubagentAgentOutcome;
+}>;
 
-export type SubagentDeltaData =
-  | Readonly<{ operation: 'delegation'; children: readonly SubagentDelegatedChild[] }>
-  | Readonly<{ operation: 'send'; field: 'request' | 'response'; delta: string }>
-  | Readonly<{ operation: 'send'; phase: 'waiting' | 'responding' }>
-  | Readonly<{ operation: 'respond'; delta: string }>
-  | Readonly<{ operation: 'await'; statuses: readonly SubagentAwaitStatus[] }>;
-
-export type SubagentEndData =
-  | Readonly<{ operation: 'send'; parameters?: SubagentToolParameters; result: Readonly<Record<string, unknown>> }>
-  | Readonly<{ operation: 'respond'; parameters?: SubagentToolParameters; result: Readonly<Record<string, unknown>> }>
-  | Readonly<{ operation: 'await'; parameters: SubagentToolParameters; result: SubagentAwaitResult }>;
-
-export type SubagentDelegatedChild = Readonly<{ path: AgentPath; task: string; persona?: string; status?: SubagentAwaitStatus['state'] }>;
-
-/** One agent touched by a teardown, carrying its final identity and usage. */
+/** One agent affected by a teardown or resurrection. */
 export type SubagentAffectedAgent = Readonly<{
   path: AgentPath;
   sessionId: string;
-  incarnation: string;
-  state: SubagentAwaitStatus['state'];
-  usage: SubagentUsage;
-  /** Original task, retained so a saved teardown can be resurrected later. */
+  incarnation?: string;
+  state: SubagentAgentOutcome;
+  usage?: SubagentUsage;
   task?: string;
-  /** Original communication channels, retained so a saved teardown can be resurrected later. */
-  channels?: readonly string[];
-  /** Resolved model override, when one was selected for the child. */
+  channels?: ReadonlyArray<string>;
   model?: string;
-  /** Pre-attach usage the reported delta excludes; present only when non-zero. */
-  usageBaseline?: SubagentUsage;
-}>;
-
-export type SubagentInterruptTarget = Readonly<{
-  path: AgentPath;
   output?: string;
   error?: string;
 }>;
 
-export type SubagentInterruptResult = Readonly<{
-  interrupted: readonly SubagentInterruptTarget[];
-  pending: readonly SubagentInterruptTarget[];
-  failed: readonly SubagentInterruptTarget[];
-  /** Failure text of the tool call itself, when it failed as a whole. */
-  error?: string;
-}>;
+export type SubagentInterruptTarget = Readonly<{ path: AgentPath; output?: string; error?: string }>;
 
-export type SubagentResurrectedAgent = Readonly<{
-  path: AgentPath;
+export type SubagentResurrectItem = Readonly<{
   sessionId: string;
-  incarnation: string;
-  state: 'idle' | 'running';
-  usage: SubagentUsage;
-  usageBaseline?: SubagentUsage;
-  output?: string;
-  error?: string;
+  id: string;
+  task: string;
+  channels?: ReadonlyArray<string>;
+  model?: string;
 }>;
 
-export type SubagentFiniteData =
-  | Readonly<{ operation: 'delegation'; parameters: SubagentToolParameters; result: Readonly<{ children: readonly SubagentDelegatedChild[]; error?: string }> }>
-  | Readonly<{ operation: 'completion'; result: SubagentCompletionResult }>
-  | Readonly<{ operation: 'interrupt'; parameters: SubagentToolParameters; result: SubagentInterruptResult }>
+/** Who started a lifecycle operation: the model through a tool, or the user through Pimote. */
+export type SubagentOperationSource = 'model' | 'user';
+
+/** Typed card data, one variant per operation kind. */
+export type SubagentPresentationData =
+  | Readonly<{
+      operation: 'delegation';
+      parameters: Readonly<{ agents: ReadonlyArray<SubagentDelegatedAgent>; fork: boolean }>;
+      result: Readonly<{ children: ReadonlyArray<SubagentDelegatedChild>; error?: string }>;
+    }>
+  | Readonly<{
+      operation: 'send';
+      parameters: Readonly<{ to: string; target?: AgentPath; message: string; expectResponse: boolean }>;
+      result: Readonly<{ phase: 'sending' | 'waiting' | 'responding' | 'complete'; response?: string; error?: string }>;
+    }>
+  | Readonly<{
+      operation: 'message_received';
+      parameters: Readonly<{ from: AgentPath; message: string; expectResponse: boolean }>;
+      result: Readonly<{ error?: string }>;
+    }>
+  | Readonly<{
+      operation: 'respond';
+      parameters: Readonly<{ to?: AgentPath; message: string }>;
+      result: Readonly<{ error?: string }>;
+    }>
+  | Readonly<{
+      operation: 'await';
+      parameters: Readonly<{ agents?: ReadonlyArray<string> }>;
+      result: Readonly<{ statuses: ReadonlyArray<SubagentAgentStatus>; interrupted?: boolean; error?: string }>;
+    }>
+  | Readonly<{
+      operation: 'completion';
+      parameters: Readonly<Record<never, never>>;
+      result: SubagentAgentStatus;
+    }>
+  | Readonly<{
+      operation: 'interrupt';
+      parameters: Readonly<{ agents?: ReadonlyArray<string> }>;
+      result: Readonly<{
+        interrupted: ReadonlyArray<SubagentInterruptTarget>;
+        pending: ReadonlyArray<SubagentInterruptTarget>;
+        failed: ReadonlyArray<SubagentInterruptTarget>;
+        error?: string;
+      }>;
+    }>
   | Readonly<{
       operation: 'teardown';
-      parameters: SubagentToolParameters;
-      result: Readonly<{ affectedAgents: readonly SubagentAffectedAgent[]; status: 'removed' | 'already_removed' | 'not_found'; error?: string }>;
+      parameters: Readonly<{ agent?: string; source: SubagentOperationSource }>;
+      result: Readonly<{ affectedAgents: ReadonlyArray<SubagentAffectedAgent>; error?: string }>;
     }>
-  | Readonly<{ operation: 'resurrect'; parameters: SubagentToolParameters; result: Readonly<{ affectedAgents: readonly SubagentResurrectedAgent[]; error?: string }> }>
-  | Readonly<{ operation: 'protocol_error'; result: Readonly<{ error: string }> }>;
+  | Readonly<{
+      operation: 'resurrect';
+      parameters: Readonly<{ agents: ReadonlyArray<SubagentResurrectItem>; source: SubagentOperationSource }>;
+      result: Readonly<{ affectedAgents: ReadonlyArray<SubagentAffectedAgent>; error?: string }>;
+    }>;
 
-export type SubagentFinalData = SubagentEndData | SubagentFiniteData;
-export type SubagentProtocolErrorData = Readonly<{ operationId: string; operation: SubagentOperationKind; message: string }>;
-export type ActiveSubagentOperation = Readonly<{ target: SubagentOperationTarget; data: SubagentStartData }>;
-
-type PresentationEventBase = Readonly<{ eventId: string; cursor: FeedCursor; target: SubagentOperationTarget }>;
-export type SubagentStartEvent = PresentationEventBase & Readonly<{ type: 'subagent_start'; data: SubagentStartData }>;
-export type SubagentDeltaEvent = PresentationEventBase & Readonly<{ type: 'subagent_delta'; data: SubagentDeltaData }>;
-export type SubagentEndEvent = PresentationEventBase & Readonly<{ type: 'subagent_end'; state: 'complete' | 'error' | 'aborted'; data: SubagentEndData }>;
-export type SubagentFiniteEvent = PresentationEventBase & Readonly<{ type: 'subagent_snapshot_event'; state: 'complete' | 'error' | 'aborted'; data: SubagentFinalData }>;
-type SubagentTopologyData =
-  | Readonly<{ kind: 'node_added' | 'node_updated'; data: SubagentNodeEventData }>
-  | Readonly<{ kind: 'node_removed'; data: Readonly<{ node: SubagentNodeSnapshot; reason: string }> }>
-  | Readonly<{ kind: 'runtime_replaced'; data: SubagentRuntimeReplacedData }>;
-
-export type SubagentTopologyEvent = Readonly<{
-  eventId: string;
-  cursor: FeedCursor;
-  path: AgentPath;
-  relatedPiEvents: readonly PiEventRef[];
-}> &
-  SubagentTopologyData;
-export type SubagentProviderEvent = SubagentTopologyEvent | SubagentStartEvent | SubagentDeltaEvent | SubagentEndEvent | SubagentFiniteEvent;
-
-export type PersistedSubagentContent = Readonly<{
-  operationId: string;
+/** One card. `path` is the root-relative agent that performed the operation. */
+export type SubagentPresentation = Readonly<{
   kind: SubagentOperationKind;
-  state: 'complete' | 'error' | 'aborted';
-  data: SubagentFinalData;
-}> &
-  (
-    | Readonly<{ source: 'tool'; placement: Extract<SubagentPlacement, { toolCallId: string }> }>
-    | Readonly<{ source: 'custom_entry'; placement?: Extract<SubagentPlacement, { entryId: string }> }>
-  );
-
-export type SubagentProviderSnapshot = Readonly<{
-  manifest: SubagentPresentationManifest;
-  /** Root session working directory, used to identify children that override it. */
-  rootCwd?: string;
-  nodes: readonly SubagentNodeSnapshot[];
-  cursor: FeedCursor;
-  activeOperations: readonly ActiveSubagentOperation[];
+  state: SubagentPresentationState;
+  path: AgentPath;
+  data: SubagentPresentationData;
 }>;
 
-export type SubagentPresentationReplay =
-  | Readonly<{ kind: 'events'; cursor: FeedCursor; events: readonly SubagentProviderEvent[] }>
-  | Readonly<{ kind: 'snapshot_required'; reason: 'epoch_changed' | 'history_unavailable' }>;
+/** A JSON value: what tool arguments, progress, and details hold once saved. */
+export type SubagentJsonValue = string | number | boolean | null | ReadonlyArray<SubagentJsonValue> | SubagentJsonObject;
+export type SubagentJsonObject = { readonly [key: string]: SubagentJsonValue };
 
+/** What Pimote knows about a tool call when it asks for its card. */
+export type SubagentToolExecution =
+  /** Arguments are still streaming or the call has not started. */
+  | Readonly<{ state: 'pending' }>
+  /** The call runs. `progress` is the latest `onUpdate` details, when any arrived. */
+  | Readonly<{ state: 'running'; progress?: SubagentJsonValue }>
+  /** The call finished. `text` is the result's text content. */
+  | Readonly<{ state: 'complete' | 'error'; details?: SubagentJsonValue; text: string }>
+  /** The assistant message ended without a result for this call. */
+  | Readonly<{ state: 'aborted' }>;
+
+export type SubagentToolCallInput = Readonly<{
+  /** Root-relative path of the session that holds the call. */
+  ownerPath: AgentPath;
+  toolName: string;
+  toolCallId: string;
+  /** Partial while streaming, final once `argsComplete`. */
+  args: SubagentJsonObject;
+  argsComplete: boolean;
+  execution: SubagentToolExecution;
+}>;
+
+export type SubagentMessageInput = Readonly<{
+  ownerPath: AgentPath;
+  customType: string;
+  content: string;
+  details?: SubagentJsonValue;
+}>;
+
+/**
+ * Pure presenters. They read only their input, return the same output for the
+ * same input, and never throw for malformed input: they return `undefined`,
+ * and Pimote renders the native content instead.
+ */
+export interface SubagentPresenters {
+  /** Tool names `presentToolCall` covers. */
+  readonly toolNames: ReadonlyArray<string>;
+  /** Custom message types `presentMessage` covers. */
+  readonly customTypes: ReadonlyArray<string>;
+  presentToolCall(input: SubagentToolCallInput): SubagentPresentation | undefined;
+  /** One custom message can carry several operations, in order. */
+  presentMessage(input: SubagentMessageInput): ReadonlyArray<SubagentPresentation> | undefined;
+  /**
+   * The latest `onUpdate` details of a call that still runs, for a surface
+   * that attaches after the call started. `undefined` once the call ends.
+   */
+  runningToolProgress(input: Readonly<{ sessionId: string; toolCallId: string }>): SubagentJsonValue | undefined;
+}
+
+/** One provider per root session: topology, controls, and presenters. */
 export interface SubagentPresentationProvider extends SubagentProviderControls {
-  snapshot(): SubagentProviderSnapshot;
-  subscribe(listener: (event: SubagentProviderEvent) => void): () => void;
-  replay(after?: FeedCursor): SubagentPresentationReplay;
-  rehydrate(input: { session: BorrowedAgentSession; path: AgentPath }): Promise<void>;
+  snapshot(): SubagentTopologySnapshot;
+  /** Subscribe before reading the snapshot, then drop events at or below its sequence. */
+  subscribe(listener: (event: SubagentTopologyEvent) => void): () => void;
+  readonly presenters: SubagentPresenters;
 }

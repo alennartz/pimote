@@ -1,154 +1,118 @@
 import type { ExtensionAPI, EventBus } from '@earendil-works/pi-coding-agent';
-import type { SubagentEventBusOwner, SubagentProviderDiscovery, SubagentProviderRequest } from './types.js';
+import type { SubagentEventBusOwner, SubagentProviderDiscovery, SubagentProviderResponse } from './types.js';
 import type { SubagentPresentationProvider } from './presentation.js';
 
-type RegisteredProvider = SubagentPresentationProvider;
-
-/** EventBus channel emitted by a Pimote host to discover a provider. */
+/** EventBus channel a host emits to ask for the current provider. */
 export const SUBAGENT_PROVIDER_REQUEST = 'pimote:subagents:request' as const;
-/** EventBus channel carrying the currently registered provider. */
+/** EventBus channel carrying the current provider, or `undefined` after removal. */
 export const SUBAGENT_PROVIDER_RESPONSE = 'pimote:subagents:response' as const;
 
-/**
- * Narrow an ExtensionAPI/EventBus-like value to its EventBus.
- *
- * The SDK keeps this adapter structural so extensions can use the same seam in
- * tests without constructing a complete ExtensionAPI object.
- */
 function eventBusOf(owner: SubagentEventBusOwner | ExtensionAPI): Pick<EventBus, 'on' | 'emit'> {
-  if ('events' in owner) return owner.events;
-  return owner;
+  return 'events' in owner ? owner.events : owner;
 }
 
-function providerFrom(data: unknown): RegisteredProvider | undefined {
-  if (data && typeof data === 'object' && 'provider' in data) {
-    const provider = (data as { provider?: unknown }).provider;
-    return provider && typeof provider === 'object' ? (provider as RegisteredProvider) : undefined;
+function isObject(value: unknown): value is object {
+  return typeof value === 'object' && value !== null;
+}
+
+/** The provider crosses the bus as a live object. Its contract is enforced
+ *  where it was registered, so the guard checks its members' presence only. */
+function isProvider(value: unknown): value is SubagentPresentationProvider {
+  return isObject(value) && 'snapshot' in value && 'subscribe' in value && 'presenters' in value && 'acquire' in value;
+}
+
+/** Narrow a bus payload. A payload without a `provider` key is not a response. */
+function responseFrom(data: unknown): { provider: SubagentPresentationProvider | undefined } | undefined {
+  if (!isObject(data) || !('provider' in data)) {
+    return undefined;
   }
-  return data && typeof data === 'object' ? (data as RegisteredProvider) : undefined;
-}
-
-function response(provider: RegisteredProvider): { provider: RegisteredProvider } {
-  return { provider };
-}
-
-interface Registration {
-  active: boolean;
-  unsubscribeRequest: () => void;
+  const provider = data.provider;
+  if (provider === undefined) {
+    return { provider: undefined };
+  }
+  return isProvider(provider) ? { provider } : undefined;
 }
 
 /**
- * One provider registration per session EventBus.
+ * Publish one provider on a session EventBus.
  *
- * Registration is a live responder rather than a one-shot value. A host can
- * begin discovery before the extension binds, and a later registration or
- * replacement is delivered immediately. Calling this again on the same bus
- * deactivates the previous responder. The function never owns or disposes the
- * provider; the owner controls its lifecycle.
+ * The registration answers discovery requests until the returned function
+ * runs. That function stops answering and publishes `{ provider: undefined }`,
+ * so hosts learn that the provider went away. It never disposes the provider.
+ * One owner registers at most one provider per bus; unregister before
+ * registering a replacement.
  */
-const registrations = new WeakMap<object, Registration>();
-
-export function registerProvider(owner: SubagentEventBusOwner | ExtensionAPI, provider: RegisteredProvider): () => void {
+export function registerProvider(owner: SubagentEventBusOwner | ExtensionAPI, provider: SubagentPresentationProvider): () => void {
   const bus = eventBusOf(owner);
-  const key = bus as object;
-  const previous = registrations.get(key);
-  previous?.unsubscribeRequest();
-  if (previous) previous.active = false;
-
-  const registration: Registration = {
-    active: true,
-    unsubscribeRequest: () => undefined,
-  };
-  registration.unsubscribeRequest = bus.on(SUBAGENT_PROVIDER_REQUEST, () => {
-    if (!registration.active) return;
-    bus.emit(SUBAGENT_PROVIDER_RESPONSE, response(provider));
+  let active = true;
+  const response = (): SubagentProviderResponse => ({ provider });
+  const unsubscribe = bus.on(SUBAGENT_PROVIDER_REQUEST, () => {
+    if (active) {
+      bus.emit(SUBAGENT_PROVIDER_RESPONSE, response());
+    }
   });
-  registrations.set(key, registration);
-
-  // Hosts that already started discovery receive a replacement without a
-  // second request. Hosts that have not started simply have this value ignored.
-  bus.emit(SUBAGENT_PROVIDER_RESPONSE, response(provider));
-
+  bus.emit(SUBAGENT_PROVIDER_RESPONSE, response());
   return () => {
-    if (!registration.active) return;
-    registration.active = false;
-    registration.unsubscribeRequest();
-    if (registrations.get(key) === registration) registrations.delete(key);
+    if (!active) {
+      return;
+    }
+    active = false;
+    unsubscribe();
+    bus.emit(SUBAGENT_PROVIDER_RESPONSE, { provider: undefined } satisfies SubagentProviderResponse);
   };
-}
-
-export interface DiscoverProviderOptions {
-  /** Called whenever the provider first appears or is replaced. */
-  onProvider?: (provider: RegisteredProvider) => void;
 }
 
 /**
- * Discover the provider on a session EventBus and keep listening for late
- * registration or replacement.
- *
- * With a callback, the return value is an unsubscribe function. Without a
- * callback, the return value is a discovery handle whose `provider` getter
- * reflects the latest registration. In both forms discovery emits one request
- * after installing its response listener, so a provider registered before or
- * during the handshake cannot be missed.
+ * Track the provider on a session EventBus: the current one, every later
+ * registration or replacement, and removal. Discovery installs its listener
+ * before it asks, so a provider registered earlier cannot be missed.
  */
-export function discoverProvider(owner: SubagentEventBusOwner | ExtensionAPI, onProvider: (provider: RegisteredProvider) => void): () => void;
-export function discoverProvider(owner: SubagentEventBusOwner | ExtensionAPI, options?: DiscoverProviderOptions): SubagentProviderDiscovery;
-export function discoverProvider(
-  owner: SubagentEventBusOwner | ExtensionAPI,
-  callbackOrOptions?: ((provider: RegisteredProvider) => void) | DiscoverProviderOptions,
-): (() => void) | SubagentProviderDiscovery {
+export function discoverProvider(owner: SubagentEventBusOwner | ExtensionAPI): SubagentProviderDiscovery {
   const bus = eventBusOf(owner);
-  let current: RegisteredProvider | undefined;
+  let current: SubagentPresentationProvider | undefined;
   let closed = false;
-  const listeners = new Set<(provider: RegisteredProvider | undefined) => void>();
-  const callback = typeof callbackOrOptions === 'function' ? callbackOrOptions : callbackOrOptions?.onProvider;
-  if (callback)
-    listeners.add((provider) => {
-      if (provider) callback(provider);
-    });
+  const listeners = new Set<(provider: SubagentPresentationProvider | undefined) => void>();
 
-  const publish = (provider: RegisteredProvider | undefined) => {
-    if (closed || provider === current) return;
+  const publish = (provider: SubagentPresentationProvider | undefined): void => {
+    if (closed || provider === current) {
+      return;
+    }
     current = provider;
-    for (const listener of [...listeners]) listener(provider);
+    for (const listener of Array.from(listeners)) {
+      listener(provider);
+    }
   };
-  const unsubscribeResponse = bus.on(SUBAGENT_PROVIDER_RESPONSE, (data) => publish(providerFrom(data)));
-  bus.emit(SUBAGENT_PROVIDER_REQUEST, {} satisfies SubagentProviderRequest);
+  const unsubscribe = bus.on(SUBAGENT_PROVIDER_RESPONSE, (data) => {
+    const response = responseFrom(data);
+    if (response) {
+      publish(response.provider);
+    }
+  });
+  bus.emit(SUBAGENT_PROVIDER_REQUEST, {});
 
-  const close = () => {
-    if (closed) return;
-    closed = true;
-    unsubscribeResponse();
-    listeners.clear();
-  };
-
-  if (callback) return close;
-  const discovery = {
+  return {
     get provider() {
       return current;
     },
-    get current() {
-      return current;
-    },
-    subscribe(listener: (provider: RegisteredProvider | undefined) => void) {
-      if (closed) return () => undefined;
+    subscribe(listener) {
+      if (closed) {
+        return () => undefined;
+      }
       listeners.add(listener);
-      if (current) listener(current);
-      return () => listeners.delete(listener);
+      if (current) {
+        listener(current);
+      }
+      return () => {
+        listeners.delete(listener);
+      };
     },
-    onProvider(listener: (provider: RegisteredProvider | undefined) => void) {
-      if (closed) return () => undefined;
-      listeners.add(listener);
-      if (current) listener(current);
-      return () => listeners.delete(listener);
+    close() {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      unsubscribe();
+      listeners.clear();
     },
-    close,
   };
-  return discovery as unknown as SubagentProviderDiscovery;
 }
-
-/** Short alias for hosts that use the request/response verb. */
-export const discover = discoverProvider;
-/** Short alias for extensions that use the registration verb. */
-export const register = registerProvider;

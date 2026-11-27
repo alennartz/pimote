@@ -1,3 +1,5 @@
+import type { FolderSource } from '../folders/types.js';
+
 /**
  * A server-global Pimote extension.
  *
@@ -15,7 +17,7 @@ export type PimoteExtension = (context: PimoteExtensionContext) => void | Promis
  */
 export interface PimoteExtensionContext {
   readonly folders: {
-    registerSource(source: import('../folders/types.js').FolderSource): void;
+    registerSource(source: FolderSource): void;
   };
   readonly settings: {
     registerFile(path: string): void;

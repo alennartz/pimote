@@ -1,4 +1,10 @@
 import type { EventBus } from '@earendil-works/pi-coding-agent';
+import type { ActivityMessage } from './types.js';
+
+/** Response payloads arrive unvalidated over the bus; only an explicit `active: true` counts. */
+function isActiveResponse(data: unknown): data is Partial<ActivityMessage> {
+  return typeof data === 'object' && data !== null;
+}
 
 /**
  * Poll a session's extensions for background activity (DR-054).
@@ -15,8 +21,9 @@ import type { EventBus } from '@earendil-works/pi-coding-agent';
 export function askActivity(bus: EventBus): boolean {
   let active = false;
   const unsubscribe = bus.on('pimote:activity:response', (data) => {
-    const message = data as { active?: unknown } | null | undefined;
-    if (message?.active === true) active = true;
+    if (isActiveResponse(data) && data.active === true) {
+      active = true;
+    }
   });
   bus.emit('pimote:activity:request', {});
   unsubscribe();
